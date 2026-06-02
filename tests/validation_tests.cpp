@@ -124,6 +124,25 @@ void test_fleet_listing_nonexistent_ship_is_rejected() {
     });
 }
 
+void test_ship_claimed_by_multiple_fleets_is_rejected() {
+    // A ship can only occupy one fleet roster. This prevents a corrupted save or
+    // importer from making two fleets claim the same physical ship.
+    expectInvalidState("ship claimed by multiple fleets", [](deep::GameState& state) {
+        const deep::ShipId shipId = state.ships.front().id;
+        const deep::BodyId bodyId = state.fleets.front().currentBodyId;
+
+        const deep::FleetId secondFleetId{state.ids.nextFleetId++};
+        state.fleets.push_back(deep::Fleet{
+            .id = secondFleetId,
+            .name = "Duplicate Claim Fleet",
+            .currentBodyId = bodyId,
+            .destinationBodyId = std::nullopt,
+            .shipIds = {shipId},
+            .activeOrder = {},
+        });
+    });
+}
+
 void test_active_fleet_order_without_destination_is_rejected() {
     // MoveToBody orders require both a destination field and a target body. An
     // active order without either cannot complete deterministically.
@@ -172,6 +191,7 @@ int main() {
         test_non_finite_stockpile_amounts_are_rejected();
         test_ship_missing_from_owning_fleet_is_rejected();
         test_fleet_listing_nonexistent_ship_is_rejected();
+        test_ship_claimed_by_multiple_fleets_is_rejected();
         test_active_fleet_order_without_destination_is_rejected();
         test_event_day_after_current_day_is_rejected();
         test_event_ids_out_of_order_are_rejected();

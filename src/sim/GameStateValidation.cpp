@@ -12,6 +12,7 @@
 #include <string>
 #include <string_view>
 #include <type_traits>
+#include <unordered_map>
 #include <unordered_set>
 #include <variant>
 
@@ -277,6 +278,10 @@ void validateGameState(const GameState& state) {
         }
     }
 
+    // Build a reverse index while validating fleets so every ship can be
+    // listed by exactly one fleet. A ship duplicated across two fleet rosters
+    // would otherwise appear to be in two places at once in UI/query views.
+    std::unordered_map<std::int64_t, FleetId> listedShipFleetIds;
     for (const Fleet& fleet : state.fleets) {
         requireState(!fleet.name.empty(), "fleet name must be non-empty");
         requireValidReference(containsId(state.bodies, fleet.currentBodyId), fleet.currentBodyId, "fleet current body");
@@ -286,6 +291,8 @@ void validateGameState(const GameState& state) {
         for (const ShipId shipId : fleet.shipIds) {
             requireValidReference(containsId(state.ships, shipId), shipId, "fleet ship");
             requireState(fleetShipIds.insert(shipId.value).second, "fleet ship IDs must be unique within a fleet");
+            requireState(listedShipFleetIds.emplace(shipId.value, fleet.id).second,
+                         "ship must not be listed by multiple fleets");
         }
     }
 
@@ -295,12 +302,10 @@ void validateGameState(const GameState& state) {
         requireState(!ship.name.empty(), "ship name must be non-empty");
         requireState(isFinite(ship.fuel) && ship.fuel >= 0.0, "ship fuel must be finite and non-negative");
 
-        const auto fleetIt = std::find_if(state.fleets.begin(), state.fleets.end(), [ship](const Fleet& fleet) {
-            return fleet.id == ship.fleetId;
-        });
-        requireState(fleetIt != state.fleets.end(), "ship fleet must exist");
-        const bool fleetListsShip = std::find(fleetIt->shipIds.begin(), fleetIt->shipIds.end(), ship.id) != fleetIt->shipIds.end();
-        requireState(fleetListsShip, "ship/fleet references must be bidirectional");
+        const auto listedFleetIt = listedShipFleetIds.find(ship.id.value);
+        requireState(listedFleetIt != listedShipFleetIds.end(), "ship/fleet references must be bidirectional");
+        requireState(listedFleetIt->second == ship.fleetId,
+                     "ship fleet ID must match the fleet roster that lists it");
     }
 
     std::int64_t previousEventId = 0;
