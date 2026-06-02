@@ -4,11 +4,13 @@
 // The shell renders functional prototype panels against SimulationService without
 // exposing raw GameState vectors.
 
+#include "app/SelectionState.h"
 #include "app/SimulationService.h"
 #include "platform/SdlApp.h"
 #include "ui_imgui/ColonyPanel.h"
 #include "ui_imgui/EventLogPanel.h"
 #include "ui_imgui/FleetPanel.h"
+#include "ui_imgui/InspectorPanel.h"
 #include "ui_imgui/StrategicMapPanel.h"
 #include "ui_imgui/TimeControlPanel.h"
 
@@ -46,7 +48,9 @@ private:
     ColonyPanel colonyPanel_;
     FleetPanel fleetPanel_;
     EventLogPanel eventLogPanel_;
+    InspectorPanel inspectorPanel_;
     StrategicMapPanel strategicMapPanel_;
+    SelectionState selection_;
 };
 
 } // namespace deep::ui_imgui

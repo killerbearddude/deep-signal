@@ -70,6 +70,7 @@ if(DEEP_SIGNAL_BUILD_APP)
 
     add_library(deep_signal_app
         src/app/ForecastService.cpp
+        src/app/SelectionState.cpp
         src/app/SimulationQueries.cpp
         src/app/SimulationService.cpp
     )
@@ -110,6 +111,7 @@ if(DEEP_SIGNAL_BUILD_UI)
         src/ui_imgui/EventLogPanel.cpp
         src/ui_imgui/FleetPanel.cpp
         src/ui_imgui/ImGuiApp.cpp
+        src/ui_imgui/InspectorPanel.cpp
         src/ui_imgui/StrategicMapPanel.cpp
         src/ui_imgui/TimeControlPanel.cpp
     )

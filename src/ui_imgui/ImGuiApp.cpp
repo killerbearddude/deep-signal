@@ -85,15 +85,11 @@ void ImGuiApp::renderPanels() {
     const SimulationQueries queries{service_};
 
     timeControlPanel_.render(service_);
-    strategicMapPanel_.render(queries);
-    colonyPanel_.render(queries);
-    fleetPanel_.render(queries);
+    strategicMapPanel_.render(queries, selection_);
+    colonyPanel_.render(queries, selection_);
+    fleetPanel_.render(queries, selection_);
     eventLogPanel_.render(queries);
-
-    ImGui::Begin("Inspector");
-    ImGui::TextUnformatted("Select-and-inspect workflows will be added in later patches.");
-    ImGui::TextUnformatted("Current panels intentionally use SimulationQueries DTOs only.");
-    ImGui::End();
+    inspectorPanel_.render(queries, selection_);
 }
 
 } // namespace deep::ui_imgui

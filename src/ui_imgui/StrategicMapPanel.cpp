@@ -1,12 +1,14 @@
 #include "ui_imgui/StrategicMapPanel.h"
 
 // Implements the basic strategic map panel using ImGui draw lists.
-// Interaction is intentionally limited to view navigation and selection so this
-// patch does not introduce gameplay commands or a complex renderer.
+// Map picks are translated into shared SelectionState so the inspector and table
+// panels all observe the same selected object.
 
 #include <imgui.h>
 
 #include <algorithm>
+#include <optional>
+#include <vector>
 
 namespace deep::ui_imgui {
 namespace {
@@ -27,14 +29,62 @@ constexpr double kWheelZoomOut = 1.0 / kWheelZoomIn;
     };
 }
 
+[[nodiscard]] std::optional<render::StrategicMapSelection> mapSelectionFromSharedState(
+    const SelectionState& selection,
+    const std::vector<StrategicBodySummary>& bodies,
+    const std::vector<StrategicFleetSummary>& fleets) {
+    if (selection.type() == SelectedObjectType::Body) {
+        const BodyId bodyId = selection.bodyId();
+        const auto it = std::find_if(bodies.begin(), bodies.end(), [bodyId](const StrategicBodySummary& body) {
+            return body.id == bodyId;
+        });
+        if (it != bodies.end()) {
+            return render::StrategicMapSelection{
+                .kind = render::StrategicMapSelection::Kind::Body,
+                .id = it->id.value,
+                .name = it->name
+            };
+        }
+    }
+
+    if (selection.type() == SelectedObjectType::Fleet) {
+        const FleetId fleetId = selection.fleetId();
+        const auto it = std::find_if(fleets.begin(), fleets.end(), [fleetId](const StrategicFleetSummary& fleet) {
+            return fleet.id == fleetId;
+        });
+        if (it != fleets.end()) {
+            return render::StrategicMapSelection{
+                .kind = render::StrategicMapSelection::Kind::Fleet,
+                .id = it->id.value,
+                .name = it->name
+            };
+        }
+    }
+
+    return std::nullopt;
+}
+
+void applyMapSelection(const std::optional<render::StrategicMapSelection>& picked, SelectionState& selection) noexcept {
+    if (!picked.has_value()) {
+        selection.clear();
+        return;
+    }
+
+    if (picked->kind == render::StrategicMapSelection::Kind::Body) {
+        selection.selectBody(BodyId{picked->id});
+    } else {
+        selection.selectFleet(FleetId{picked->id});
+    }
+}
+
 } // namespace
 
-void StrategicMapPanel::render(const SimulationQueries& queries) {
+void StrategicMapPanel::render(const SimulationQueries& queries, SelectionState& selection) {
     const auto bodies = queries.strategicBodies();
     const auto fleets = queries.strategicFleets();
 
     ImGui::Begin("Strategic Map");
-    ImGui::TextUnformatted("Right-drag to pan. Mouse wheel to zoom. Left-click a marker to select.");
+    ImGui::TextUnformatted("Right-drag to pan. Mouse wheel to zoom. Left-click a marker to inspect.");
 
     ImVec2 available = ImGui::GetContentRegionAvail();
     available.x = std::max(available.x, kMinimumCanvasWidth);
@@ -58,16 +108,17 @@ void StrategicMapPanel::render(const SimulationQueries& queries) {
     }
 
     if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
-        selection_ = view_.pick(camera_, canvasMin, available, ImGui::GetIO().MousePos, bodies, fleets);
+        applyMapSelection(view_.pick(camera_, canvasMin, available, ImGui::GetIO().MousePos, bodies, fleets), selection);
     }
 
-    view_.draw(*ImGui::GetWindowDrawList(), camera_, canvasMin, available, bodies, fleets, selection_);
+    const std::optional<render::StrategicMapSelection> mapSelection = mapSelectionFromSharedState(selection, bodies, fleets);
+    view_.draw(*ImGui::GetWindowDrawList(), camera_, canvasMin, available, bodies, fleets, mapSelection);
 
-    if (selection_.has_value()) {
-        ImGui::Text("Selected: %s #%lld - %s",
-                    selection_->kind == render::StrategicMapSelection::Kind::Body ? "Body" : "Fleet",
-                    static_cast<long long>(selection_->id),
-                    selection_->name.c_str());
+    if (selection.type() != SelectedObjectType::None) {
+        ImGui::Text("Selected: %s #%lld",
+                    selection.type() == SelectedObjectType::Body ? "Body" :
+                    selection.type() == SelectedObjectType::Colony ? "Colony" : "Fleet",
+                    static_cast<long long>(selection.selectedId()));
     } else {
         ImGui::TextUnformatted("Selected: none");
     }
