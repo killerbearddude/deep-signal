@@ -68,6 +68,7 @@ if(DEEP_SIGNAL_BUILD_APP)
     endif()
 
     add_library(deep_signal_app
+        src/app/ForecastService.cpp
         src/app/SimulationQueries.cpp
         src/app/SimulationService.cpp
     )
@@ -124,6 +125,15 @@ if(DEEP_SIGNAL_BUILD_TESTS)
         target_compile_options(deep_signal_app_query_tests PRIVATE ${DEEP_SIGNAL_WARNINGS})
 
         add_test(NAME deep_signal_app_query_tests COMMAND deep_signal_app_query_tests)
+
+        add_executable(deep_signal_forecast_tests
+            tests/forecast_tests.cpp
+        )
+
+        target_link_libraries(deep_signal_forecast_tests PRIVATE deep_signal_app)
+        target_compile_options(deep_signal_forecast_tests PRIVATE ${DEEP_SIGNAL_WARNINGS})
+
+        add_test(NAME deep_signal_forecast_tests COMMAND deep_signal_forecast_tests)
 
         add_executable(deep_signal_save_load_tests
             tests/save_load_tests.cpp
