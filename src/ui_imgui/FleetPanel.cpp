@@ -39,7 +39,7 @@ void FleetPanel::render(const SimulationQueries& queries, SelectionState& select
             ImGui::TableSetColumnIndex(0);
 
             if (ImGui::Selectable(rowId(fleet).c_str(), selection.isFleetSelected(fleet.id),
-                                  ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowItemOverlap)) {
+                                  ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowOverlap)) {
                 selection.selectFleet(fleet.id);
             }
             ImGui::SameLine();

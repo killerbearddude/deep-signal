@@ -39,7 +39,7 @@ void ColonyPanel::render(const SimulationQueries& queries, SelectionState& selec
             // A hidden-label selectable spans the full row while keeping the ID
             // text visible and stable for table sorting/inspection later.
             if (ImGui::Selectable(rowId(colony).c_str(), selection.isColonySelected(colony.id),
-                                  ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowItemOverlap)) {
+                                  ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowOverlap)) {
                 selection.selectColony(colony.id);
             }
             ImGui::SameLine();
