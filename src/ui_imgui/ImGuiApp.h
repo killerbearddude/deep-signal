@@ -42,7 +42,7 @@ private:
     // Draws a full-window dockspace that future panels can dock into.
     void renderDockspace();
 
-    // Draws application-level menu commands that route through service APIs.
+    // Draws application-level menu commands and panel visibility toggles.
     void renderMainMenu();
 
     // Draws the first functional simulation panels using app-layer query DTOs.
@@ -60,6 +60,7 @@ private:
     InspectorPanel inspectorPanel_;
     StrategicMapPanel strategicMapPanel_;
     SelectionState selection_;
+    PanelVisibility visibility_;
 };
 
 } // namespace deep::ui_imgui

@@ -18,13 +18,22 @@ namespace {
 
 } // namespace
 
-void ColonyPanel::render(const SimulationQueries& queries, SelectionState& selection) const {
-    ImGui::Begin("Colonies");
+void ColonyPanel::render(const SimulationQueries& queries, SelectionState& selection, bool& visible) const {
+    if (!visible) {
+        return;
+    }
+
+    if (!ImGui::Begin("Colonies", &visible)) {
+        ImGui::End();
+        return;
+    }
 
     const std::vector<ColonySummary> colonies = queries.colonies();
     ImGui::Text("Colonies: %zu", colonies.size());
 
-    if (ImGui::BeginTable("ColonySummaryTable", 5, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
+    if (ImGui::BeginTable("ColonySummaryTable", 5, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable |
+                           ImGuiTableFlags_Reorderable | ImGuiTableFlags_Hideable |
+                           ImGuiTableFlags_SizingStretchProp)) {
         ImGui::TableSetupColumn("ID");
         ImGui::TableSetupColumn("Name");
         ImGui::TableSetupColumn("Body");

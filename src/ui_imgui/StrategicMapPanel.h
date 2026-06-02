@@ -17,8 +17,8 @@ namespace deep::ui_imgui {
 // No simulation state is mutated and no raw GameState records are exposed here.
 class StrategicMapPanel {
 public:
-    // Draws the strategic map using app-layer query DTOs.
-    void render(const SimulationQueries& queries, SelectionState& selection);
+    // Draws the strategic map using app-layer query DTOs and updates close state.
+    void render(const SimulationQueries& queries, SelectionState& selection, bool& visible);
 
 private:
     render::MapCamera camera_;

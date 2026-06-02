@@ -79,12 +79,19 @@ void applyMapSelection(const std::optional<render::StrategicMapSelection>& picke
 
 } // namespace
 
-void StrategicMapPanel::render(const SimulationQueries& queries, SelectionState& selection) {
+void StrategicMapPanel::render(const SimulationQueries& queries, SelectionState& selection, bool& visible) {
+    if (!visible) {
+        return;
+    }
+
     const auto bodies = queries.strategicBodies();
     const auto fleets = queries.strategicFleets();
 
-    ImGui::Begin("Strategic Map");
-    ImGui::TextUnformatted("Right-drag to pan. Mouse wheel to zoom. Left-click a marker to inspect.");
+    if (!ImGui::Begin("Strategic Map", &visible)) {
+        ImGui::End();
+        return;
+    }
+    ImGui::TextUnformatted("Right-drag to pan. Mouse wheel to zoom. Left-click a marker to inspect or choose a move destination.");
 
     ImVec2 available = ImGui::GetContentRegionAvail();
     available.x = std::max(available.x, kMinimumCanvasWidth);

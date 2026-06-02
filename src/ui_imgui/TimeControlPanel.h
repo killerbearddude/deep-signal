@@ -16,8 +16,8 @@ namespace deep::ui_imgui {
 class TimeControlPanel {
 public:
     // Draws Advance 1/5/30 day buttons and submits accepted clicks through the
-    // application service command boundary.
-    void render(SimulationService& service);
+    // application service command boundary, updating visibility when closed.
+    void render(SimulationService& service, bool& visible);
 
 private:
     void advance(SimulationService& service, int days);

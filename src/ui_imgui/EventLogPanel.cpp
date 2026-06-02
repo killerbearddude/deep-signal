@@ -10,13 +10,22 @@
 
 namespace deep::ui_imgui {
 
-void EventLogPanel::render(const SimulationQueries& queries) const {
-    ImGui::Begin("Event Log");
+void EventLogPanel::render(const SimulationQueries& queries, bool& visible) const {
+    if (!visible) {
+        return;
+    }
+
+    if (!ImGui::Begin("Event Log", &visible)) {
+        ImGui::End();
+        return;
+    }
 
     const std::vector<EventLogEntrySummary> events = queries.recentEvents(kRecentEventLimit);
     ImGui::Text("Recent audit events: %zu", events.size());
 
-    if (ImGui::BeginTable("EventLogTable", 5, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
+    if (ImGui::BeginTable("EventLogTable", 5, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable |
+                           ImGuiTableFlags_Reorderable | ImGuiTableFlags_Hideable |
+                           ImGuiTableFlags_SizingStretchProp)) {
         ImGui::TableSetupColumn("Day");
         ImGui::TableSetupColumn("ID");
         ImGui::TableSetupColumn("Severity");

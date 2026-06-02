@@ -11,8 +11,15 @@
 
 namespace deep::ui_imgui {
 
-void TimeControlPanel::render(SimulationService& service) {
-    ImGui::Begin("Time Control");
+void TimeControlPanel::render(SimulationService& service, bool& visible) {
+    if (!visible) {
+        return;
+    }
+
+    if (!ImGui::Begin("Time Control", &visible)) {
+        ImGui::End();
+        return;
+    }
 
     ImGui::TextUnformatted("Advance simulation time");
     ImGui::Separator();

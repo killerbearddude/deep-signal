@@ -80,7 +80,7 @@ void ImGuiApp::renderDockspace() {
 }
 
 void ImGuiApp::renderMainMenu() {
-    mainMenuBar_.render(service_, saveLoadPanel_);
+    mainMenuBar_.render(service_, saveLoadPanel_, visibility_);
 }
 
 void ImGuiApp::renderPanels() {
@@ -89,14 +89,14 @@ void ImGuiApp::renderPanels() {
     // and does not expose mutable GameState access to panel code.
     const SimulationQueries queries{service_};
 
-    saveLoadPanel_.render(service_);
-    timeControlPanel_.render(service_);
-    shipyardPanel_.render(queries, service_);
-    strategicMapPanel_.render(queries, selection_);
-    colonyPanel_.render(queries, selection_);
-    fleetPanel_.render(queries, selection_);
-    eventLogPanel_.render(queries);
-    inspectorPanel_.render(queries, selection_);
+    saveLoadPanel_.render(service_, visibility_.saveLoad);
+    timeControlPanel_.render(service_, visibility_.timeControl);
+    shipyardPanel_.render(queries, service_, visibility_.shipyard);
+    strategicMapPanel_.render(queries, selection_, visibility_.strategicMap);
+    colonyPanel_.render(queries, selection_, visibility_.colonies);
+    fleetPanel_.render(queries, selection_, visibility_.fleets);
+    eventLogPanel_.render(queries, visibility_.eventLog);
+    inspectorPanel_.render(queries, service_, selection_, visibility_.inspector);
 }
 
 } // namespace deep::ui_imgui

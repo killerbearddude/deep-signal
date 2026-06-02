@@ -12,8 +12,8 @@ namespace deep::ui_imgui {
 // Renders fleet location, ship count, and active-order state.
 class FleetPanel {
 public:
-    // Draws one table row per fleet summary returned by the app query facade.
-    void render(const SimulationQueries& queries, SelectionState& selection) const;
+    // Draws one table row per fleet summary and updates visibility when closed.
+    void render(const SimulationQueries& queries, SelectionState& selection, bool& visible) const;
 };
 
 } // namespace deep::ui_imgui

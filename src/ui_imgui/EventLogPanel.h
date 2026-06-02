@@ -14,8 +14,8 @@ namespace deep::ui_imgui {
 // included because it is no longer part of the player-facing event log.
 class EventLogPanel {
 public:
-    // Draws the newest event summaries, preserving chronological order.
-    void render(const SimulationQueries& queries) const;
+    // Draws the newest event summaries and updates visibility when closed.
+    void render(const SimulationQueries& queries, bool& visible) const;
 
 private:
     static constexpr std::size_t kRecentEventLimit = 25;

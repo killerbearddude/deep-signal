@@ -16,8 +16,8 @@ namespace deep::ui_imgui {
 // ship designer and production queue editor exist.
 class ShipyardPanel {
 public:
-    // Draws current shipyard orders and a one-click Survey Cutter build action.
-    void render(const SimulationQueries& queries, SimulationService& service);
+    // Draws current shipyard orders, the Survey Cutter action, and close state.
+    void render(const SimulationQueries& queries, SimulationService& service, bool& visible);
 
 private:
     void buildSurveyCutter(const SimulationQueries& queries, SimulationService& service);

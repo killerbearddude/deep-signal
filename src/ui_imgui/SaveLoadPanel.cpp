@@ -13,8 +13,15 @@
 
 namespace deep::ui_imgui {
 
-void SaveLoadPanel::render(SimulationService& service) {
-    ImGui::Begin("Save / Load");
+void SaveLoadPanel::render(SimulationService& service, bool& visible) {
+    if (!visible) {
+        return;
+    }
+
+    if (!ImGui::Begin("Save / Load", &visible)) {
+        ImGui::End();
+        return;
+    }
 
     ImGui::TextUnformatted("SQLite save path");
     ImGui::InputText("##save_path", pathBuffer_.data(), pathBuffer_.size());

@@ -41,8 +41,15 @@ namespace {
 
 } // namespace
 
-void ShipyardPanel::render(const SimulationQueries& queries, SimulationService& service) {
-    ImGui::Begin("Shipyard / Production");
+void ShipyardPanel::render(const SimulationQueries& queries, SimulationService& service, bool& visible) {
+    if (!visible) {
+        return;
+    }
+
+    if (!ImGui::Begin("Shipyard / Production", &visible)) {
+        ImGui::End();
+        return;
+    }
 
     ImGui::TextUnformatted("Prototype production controls");
     if (ImGui::Button("Build Survey Cutter")) {
@@ -57,7 +64,9 @@ void ShipyardPanel::render(const SimulationQueries& queries, SimulationService& 
     const std::vector<ShipyardOrderSummary> orders = queries.shipyardOrders();
     ImGui::Text("Shipyard orders: %zu", orders.size());
 
-    if (ImGui::BeginTable("ShipyardOrderTable", 8, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
+    if (ImGui::BeginTable("ShipyardOrderTable", 8, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable |
+                           ImGuiTableFlags_Reorderable | ImGuiTableFlags_Hideable |
+                           ImGuiTableFlags_SizingStretchProp)) {
         ImGui::TableSetupColumn("ID");
         ImGui::TableSetupColumn("Colony");
         ImGui::TableSetupColumn("Class");

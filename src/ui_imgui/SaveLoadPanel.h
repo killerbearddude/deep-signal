@@ -17,8 +17,8 @@ namespace deep::ui_imgui {
 // small app-layer workflow over the existing SQLite save/load service methods.
 class SaveLoadPanel {
 public:
-    // Draws the path field, action buttons, and latest status message.
-    void render(SimulationService& service);
+    // Draws the path field, action buttons, latest status, and close state.
+    void render(SimulationService& service, bool& visible);
 
     // Starts a fresh scenario through the application service.
     void newGame(SimulationService& service);

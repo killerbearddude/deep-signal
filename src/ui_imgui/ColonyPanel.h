@@ -12,8 +12,8 @@ namespace deep::ui_imgui {
 // Renders colony overview rows using stable query summaries prepared for UI use.
 class ColonyPanel {
 public:
-    // Draws one table row per colony summary returned by the query facade.
-    void render(const SimulationQueries& queries, SelectionState& selection) const;
+    // Draws one table row per colony summary and updates visibility when closed.
+    void render(const SimulationQueries& queries, SelectionState& selection, bool& visible) const;
 };
 
 } // namespace deep::ui_imgui
