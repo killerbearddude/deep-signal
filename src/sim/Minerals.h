@@ -28,6 +28,10 @@ enum class Mineral : std::size_t {
     return static_cast<std::size_t>(Mineral::Count);
 }
 
+// Shared tolerance for mineral affordability checks. This exists only to absorb
+// tiny binary floating-point residue; larger shortages are gameplay errors.
+inline constexpr double kMineralComparisonEpsilon = 1.0e-9;
+
 // Display names are for CLI/debug output only. Designer-facing localization can
 // replace this later without changing the Mineral enum ordering.
 inline constexpr std::array<std::string_view, mineralCount()> mineralNames{
@@ -78,9 +82,9 @@ struct MineralSet {
     }
 
     // Returns true when this set has enough of every mineral to pay cost.
-    // The epsilon prevents tiny floating-point residue from blocking completion.
+    // The shared epsilon prevents tiny floating-point residue from blocking
+    // completion while still rejecting meaningful shortages.
     [[nodiscard]] bool canPay(const MineralSet& cost) const noexcept {
-        constexpr double kMineralComparisonEpsilon = 1.0e-9;
         for (std::size_t i = 0; i < amount.size(); ++i) {
             if (amount[i] + kMineralComparisonEpsilon < cost.amount[i]) {
                 return false;
@@ -89,8 +93,8 @@ struct MineralSet {
         return true;
     }
 
-    // Subtracts a full mineral cost. Callers get an exception instead of a silent
-    // negative stockpile if validation was missed or state was corrupted.
+    // Subtracts a full mineral cost. Epsilon-sized negative residue is clamped
+    // to zero so an allowed payment cannot leave an invalid stockpile behind.
     void subtract(const MineralSet& cost) {
         if (!canPay(cost)) {
             throw std::runtime_error{"Insufficient minerals"};
@@ -98,6 +102,14 @@ struct MineralSet {
 
         for (std::size_t i = 0; i < amount.size(); ++i) {
             amount[i] -= cost.amount[i];
+
+            if (amount[i] < 0.0 && amount[i] > -kMineralComparisonEpsilon) {
+                amount[i] = 0.0;
+            }
+
+            if (amount[i] < 0.0) {
+                throw std::runtime_error{"Mineral subtraction produced negative stockpile."};
+            }
         }
     }
 

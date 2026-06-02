@@ -35,6 +35,46 @@ void require(const bool condition, const std::string_view message) {
     }
 }
 
+
+void test_mineral_subtraction_clamps_epsilon_negative_residue() {
+    // Verifies that affordability and subtraction use the same tolerance.
+    // Without the clamp, canPay() can allow an epsilon-sized shortage and
+    // subtract() can leave a tiny negative physical stockpile behind.
+    deep::MineralSet stockpile;
+    deep::MineralSet cost;
+
+    stockpile.set(deep::Mineral::Structural, 500.0);
+    cost.set(deep::Mineral::Structural, 500.0 + (deep::kMineralComparisonEpsilon * 0.5));
+
+    require(stockpile.canPay(cost), "epsilon-sized mineral residue is payable");
+
+    stockpile.subtract(cost);
+
+    require(stockpile.get(deep::Mineral::Structural) == 0.0,
+            "epsilon-sized negative mineral residue clamps exactly to zero");
+}
+
+void test_mineral_can_pay_rejects_meaningful_shortage() {
+    // Verifies that the epsilon is only a floating-point tolerance and does not
+    // mask real affordability failures in production or maintenance costs.
+    deep::MineralSet stockpile;
+    deep::MineralSet cost;
+
+    stockpile.set(deep::Mineral::Structural, 500.0);
+    cost.set(deep::Mineral::Structural, 501.0);
+
+    require(!stockpile.canPay(cost), "meaningful mineral shortage is not payable");
+
+    bool threw = false;
+    try {
+        stockpile.subtract(cost);
+    } catch (const std::runtime_error&) {
+        threw = true;
+    }
+
+    require(threw, "meaningful mineral shortage fails explicitly on subtract");
+}
+
 void test_time_advancement() {
     // Verifies that the day counter advances deterministically while routine
     // mining is recorded as telemetry instead of audit events. This prevents a
@@ -280,6 +320,8 @@ void test_rejected_invalid_command() {
 // project adopts Catch2 or another approved open-source test framework.
 int main() {
     try {
+        test_mineral_subtraction_clamps_epsilon_negative_residue();
+        test_mineral_can_pay_rejects_meaningful_shortage();
         test_time_advancement();
         test_mining();
         test_shipyard_completion();
