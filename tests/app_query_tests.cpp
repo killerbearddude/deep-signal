@@ -101,25 +101,38 @@ void test_fleet_summaries_resolve_location_and_order() {
 }
 
 void test_recent_events_returns_limited_chronological_tail() {
-    // Verifies that recentEvents(limit) returns the newest entries but preserves
-    // log order inside that returned window. Prevents UI-specific reverse logic
-    // from leaking into panels later.
+    // Verifies that recentEvents(limit) returns the newest audit entries but
+    // preserves log order inside that returned window. Routine mining telemetry
+    // must not be required for event-log query coverage.
     deep::SimulationService service;
-    static_cast<void>(service.advanceDays(3));
+    const deep::ColonyId colonyId = service.state().colonies.front().id;
+    const deep::ShipClassId shipClassId = service.state().shipClasses.front().id;
+    const deep::BodyId marsId = service.state().bodies.at(1).id;
+
+    require(service.execute(deep::AssignShipyardBuildCommand{
+        .colonyId = colonyId,
+        .shipClassId = shipClassId,
+        .quantity = 1
+    }).ok, "build order is accepted before recent event query");
+    static_cast<void>(service.advanceDays(5));
+    require(service.execute(deep::MoveFleetCommand{
+        .fleetId = service.state().fleets.front().id,
+        .destinationBodyId = marsId
+    }).ok, "move order is accepted before recent event query");
 
     const deep::SimulationQueries queries{service};
     const auto allEvents = queries.recentEvents(100);
     const auto recentTwo = queries.recentEvents(2);
     const auto none = queries.recentEvents(0);
 
-    require(!allEvents.empty(), "advancing time creates queryable event summaries");
+    require(allEvents.size() == 3, "setup creates three queryable audit event summaries");
     require(recentTwo.size() == 2, "recentEvents applies the requested limit");
     require(none.empty(), "recentEvents with zero limit is empty");
     require(recentTwo.front().id == allEvents.at(allEvents.size() - 2).id,
             "recentEvents returns the chronological tail window");
     require(recentTwo.front().id.value < recentTwo.back().id.value,
             "recentEvents preserves chronological order within the tail");
-    require(recentTwo.back().eventType == "mineral_extracted", "event summary exposes flattened event type");
+    require(recentTwo.back().eventType == "fleet_order_assigned", "event summary exposes flattened event type");
     require(!recentTwo.back().message.empty(), "event summary exposes display message text");
 }
 

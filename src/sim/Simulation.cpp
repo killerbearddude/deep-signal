@@ -181,7 +181,7 @@ CommandResult Simulation::moveFleet(const MoveFleetCommand& command) {
 void Simulation::simulateOneDay(std::vector<SimEvent>& emitted) {
     ++state_.date.day;
 
-    // Daily tick order is stable by design: economy changes happen before
+    // Daily tick order is stable by design: economy telemetry is recorded before
     // shipyard completion, and completed fleets can begin moving only on a later
     // command. This keeps tests and future save replays deterministic.
     simulateMining(emitted);
@@ -189,7 +189,7 @@ void Simulation::simulateOneDay(std::vector<SimEvent>& emitted) {
     simulateFleetMovement(emitted);
 }
 
-void Simulation::simulateMining(std::vector<SimEvent>& emitted) {
+void Simulation::simulateMining(std::vector<SimEvent>&) {
     for (Colony& colony : state_.colonies) {
         for (MineralDeposit& deposit : state_.mineralDeposits) {
             if (deposit.bodyId != colony.bodyId || deposit.remaining <= 0.0) {
@@ -207,7 +207,11 @@ void Simulation::simulateMining(std::vector<SimEvent>& emitted) {
             deposit.remaining -= extracted;
             colony.stockpile.add(deposit.mineral, extracted);
 
-            emitEvent(emitted, EventSeverity::Info, MineralExtractedEvent{
+            // Mining is routine telemetry, not audit history. Store one
+            // append-only row per extracted mineral so future UI panels can graph
+            // daily flow without flooding the player-facing event log.
+            state_.dailyEconomySnapshots.push_back(DailyEconomySnapshot{
+                .day = state_.date.day,
                 .colonyId = colony.id,
                 .bodyId = colony.bodyId,
                 .mineral = deposit.mineral,

@@ -15,6 +15,7 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <variant>
 
 namespace {
 
@@ -35,14 +36,20 @@ void require(const bool condition, const std::string_view message) {
 }
 
 void test_time_advancement() {
-    // Verifies that the day counter advances deterministically and emits daily
-    // economy events. Prevents regressions where advanceDays skips the tick loop.
+    // Verifies that the day counter advances deterministically while routine
+    // mining is recorded as telemetry instead of audit events. This prevents a
+    // regression where daily extraction floods the player-facing event log.
     deep::Simulation sim{deep::createHomeSystemScenario()};
     require(sim.state().date.day == 0, "new simulation starts at day 0");
 
     const auto events = sim.advanceDays(5);
     require(sim.state().date.day == 5, "advancing 5 days reaches day 5");
-    require(!events.empty(), "advancing emits mining events");
+    require(events.empty(), "pure mining days emit no audit events");
+    require(sim.state().eventLog.empty(), "pure mining days do not append audit history");
+    require(sim.state().dailyEconomySnapshots.size() == 10,
+            "five days of two deposits creates ten telemetry rows");
+    require(sim.state().dailyEconomySnapshots.front().day == 1, "telemetry captures first simulated day");
+    require(sim.state().dailyEconomySnapshots.back().day == 5, "telemetry captures latest simulated day");
 }
 
 void test_mining() {
@@ -60,6 +67,15 @@ void test_mining() {
 
     require(endingStructural > startingStructural, "mining increases structural stockpile");
     require(endingDeposit < startingDeposit, "mining decreases deposit");
+    require(sim.state().dailyEconomySnapshots.size() == 2, "one mining day creates telemetry for both deposits");
+
+    const deep::DailyEconomySnapshot& structuralTelemetry = sim.state().dailyEconomySnapshots.front();
+    require(structuralTelemetry.day == 1, "mining telemetry records the production day");
+    require(structuralTelemetry.colonyId == sim.state().colonies.front().id, "mining telemetry records colony ID");
+    require(structuralTelemetry.bodyId == sim.state().colonies.front().bodyId, "mining telemetry records body ID");
+    require(structuralTelemetry.mineral == deep::Mineral::Structural, "mining telemetry records mineral type");
+    require(structuralTelemetry.amount > 0.0, "mining telemetry records extracted amount");
+    require(structuralTelemetry.remainingDeposit == endingDeposit, "mining telemetry records remaining deposit");
 }
 
 void test_shipyard_completion() {
@@ -84,6 +100,10 @@ void test_shipyard_completion() {
     require(sim.state().fleets.size() == 1, "ship completion creates one fleet");
     require(sim.state().shipyardOrders.front().status == deep::ShipyardOrderStatus::Completed,
             "shipyard order is completed");
+    require(sim.state().eventLog.size() == 2,
+            "shipyard order creation and completion remain player-facing audit events");
+    require(std::holds_alternative<deep::ShipCompletedEvent>(sim.state().eventLog.back().payload),
+            "ship completion remains in event log");
 }
 
 
@@ -148,6 +168,8 @@ void test_fleet_movement() {
     require(sim.state().fleets.front().currentBodyId == marsId, "fleet arrives at Mars after fixed duration");
     require(sim.state().fleets.front().activeOrder.type == deep::FleetOrderType::None,
             "fleet clears active order after arrival");
+    require(std::holds_alternative<deep::FleetArrivedEvent>(sim.state().eventLog.back().payload),
+            "fleet arrival remains in event log");
 }
 
 void test_rejected_invalid_command() {

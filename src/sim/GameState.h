@@ -41,6 +41,11 @@ struct GameState {
     std::vector<ShipyardOrder> shipyardOrders;
     std::vector<Ship> ships;
     std::vector<Fleet> fleets;
+
+    // High-volume economy telemetry is separated from the audit log so routine
+    // mining can feed future graphs/forecasts without overwhelming event views.
+    std::vector<DailyEconomySnapshot> dailyEconomySnapshots;
+
     std::vector<SimEvent> eventLog;
 };
 
