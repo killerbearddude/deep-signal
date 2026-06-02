@@ -73,6 +73,11 @@ template <typename EnumT>
     return static_cast<int>(value);
 }
 
+// Fallback-only helpers are compiled out when nlohmann/json is available.
+// This keeps the preferred system-header build warning-clean while preserving
+// the strict local parser for dependency-free environments.
+#if !DEEP_SIGNAL_HAS_NLOHMANN_JSON
+
 // Writes doubles with enough precision for a stable JSON audit payload.
 [[nodiscard]] std::string numberToJson(const double value) {
     std::ostringstream out;
@@ -233,6 +238,8 @@ void requireFlatJsonObjectShape(const std::string_view json) {
 [[nodiscard]] std::string quoteJson(const std::string_view value) {
     return '"' + escapeJsonString(value) + '"';
 }
+
+#endif // !DEEP_SIGNAL_HAS_NLOHMANN_JSON
 
 } // namespace
 
