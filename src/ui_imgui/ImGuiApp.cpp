@@ -91,6 +91,7 @@ void ImGuiApp::renderPanels() {
 
     saveLoadPanel_.render(service_);
     timeControlPanel_.render(service_);
+    shipyardPanel_.render(queries, service_);
     strategicMapPanel_.render(queries, selection_);
     colonyPanel_.render(queries, selection_);
     fleetPanel_.render(queries, selection_);

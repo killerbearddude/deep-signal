@@ -67,6 +67,21 @@ void test_shipyard_order_summaries_resolve_names() {
     require(orders.front().statusName == "Active", "new order summary reports active status");
 }
 
+
+void test_ship_class_summaries_expose_build_targets() {
+    // Verifies that UI production panels can discover buildable ship classes
+    // through query DTOs instead of reading GameState::shipClasses directly.
+    const deep::SimulationService service;
+    const deep::SimulationQueries queries{service};
+
+    const auto shipClasses = queries.shipClasses();
+
+    require(shipClasses.size() == 1, "home scenario exposes one buildable ship class summary");
+    require(shipClasses.front().name == "Survey Cutter", "ship class summary includes Survey Cutter");
+    require(shipClasses.front().roleName == "Survey", "ship class summary exposes display role name");
+    require(shipClasses.front().buildPoints == 500.0, "ship class summary exposes build points");
+}
+
 void test_fleet_summaries_resolve_location_and_order() {
     // Verifies fleet summaries after ship completion and movement assignment.
     // This protects future map/fleet panels from duplicating movement joins.
@@ -172,6 +187,7 @@ int main() {
     try {
         test_colony_summaries_resolve_body_context();
         test_shipyard_order_summaries_resolve_names();
+        test_ship_class_summaries_expose_build_targets();
         test_fleet_summaries_resolve_location_and_order();
         test_strategic_map_summaries_resolve_positions();
         test_recent_events_returns_limited_chronological_tail();

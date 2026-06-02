@@ -61,6 +61,19 @@ template <typename T, typename IdT>
     return shipClass == nullptr ? std::string{"<unknown ship class>"} : shipClass->name;
 }
 
+[[nodiscard]] std::string shipRoleName(const ShipRole role) {
+    switch (role) {
+    case ShipRole::Survey:
+        return "Survey";
+    case ShipRole::Freighter:
+        return "Freighter";
+    case ShipRole::Escort:
+        return "Escort";
+    }
+
+    return "Unknown";
+}
+
 [[nodiscard]] double shipClassBuildPoints(const GameState& state, const ShipClassId id) noexcept {
     const ShipClass* shipClass = findById(state.shipClasses, id);
     return shipClass == nullptr ? 0.0 : shipClass->buildPoints;
@@ -206,6 +219,24 @@ std::vector<ShipyardOrderSummary> SimulationQueries::shipyardOrders() const {
             .requiredBuildPoints = shipClassBuildPoints(state, order.shipClassId),
             .status = order.status,
             .statusName = statusName(order.status)
+        });
+    }
+
+    return summaries;
+}
+
+std::vector<ShipClassSummary> SimulationQueries::shipClasses() const {
+    const GameState& state = service_.state();
+    std::vector<ShipClassSummary> summaries;
+    summaries.reserve(state.shipClasses.size());
+
+    for (const ShipClass& shipClass : state.shipClasses) {
+        summaries.push_back(ShipClassSummary{
+            .id = shipClass.id,
+            .name = shipClass.name,
+            .role = shipClass.role,
+            .roleName = shipRoleName(shipClass.role),
+            .buildPoints = shipClass.buildPoints
         });
     }
 

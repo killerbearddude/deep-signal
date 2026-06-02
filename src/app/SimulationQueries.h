@@ -44,6 +44,16 @@ struct ShipyardOrderSummary {
     std::string statusName;
 };
 
+// Display-ready buildable ship class row. The UI can use these IDs to submit
+// production commands without reading GameState::shipClasses directly.
+struct ShipClassSummary {
+    ShipClassId id;
+    std::string name;
+    ShipRole role = ShipRole::Survey;
+    std::string roleName;
+    double buildPoints = 0.0;
+};
+
 // Display-ready fleet row with resolved body names and order state. Destination
 // remains optional because idle fleets intentionally have no target body.
 struct FleetSummary {
@@ -109,6 +119,9 @@ public:
 
     // Returns one summary row per shipyard order, including colony/class names.
     [[nodiscard]] std::vector<ShipyardOrderSummary> shipyardOrders() const;
+
+    // Returns one summary row per buildable ship class.
+    [[nodiscard]] std::vector<ShipClassSummary> shipClasses() const;
 
     // Returns one summary row per fleet, including location and order state.
     [[nodiscard]] std::vector<FleetSummary> fleets() const;

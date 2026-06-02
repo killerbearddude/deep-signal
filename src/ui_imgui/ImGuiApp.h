@@ -13,6 +13,7 @@
 #include "ui_imgui/InspectorPanel.h"
 #include "ui_imgui/MainMenuBar.h"
 #include "ui_imgui/SaveLoadPanel.h"
+#include "ui_imgui/ShipyardPanel.h"
 #include "ui_imgui/StrategicMapPanel.h"
 #include "ui_imgui/TimeControlPanel.h"
 
@@ -52,6 +53,7 @@ private:
     MainMenuBar mainMenuBar_;
     SaveLoadPanel saveLoadPanel_;
     TimeControlPanel timeControlPanel_;
+    ShipyardPanel shipyardPanel_;
     ColonyPanel colonyPanel_;
     FleetPanel fleetPanel_;
     EventLogPanel eventLogPanel_;

@@ -106,6 +106,7 @@ if(DEEP_SIGNAL_BUILD_UI)
         src/ui_imgui/InspectorPanel.cpp
         src/ui_imgui/MainMenuBar.cpp
         src/ui_imgui/SaveLoadPanel.cpp
+        src/ui_imgui/ShipyardPanel.cpp
         src/ui_imgui/StrategicMapPanel.cpp
         src/ui_imgui/TimeControlPanel.cpp
     )
