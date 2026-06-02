@@ -104,10 +104,13 @@ if(DEEP_SIGNAL_BUILD_UI)
 
     add_executable(deep_signal_imgui
         src/platform/SdlApp.cpp
+        src/render/MapCamera.cpp
+        src/render/StrategicMapView.cpp
         src/ui_imgui/ColonyPanel.cpp
         src/ui_imgui/EventLogPanel.cpp
         src/ui_imgui/FleetPanel.cpp
         src/ui_imgui/ImGuiApp.cpp
+        src/ui_imgui/StrategicMapPanel.cpp
         src/ui_imgui/TimeControlPanel.cpp
     )
 

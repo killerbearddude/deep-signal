@@ -100,6 +100,36 @@ void test_fleet_summaries_resolve_location_and_order() {
     require(fleets.front().daysRemaining == 5, "fleet summary includes remaining movement days");
 }
 
+void test_strategic_map_summaries_resolve_positions() {
+    // Verifies that the map can draw bodies and fleets from DTOs instead of
+    // reading raw GameState body/fleet vectors in UI code.
+    deep::SimulationService service;
+    const deep::ColonyId colonyId = service.state().colonies.front().id;
+    const deep::ShipClassId shipClassId = service.state().shipClasses.front().id;
+
+    require(service.execute(deep::AssignShipyardBuildCommand{
+        .colonyId = colonyId,
+        .shipClassId = shipClassId,
+        .quantity = 1
+    }).ok, "build order is accepted before strategic map query");
+    static_cast<void>(service.advanceDays(5));
+
+    const deep::SimulationQueries queries{service};
+    const auto bodies = queries.strategicBodies();
+    const auto fleets = queries.strategicFleets();
+
+    require(bodies.size() == 2, "home scenario exposes two strategic body summaries");
+    require(bodies.front().name == "Terra", "strategic body summary includes body name");
+    require(bodies.front().typeName == "Terrestrial", "strategic body summary includes body type name");
+    require(bodies.front().x == 0.0 && bodies.front().y == 0.0, "strategic body summary includes coordinates");
+    require(bodies.at(1).name == "Mars", "second strategic body summary includes Mars");
+    require(bodies.at(1).x == 240.0, "Mars strategic body summary preserves map x coordinate");
+
+    require(fleets.size() == 1, "completed ship creates one strategic fleet summary");
+    require(fleets.front().name.find("Survey Cutter Fleet") != std::string::npos, "strategic fleet summary includes fleet name");
+    require(fleets.front().x == 0.0 && fleets.front().y == 0.0, "fleet marker resolves current body coordinates");
+}
+
 void test_recent_events_returns_limited_chronological_tail() {
     // Verifies that recentEvents(limit) returns the newest audit entries but
     // preserves log order inside that returned window. Routine mining telemetry
@@ -143,6 +173,7 @@ int main() {
         test_colony_summaries_resolve_body_context();
         test_shipyard_order_summaries_resolve_names();
         test_fleet_summaries_resolve_location_and_order();
+        test_strategic_map_summaries_resolve_positions();
         test_recent_events_returns_limited_chronological_tail();
     } catch (const std::exception& ex) {
         std::cerr << "Test failure: " << ex.what() << '\n';

@@ -85,6 +85,7 @@ void ImGuiApp::renderPanels() {
     const SimulationQueries queries{service_};
 
     timeControlPanel_.render(service_);
+    strategicMapPanel_.render(queries);
     colonyPanel_.render(queries);
     fleetPanel_.render(queries);
     eventLogPanel_.render(queries);

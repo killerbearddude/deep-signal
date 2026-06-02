@@ -59,6 +59,32 @@ struct FleetSummary {
     int daysRemaining = 0;
 };
 
+// Map-ready body row with coarse simulation coordinates copied from GameState.
+// These DTOs let the strategic map draw the system without exposing body vectors.
+struct StrategicBodySummary {
+    BodyId id;
+    std::string name;
+    BodyType type = BodyType::Terrestrial;
+    std::string typeName;
+    double x = 0.0;
+    double y = 0.0;
+};
+
+// Map-ready fleet marker. Fleet coordinates are resolved through current and
+// destination bodies so UI panels do not need direct body lookups.
+struct StrategicFleetSummary {
+    FleetId id;
+    std::string name;
+    BodyId currentBodyId;
+    double x = 0.0;
+    double y = 0.0;
+    std::optional<BodyId> destinationBodyId;
+    double destinationX = 0.0;
+    double destinationY = 0.0;
+    bool moving = false;
+    int daysRemaining = 0;
+};
+
 // Display-ready event log entry. The payload variant is flattened into type and
 // message text so UI code does not need to duplicate event visitor logic.
 struct EventLogEntrySummary {
@@ -86,6 +112,12 @@ public:
 
     // Returns one summary row per fleet, including location and order state.
     [[nodiscard]] std::vector<FleetSummary> fleets() const;
+
+    // Returns one map row per body, including abstract prototype coordinates.
+    [[nodiscard]] std::vector<StrategicBodySummary> strategicBodies() const;
+
+    // Returns one map row per fleet, resolving marker coordinates from bodies.
+    [[nodiscard]] std::vector<StrategicFleetSummary> strategicFleets() const;
 
     // Returns the newest event-log entries, preserving chronological order
     // within the returned window. A limit of zero returns an empty vector.

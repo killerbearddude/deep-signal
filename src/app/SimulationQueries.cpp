@@ -30,6 +30,27 @@ template <typename T, typename IdT>
     return body == nullptr ? std::string{"<unknown body>"} : body->name;
 }
 
+[[nodiscard]] const Body* bodyById(const GameState& state, const BodyId id) noexcept {
+    return findById(state.bodies, id);
+}
+
+[[nodiscard]] std::string bodyTypeName(const BodyType type) {
+    switch (type) {
+    case BodyType::Star:
+        return "Star";
+    case BodyType::Terrestrial:
+        return "Terrestrial";
+    case BodyType::GasGiant:
+        return "Gas Giant";
+    case BodyType::Moon:
+        return "Moon";
+    case BodyType::Asteroid:
+        return "Asteroid";
+    }
+
+    return "Unknown";
+}
+
 [[nodiscard]] std::string colonyName(const GameState& state, const ColonyId id) {
     const Colony* colony = findById(state.colonies, id);
     return colony == nullptr ? std::string{"<unknown colony>"} : colony->name;
@@ -209,6 +230,53 @@ std::vector<FleetSummary> SimulationQueries::fleets() const {
             .shipCount = fleet.shipIds.size(),
             .activeOrderType = fleet.activeOrder.type,
             .activeOrderName = fleetOrderName(fleet.activeOrder.type),
+            .daysRemaining = fleet.activeOrder.daysRemaining
+        });
+    }
+
+    return summaries;
+}
+
+std::vector<StrategicBodySummary> SimulationQueries::strategicBodies() const {
+    const GameState& state = service_.state();
+    std::vector<StrategicBodySummary> summaries;
+    summaries.reserve(state.bodies.size());
+
+    for (const Body& body : state.bodies) {
+        summaries.push_back(StrategicBodySummary{
+            .id = body.id,
+            .name = body.name,
+            .type = body.type,
+            .typeName = bodyTypeName(body.type),
+            .x = body.x,
+            .y = body.y
+        });
+    }
+
+    return summaries;
+}
+
+std::vector<StrategicFleetSummary> SimulationQueries::strategicFleets() const {
+    const GameState& state = service_.state();
+    std::vector<StrategicFleetSummary> summaries;
+    summaries.reserve(state.fleets.size());
+
+    for (const Fleet& fleet : state.fleets) {
+        const Body* currentBody = bodyById(state, fleet.currentBodyId);
+        const Body* destinationBody = fleet.destinationBodyId.has_value()
+            ? bodyById(state, *fleet.destinationBodyId)
+            : nullptr;
+
+        summaries.push_back(StrategicFleetSummary{
+            .id = fleet.id,
+            .name = fleet.name,
+            .currentBodyId = fleet.currentBodyId,
+            .x = currentBody == nullptr ? 0.0 : currentBody->x,
+            .y = currentBody == nullptr ? 0.0 : currentBody->y,
+            .destinationBodyId = fleet.destinationBodyId,
+            .destinationX = destinationBody == nullptr ? 0.0 : destinationBody->x,
+            .destinationY = destinationBody == nullptr ? 0.0 : destinationBody->y,
+            .moving = fleet.activeOrder.type == FleetOrderType::MoveToBody && fleet.destinationBodyId.has_value(),
             .daysRemaining = fleet.activeOrder.daysRemaining
         });
     }

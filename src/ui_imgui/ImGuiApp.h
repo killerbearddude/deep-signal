@@ -2,13 +2,14 @@
 
 // Declares the minimal Dear ImGui application shell.
 // The shell renders functional prototype panels against SimulationService without
-// exposing raw GameState vectors or introducing map rendering.
+// exposing raw GameState vectors.
 
 #include "app/SimulationService.h"
 #include "platform/SdlApp.h"
 #include "ui_imgui/ColonyPanel.h"
 #include "ui_imgui/EventLogPanel.h"
 #include "ui_imgui/FleetPanel.h"
+#include "ui_imgui/StrategicMapPanel.h"
 #include "ui_imgui/TimeControlPanel.h"
 
 namespace deep::ui_imgui {
@@ -45,6 +46,7 @@ private:
     ColonyPanel colonyPanel_;
     FleetPanel fleetPanel_;
     EventLogPanel eventLogPanel_;
+    StrategicMapPanel strategicMapPanel_;
 };
 
 } // namespace deep::ui_imgui
