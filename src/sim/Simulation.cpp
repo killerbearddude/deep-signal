@@ -248,6 +248,23 @@ void Simulation::simulateMining(std::vector<SimEvent>&) {
 void Simulation::simulateShipyards(std::vector<SimEvent>& emitted) {
     constexpr double kBuildPointEpsilon = 1.0e-9;
 
+    struct ShipyardCapacityPool {
+        ColonyId colonyId;
+        double remainingBuildPoints = 0.0;
+    };
+
+    std::vector<ShipyardCapacityPool> capacityPools;
+    capacityPools.reserve(state_.colonies.size());
+    for (const Colony& colony : state_.colonies) {
+        // Each colony has exactly one daily shipyard pool. Orders draw down this
+        // pool in persistent order-vector order, which gives deterministic FIFO
+        // behavior without adding a separate production-queue type yet.
+        capacityPools.push_back(ShipyardCapacityPool{
+            .colonyId = colony.id,
+            .remainingBuildPoints = std::max(0.0, colony.shipyardCapacity)
+        });
+    }
+
     for (ShipyardOrder& order : state_.shipyardOrders) {
         if (order.status != ShipyardOrderStatus::Active) {
             continue;
@@ -263,17 +280,41 @@ void Simulation::simulateShipyards(std::vector<SimEvent>& emitted) {
             continue;
         }
 
-        order.accumulatedBuildPoints += colony->shipyardCapacity;
+        const auto poolIt = std::find_if(capacityPools.begin(), capacityPools.end(), [colony](const ShipyardCapacityPool& pool) {
+            return pool.colonyId == colony->id;
+        });
+        if (poolIt == capacityPools.end()) {
+            emitEvent(emitted, EventSeverity::Warning, CommandRejectedEvent{"Shipyard order references missing colony capacity pool"});
+            continue;
+        }
 
-        // Complete as many ships as accumulated capacity allows. Multi-ship
-        // orders are important even in the prototype because they exercise ID
-        // allocation, stockpile spending, and event ordering repeatedly.
-        while (order.quantityCompleted < order.quantityRequested &&
-               order.accumulatedBuildPoints + kBuildPointEpsilon >= shipClass->buildPoints) {
+        // Complete as many ships as the order's existing progress plus this
+        // colony's remaining daily capacity allows. When this order still needs
+        // build points, it consumes the colony pool before later orders at the
+        // same colony can receive any capacity.
+        while (order.quantityCompleted < order.quantityRequested) {
+            if (order.accumulatedBuildPoints + kBuildPointEpsilon < shipClass->buildPoints) {
+                if (poolIt->remainingBuildPoints <= kBuildPointEpsilon) {
+                    break;
+                }
+
+                const double buildPointsNeeded = shipClass->buildPoints - order.accumulatedBuildPoints;
+                const double allocatedBuildPoints = std::min(poolIt->remainingBuildPoints, buildPointsNeeded);
+                order.accumulatedBuildPoints += allocatedBuildPoints;
+                poolIt->remainingBuildPoints -= allocatedBuildPoints;
+
+                if (order.accumulatedBuildPoints + kBuildPointEpsilon < shipClass->buildPoints) {
+                    break;
+                }
+            }
+
             if (!colony->stockpile.canPay(shipClass->buildCost)) {
                 // Mineral shortages are temporary production pauses, not a
                 // terminal order state. Keep the order Active so future mining
-                // can satisfy the cost and complete the ship automatically.
+                // can satisfy the cost and complete the ship automatically. The
+                // blocked FIFO order also holds the queue for this colony today;
+                // later orders should not leapfrog a material-starved order.
+                poolIt->remainingBuildPoints = 0.0;
                 emitEvent(emitted, EventSeverity::Warning, CommandRejectedEvent{"Shipyard order waiting for sufficient minerals"});
                 break;
             }

@@ -106,6 +106,46 @@ void test_shipyard_completion() {
             "ship completion remains in event log");
 }
 
+void test_shipyard_capacity_is_shared_by_fifo_orders() {
+    // Regression test for colony-level capacity allocation. Multiple active
+    // orders at the same colony must not each receive a full daily capacity
+    // grant; the first order consumes the pool before later orders can progress.
+    deep::Simulation sim{deep::createHomeSystemScenario()};
+
+    const deep::ColonyId colonyId = sim.state().colonies.front().id;
+    const deep::ShipClassId shipClassId = sim.state().shipClasses.front().id;
+
+    require(sim.execute(deep::AssignShipyardBuildCommand{
+        .colonyId = colonyId,
+        .shipClassId = shipClassId,
+        .quantity = 1
+    }).ok, "first build order is accepted");
+    require(sim.execute(deep::AssignShipyardBuildCommand{
+        .colonyId = colonyId,
+        .shipClassId = shipClassId,
+        .quantity = 1
+    }).ok, "second build order is accepted");
+
+    sim.advanceDays(5);
+
+    require(sim.state().shipyardOrders.size() == 2, "two shipyard orders remain tracked");
+    require(sim.state().ships.size() == 1, "five days of 100 BP/day completes only one 500 BP order");
+    require(sim.state().shipyardOrders.at(0).status == deep::ShipyardOrderStatus::Completed,
+            "FIFO order receives colony capacity first");
+    require(sim.state().shipyardOrders.at(1).status == deep::ShipyardOrderStatus::Active,
+            "second FIFO order waits for later daily capacity");
+    require(sim.state().shipyardOrders.at(1).quantityCompleted == 0,
+            "second FIFO order does not complete from duplicated capacity");
+    require(sim.state().shipyardOrders.at(1).accumulatedBuildPoints == 0.0,
+            "second FIFO order receives no capacity while the first order is consuming the pool");
+
+    sim.advanceDays(5);
+
+    require(sim.state().ships.size() == 2, "second order completes after receiving the next five days of capacity");
+    require(sim.state().shipyardOrders.at(1).status == deep::ShipyardOrderStatus::Completed,
+            "second FIFO order eventually completes after the first order finishes");
+}
+
 
 void test_shipyard_temporary_mineral_shortage_recovers() {
     // Verifies that mineral shortages pause production without permanently
@@ -243,6 +283,7 @@ int main() {
         test_time_advancement();
         test_mining();
         test_shipyard_completion();
+        test_shipyard_capacity_is_shared_by_fifo_orders();
         test_shipyard_temporary_mineral_shortage_recovers();
         test_fleet_movement();
         test_cancel_fleet_order();
