@@ -92,16 +92,8 @@ if(DEEP_SIGNAL_BUILD_UI)
         message(FATAL_ERROR "DEEP_SIGNAL_BUILD_UI requires DEEP_SIGNAL_BUILD_APP")
     endif()
 
-    find_package(SDL3 CONFIG REQUIRED)
-    find_package(imgui CONFIG REQUIRED)
-
-    if(NOT TARGET SDL3::SDL3)
-        message(FATAL_ERROR "SDL3 package was found, but target SDL3::SDL3 is unavailable")
-    endif()
-
-    if(NOT TARGET imgui::imgui)
-        message(FATAL_ERROR "imgui package was found, but target imgui::imgui is unavailable")
-    endif()
+    include(cmake/DeepSignalUiDependencies.cmake)
+    deep_signal_configure_ui_dependencies(DEEP_SIGNAL_UI_DEPENDENCY_TARGET)
 
     add_executable(deep_signal_imgui
         src/platform/SdlApp.cpp
@@ -112,12 +104,14 @@ if(DEEP_SIGNAL_BUILD_UI)
         src/ui_imgui/FleetPanel.cpp
         src/ui_imgui/ImGuiApp.cpp
         src/ui_imgui/InspectorPanel.cpp
+        src/ui_imgui/MainMenuBar.cpp
+        src/ui_imgui/SaveLoadPanel.cpp
         src/ui_imgui/StrategicMapPanel.cpp
         src/ui_imgui/TimeControlPanel.cpp
     )
 
     target_link_libraries(deep_signal_imgui
-        PRIVATE deep_signal_app SDL3::SDL3 imgui::imgui
+        PRIVATE deep_signal_app ${DEEP_SIGNAL_UI_DEPENDENCY_TARGET}
     )
 
     target_compile_options(deep_signal_imgui PRIVATE ${DEEP_SIGNAL_WARNINGS})

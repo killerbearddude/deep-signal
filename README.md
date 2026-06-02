@@ -18,6 +18,7 @@ First buildable headless simulation slice for **Deep Signal Prototype 0.1 - Home
 - Prepared statements for value-bearing SQL
 - CLI smoke runner
 - Minimal self-contained tests using CTest
+- Optional SDL3/Dear ImGui desktop shell, isolated behind `DEEP_SIGNAL_BUILD_UI`
 - Direct `GameStateValidation` regression tests
 - Save/load round-trip regression test
 - Malformed-save rejection tests for schema singleton, enum, range, stale counter, metadata, event chronology, shipyard lifecycle, fleet-order, foreign-key, and event-payload failures
@@ -113,7 +114,6 @@ Direct validation tests now cover invalid in-memory `GameState` snapshots such a
 
 ## What is intentionally not included yet
 
-- SDL3 / Dear ImGui UI
 - Combat
 - Sensors
 - Research
@@ -124,13 +124,50 @@ Direct validation tests now cover invalid in-memory `GameState` snapshots such a
 
 ## Build
 
-Requires CMake 3.22 or newer, a C++20 compiler, and SQLite development headers for the default save-enabled build. Installing `nlohmann-json3-dev` is recommended; the code will use `<nlohmann/json.hpp>` automatically when available.
+Requires CMake 3.22 or newer and a C++20 compiler. The default build also requires SQLite development headers because save/load and the app service are enabled by default. Installing `nlohmann-json3-dev` is recommended; the code will use `<nlohmann/json.hpp>` automatically when available.
+
+### Headless full build
 
 ```bash
 cmake -S . -B build -G Ninja
 cmake --build build
 ctest --test-dir build --output-on-failure
 ./build/deep_signal_cli
+```
+
+### Simulation-only build
+
+Use this when you want to build and test the pure simulation layer without SQLite, app, or UI dependencies.
+
+```bash
+cmake -S . -B build-sim-only -G Ninja -DDEEP_SIGNAL_BUILD_SAVE=OFF -DDEEP_SIGNAL_BUILD_APP=OFF
+cmake --build build-sim-only
+ctest --test-dir build-sim-only --output-on-failure
+```
+
+### Optional SDL3 / Dear ImGui UI build
+
+The desktop UI is isolated behind `DEEP_SIGNAL_BUILD_UI=ON`. Headless builds do not require SDL3, Dear ImGui, or ImPlot.
+
+Before configuring the UI target, install SDL3 development files so CMake can resolve `find_package(SDL3 CONFIG REQUIRED)` and the imported target `SDL3::SDL3`. If SDL3 is installed in a non-standard prefix, pass either `-DCMAKE_PREFIX_PATH=/path/to/sdl3/install` or `-DSDL3_DIR=/path/to/lib/cmake/SDL3`.
+
+Dear ImGui and ImPlot are expected as source checkouts under `third_party/`:
+
+```bash
+# Remove placeholder documentation directories before replacing them with submodules.
+rm -rf third_party/imgui third_party/implot
+
+git submodule add -b docking https://github.com/ocornut/imgui third_party/imgui
+git submodule add https://github.com/epezent/implot third_party/implot
+git submodule update --init --recursive third_party/imgui third_party/implot
+```
+
+The docking branch is required because the UI shell enables ImGui docking. The project builds only the required core/backend source files; demo sources are intentionally not linked.
+
+```bash
+cmake -S . -B build-ui -G Ninja -DDEEP_SIGNAL_BUILD_UI=ON
+cmake --build build-ui --target deep_signal_imgui
+./build-ui/deep_signal_imgui
 ```
 
 If Ninja is not installed:
