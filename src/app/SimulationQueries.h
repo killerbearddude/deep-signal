@@ -1,0 +1,98 @@
+#pragma once
+
+// Declares read-only application query DTOs for simulation state.
+// Future UI code should consume these summaries instead of reaching through
+// SimulationService into raw GameState vectors.
+
+#include "app/SimulationService.h"
+#include "sim/Domain.h"
+#include "sim/Events.h"
+#include "sim/IdTypes.h"
+
+#include <cstddef>
+#include <cstdint>
+#include <optional>
+#include <string>
+#include <vector>
+
+namespace deep {
+
+// Display-ready colony row for overview panels. Values are copied out of the
+// simulation snapshot so UI code cannot mutate GameState accidentally.
+struct ColonySummary {
+    ColonyId id;
+    BodyId bodyId;
+    std::string name;
+    std::string bodyName;
+    double mines = 0.0;
+    double shipyardCapacity = 0.0;
+};
+
+// Display-ready shipyard order row with resolved names for common UI tables.
+// IDs remain available so future commands can still target the selected row.
+struct ShipyardOrderSummary {
+    ShipyardOrderId id;
+    ColonyId colonyId;
+    ShipClassId shipClassId;
+    std::string colonyName;
+    std::string shipClassName;
+    int quantityRequested = 0;
+    int quantityCompleted = 0;
+    double accumulatedBuildPoints = 0.0;
+    double requiredBuildPoints = 0.0;
+    ShipyardOrderStatus status = ShipyardOrderStatus::Active;
+    std::string statusName;
+};
+
+// Display-ready fleet row with resolved body names and order state. Destination
+// remains optional because idle fleets intentionally have no target body.
+struct FleetSummary {
+    FleetId id;
+    std::string name;
+    BodyId currentBodyId;
+    std::string currentBodyName;
+    std::optional<BodyId> destinationBodyId;
+    std::string destinationBodyName;
+    std::size_t shipCount = 0;
+    FleetOrderType activeOrderType = FleetOrderType::None;
+    std::string activeOrderName;
+    int daysRemaining = 0;
+};
+
+// Display-ready event log entry. The payload variant is flattened into type and
+// message text so UI code does not need to duplicate event visitor logic.
+struct EventLogEntrySummary {
+    EventId id;
+    std::int64_t day = 0;
+    EventSeverity severity = EventSeverity::Info;
+    std::string severityName;
+    std::string eventType;
+    std::string message;
+};
+
+// Read-only query facade over SimulationService. The facade does not own the
+// service; callers must ensure the referenced service outlives the query object.
+class SimulationQueries {
+public:
+    // Binds queries to an application service. Returned summaries are snapshots
+    // copied from the service state at the time each query is called.
+    explicit SimulationQueries(const SimulationService& service) noexcept;
+
+    // Returns one summary row per colony, including resolved body names.
+    [[nodiscard]] std::vector<ColonySummary> colonies() const;
+
+    // Returns one summary row per shipyard order, including colony/class names.
+    [[nodiscard]] std::vector<ShipyardOrderSummary> shipyardOrders() const;
+
+    // Returns one summary row per fleet, including location and order state.
+    [[nodiscard]] std::vector<FleetSummary> fleets() const;
+
+    // Returns the newest event-log entries, preserving chronological order
+    // within the returned window. A limit of zero returns an empty vector.
+    [[nodiscard]] std::vector<EventLogEntrySummary> recentEvents(std::size_t limit) const;
+
+private:
+    const SimulationService& service_;
+};
+
+} // namespace deep

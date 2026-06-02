@@ -1,0 +1,141 @@
+#include "app/SimulationQueries.h"
+#include "app/SimulationService.h"
+#include "sim/Commands.h"
+
+// Self-contained regression tests for app-layer read-only query DTOs.
+// These tests protect the future UI boundary from drifting back toward direct
+// raw GameState vector inspection.
+
+#include <cstdlib>
+#include <exception>
+#include <iostream>
+#include <stdexcept>
+#include <string>
+#include <string_view>
+
+namespace {
+
+class TestFailure final : public std::runtime_error {
+public:
+    explicit TestFailure(const std::string_view message)
+        : std::runtime_error{std::string{message}} {}
+};
+
+void require(const bool condition, const std::string_view message) {
+    if (!condition) {
+        throw TestFailure{message};
+    }
+}
+
+void test_colony_summaries_resolve_body_context() {
+    // Verifies that colony queries return UI-useful copies with resolved body
+    // names. Prevents future panels from needing raw GameState::colonies access.
+    const deep::SimulationService service;
+    const deep::SimulationQueries queries{service};
+
+    const auto colonies = queries.colonies();
+
+    require(colonies.size() == 1, "home scenario exposes one colony summary");
+    require(colonies.front().name == "Terra Directorate", "colony summary includes colony name");
+    require(colonies.front().bodyName == "Terra", "colony summary resolves body name");
+    require(colonies.front().mines == 10.0, "colony summary includes mine count");
+    require(colonies.front().shipyardCapacity == 100.0, "colony summary includes shipyard capacity");
+}
+
+void test_shipyard_order_summaries_resolve_names() {
+    // Verifies that accepted build orders can be shown without joining colony
+    // and ship-class vectors in UI code.
+    deep::SimulationService service;
+    const deep::ColonyId colonyId = service.state().colonies.front().id;
+    const deep::ShipClassId shipClassId = service.state().shipClasses.front().id;
+
+    require(service.execute(deep::AssignShipyardBuildCommand{
+        .colonyId = colonyId,
+        .shipClassId = shipClassId,
+        .quantity = 2
+    }).ok, "build order is accepted before querying summaries");
+
+    const deep::SimulationQueries queries{service};
+    const auto orders = queries.shipyardOrders();
+
+    require(orders.size() == 1, "one shipyard order summary is returned");
+    require(orders.front().colonyName == "Terra Directorate", "order summary resolves colony name");
+    require(orders.front().shipClassName == "Survey Cutter", "order summary resolves ship-class name");
+    require(orders.front().quantityRequested == 2, "order summary includes requested quantity");
+    require(orders.front().quantityCompleted == 0, "new order has no completions");
+    require(orders.front().requiredBuildPoints == 500.0, "order summary includes required build points");
+    require(orders.front().statusName == "Active", "new order summary reports active status");
+}
+
+void test_fleet_summaries_resolve_location_and_order() {
+    // Verifies fleet summaries after ship completion and movement assignment.
+    // This protects future map/fleet panels from duplicating movement joins.
+    deep::SimulationService service;
+    const deep::ColonyId colonyId = service.state().colonies.front().id;
+    const deep::ShipClassId shipClassId = service.state().shipClasses.front().id;
+    const deep::BodyId marsId = service.state().bodies.at(1).id;
+
+    require(service.execute(deep::AssignShipyardBuildCommand{
+        .colonyId = colonyId,
+        .shipClassId = shipClassId,
+        .quantity = 1
+    }).ok, "build order is accepted before fleet summary test");
+
+    static_cast<void>(service.advanceDays(5));
+    const deep::FleetId fleetId = service.state().fleets.front().id;
+
+    require(service.execute(deep::MoveFleetCommand{
+        .fleetId = fleetId,
+        .destinationBodyId = marsId
+    }).ok, "move order is accepted before fleet summary query");
+
+    const deep::SimulationQueries queries{service};
+    const auto fleets = queries.fleets();
+
+    require(fleets.size() == 1, "one fleet summary is returned");
+    require(fleets.front().currentBodyName == "Terra", "fleet summary resolves current body");
+    require(fleets.front().destinationBodyName == "Mars", "fleet summary resolves destination body");
+    require(fleets.front().shipCount == 1, "fleet summary includes ship count");
+    require(fleets.front().activeOrderName == "MoveToBody", "fleet summary includes active order type");
+    require(fleets.front().daysRemaining == 5, "fleet summary includes remaining movement days");
+}
+
+void test_recent_events_returns_limited_chronological_tail() {
+    // Verifies that recentEvents(limit) returns the newest entries but preserves
+    // log order inside that returned window. Prevents UI-specific reverse logic
+    // from leaking into panels later.
+    deep::SimulationService service;
+    static_cast<void>(service.advanceDays(3));
+
+    const deep::SimulationQueries queries{service};
+    const auto allEvents = queries.recentEvents(100);
+    const auto recentTwo = queries.recentEvents(2);
+    const auto none = queries.recentEvents(0);
+
+    require(!allEvents.empty(), "advancing time creates queryable event summaries");
+    require(recentTwo.size() == 2, "recentEvents applies the requested limit");
+    require(none.empty(), "recentEvents with zero limit is empty");
+    require(recentTwo.front().id == allEvents.at(allEvents.size() - 2).id,
+            "recentEvents returns the chronological tail window");
+    require(recentTwo.front().id.value < recentTwo.back().id.value,
+            "recentEvents preserves chronological order within the tail");
+    require(recentTwo.back().eventType == "mineral_extracted", "event summary exposes flattened event type");
+    require(!recentTwo.back().message.empty(), "event summary exposes display message text");
+}
+
+} // namespace
+
+int main() {
+    try {
+        test_colony_summaries_resolve_body_context();
+        test_shipyard_order_summaries_resolve_names();
+        test_fleet_summaries_resolve_location_and_order();
+        test_recent_events_returns_limited_chronological_tail();
+    } catch (const std::exception& ex) {
+        std::cerr << "Test failure: " << ex.what() << '\n';
+        return EXIT_FAILURE;
+    }
+
+    std::cout << "All Deep Signal app query tests passed.\n";
+    return EXIT_SUCCESS;
+}
