@@ -1,11 +1,15 @@
 #pragma once
 
 // Declares the minimal Dear ImGui application shell.
-// The shell renders placeholder docked panels against SimulationService without
-// introducing gameplay controls, map rendering, or new simulation behavior.
+// The shell renders functional prototype panels against SimulationService without
+// exposing raw GameState vectors or introducing map rendering.
 
 #include "app/SimulationService.h"
 #include "platform/SdlApp.h"
+#include "ui_imgui/ColonyPanel.h"
+#include "ui_imgui/EventLogPanel.h"
+#include "ui_imgui/FleetPanel.h"
+#include "ui_imgui/TimeControlPanel.h"
 
 namespace deep::ui_imgui {
 
@@ -32,11 +36,15 @@ private:
     // Draws a full-window dockspace that future panels can dock into.
     void renderDockspace();
 
-    // Draws non-interactive placeholder panels only; gameplay UI comes later.
-    void renderPlaceholderPanels();
+    // Draws the first functional simulation panels using app-layer query DTOs.
+    void renderPanels();
 
     platform::SdlApp sdl_;
     SimulationService service_;
+    TimeControlPanel timeControlPanel_;
+    ColonyPanel colonyPanel_;
+    FleetPanel fleetPanel_;
+    EventLogPanel eventLogPanel_;
 };
 
 } // namespace deep::ui_imgui

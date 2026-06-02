@@ -1,8 +1,10 @@
 #include "ui_imgui/ImGuiApp.h"
 
 // Implements the first SDL3/Dear ImGui shell for Deep Signal.
-// The goal is only to prove that a dockable desktop window can be launched on
-// top of the existing app layer; real game panels and controls are deferred.
+// The shell now hosts small functional panels while keeping all reads behind
+// SimulationQueries and all mutations behind SimulationService commands.
+
+#include "app/SimulationQueries.h"
 
 #include <SDL3/SDL.h>
 #include <imgui.h>
@@ -59,7 +61,7 @@ int ImGuiApp::run() {
         ImGui::NewFrame();
 
         renderDockspace();
-        renderPlaceholderPanels();
+        renderPanels();
 
         ImGui::Render();
         sdl_.beginFrame();
@@ -76,27 +78,20 @@ void ImGuiApp::renderDockspace() {
     ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport(), ImGuiDockNodeFlags_PassthruCentralNode);
 }
 
-void ImGuiApp::renderPlaceholderPanels() {
-    const GameState& state = service_.state();
+void ImGuiApp::renderPanels() {
+    // Recreate the query facade each frame so panels read a fresh snapshot after
+    // time-control commands mutate SimulationService. The facade is lightweight
+    // and does not expose mutable GameState access to panel code.
+    const SimulationQueries queries{service_};
 
-    ImGui::Begin("Empire Overview");
-    ImGui::TextUnformatted("Placeholder panel");
-    ImGui::Separator();
-    ImGui::Text("Day: %lld", static_cast<long long>(state.currentDate.day));
-    ImGui::Text("Colonies: %zu", state.colonies.size());
-    ImGui::Text("Fleets: %zu", state.fleets.size());
-    ImGui::End();
-
-    ImGui::Begin("Event Log");
-    ImGui::TextUnformatted("Placeholder panel");
-    ImGui::Separator();
-    ImGui::Text("Audit events: %zu", state.eventLog.size());
-    ImGui::Text("Economy telemetry rows: %zu", state.dailyEconomySnapshots.size());
-    ImGui::End();
+    timeControlPanel_.render(service_);
+    colonyPanel_.render(queries);
+    fleetPanel_.render(queries);
+    eventLogPanel_.render(queries);
 
     ImGui::Begin("Inspector");
-    ImGui::TextUnformatted("Placeholder panel");
-    ImGui::TextUnformatted("Selection and gameplay controls will be added in later patches.");
+    ImGui::TextUnformatted("Select-and-inspect workflows will be added in later patches.");
+    ImGui::TextUnformatted("Current panels intentionally use SimulationQueries DTOs only.");
     ImGui::End();
 }
 

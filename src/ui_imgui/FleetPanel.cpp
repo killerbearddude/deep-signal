@@ -1,0 +1,52 @@
+#include "ui_imgui/FleetPanel.h"
+
+// Implements a read-only fleet table for the initial functional UI shell.
+// Orders are displayed, not edited; command controls will be introduced later.
+
+#include <imgui.h>
+
+#include <vector>
+
+namespace deep::ui_imgui {
+
+void FleetPanel::render(const SimulationQueries& queries) const {
+    ImGui::Begin("Fleets");
+
+    const std::vector<FleetSummary> fleets = queries.fleets();
+    ImGui::Text("Fleets: %zu", fleets.size());
+
+    if (ImGui::BeginTable("FleetSummaryTable", 7, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
+        ImGui::TableSetupColumn("ID");
+        ImGui::TableSetupColumn("Name");
+        ImGui::TableSetupColumn("Location");
+        ImGui::TableSetupColumn("Destination");
+        ImGui::TableSetupColumn("Ships");
+        ImGui::TableSetupColumn("Order");
+        ImGui::TableSetupColumn("Days Left");
+        ImGui::TableHeadersRow();
+
+        for (const FleetSummary& fleet : fleets) {
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            ImGui::Text("%lld", static_cast<long long>(fleet.id.value));
+            ImGui::TableSetColumnIndex(1);
+            ImGui::TextUnformatted(fleet.name.c_str());
+            ImGui::TableSetColumnIndex(2);
+            ImGui::TextUnformatted(fleet.currentBodyName.c_str());
+            ImGui::TableSetColumnIndex(3);
+            ImGui::TextUnformatted(fleet.destinationBodyName.empty() ? "-" : fleet.destinationBodyName.c_str());
+            ImGui::TableSetColumnIndex(4);
+            ImGui::Text("%zu", fleet.shipCount);
+            ImGui::TableSetColumnIndex(5);
+            ImGui::TextUnformatted(fleet.activeOrderName.c_str());
+            ImGui::TableSetColumnIndex(6);
+            ImGui::Text("%d", fleet.daysRemaining);
+        }
+
+        ImGui::EndTable();
+    }
+
+    ImGui::End();
+}
+
+} // namespace deep::ui_imgui
