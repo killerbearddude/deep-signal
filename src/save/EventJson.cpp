@@ -73,15 +73,25 @@ template <typename EnumT>
     return static_cast<int>(value);
 }
 
+// Event payload JSON is persisted audit data. Reject non-finite doubles before
+// either serializer can turn them into implementation-specific text or nulls.
+[[nodiscard]] double checkedFiniteDoubleFromPayload(const double value, const std::string_view fieldName) {
+    if (!std::isfinite(value)) {
+        throw std::runtime_error{std::string{"Save event double is non-finite for field: "} + std::string{fieldName}};
+    }
+    return value;
+}
+
 // Fallback-only helpers are compiled out when nlohmann/json is available.
 // This keeps the preferred system-header build warning-clean while preserving
 // the strict local parser for dependency-free environments.
 #if !DEEP_SIGNAL_HAS_NLOHMANN_JSON
 
-// Writes doubles with enough precision for a stable JSON audit payload.
-[[nodiscard]] std::string numberToJson(const double value) {
+// Writes finite doubles with enough precision for a stable JSON audit payload.
+[[nodiscard]] std::string numberToJson(const double value, const std::string_view fieldName) {
+    const double checkedValue = checkedFiniteDoubleFromPayload(value, fieldName);
     std::ostringstream out;
-    out << std::setprecision(17) << value;
+    out << std::setprecision(17) << checkedValue;
     return out.str();
 }
 
@@ -272,8 +282,8 @@ void requireFlatJsonObjectShape(const std::string_view json) {
             object["colony_id"] = idValue(event.colonyId);
             object["body_id"] = idValue(event.bodyId);
             object["mineral"] = enumValue(event.mineral);
-            object["amount"] = event.amount;
-            object["remaining_deposit"] = event.remainingDeposit;
+            object["amount"] = checkedFiniteDoubleFromPayload(event.amount, "event.amount");
+            object["remaining_deposit"] = checkedFiniteDoubleFromPayload(event.remainingDeposit, "event.remaining_deposit");
         } else if constexpr (std::is_same_v<Event, ShipyardOrderCreatedEvent>) {
             object["order_id"] = idValue(event.orderId);
             object["colony_id"] = idValue(event.colonyId);
@@ -309,8 +319,8 @@ void requireFlatJsonObjectShape(const std::string_view json) {
             out << "\"colony_id\":" << idValue(event.colonyId)
                 << ",\"body_id\":" << idValue(event.bodyId)
                 << ",\"mineral\":" << enumValue(event.mineral)
-                << ",\"amount\":" << numberToJson(event.amount)
-                << ",\"remaining_deposit\":" << numberToJson(event.remainingDeposit);
+                << ",\"amount\":" << numberToJson(event.amount, "event.amount")
+                << ",\"remaining_deposit\":" << numberToJson(event.remainingDeposit, "event.remaining_deposit");
         } else if constexpr (std::is_same_v<Event, ShipyardOrderCreatedEvent>) {
             out << "\"order_id\":" << idValue(event.orderId)
                 << ",\"colony_id\":" << idValue(event.colonyId)

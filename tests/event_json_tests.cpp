@@ -203,6 +203,30 @@ void test_non_finite_numeric_payload_is_rejected() {
     });
 }
 
+void test_non_finite_numeric_serialization_is_rejected() {
+    // Serialization must reject non-finite event data before nlohmann/json can
+    // encode it as null or the fallback writer can emit non-JSON tokens.
+    requireThrows("NaN amount serialization is rejected", [] {
+        static_cast<void>(deep::save::eventPayloadToJson(deep::MineralExtractedEvent{
+            .colonyId = deep::ColonyId{1},
+            .bodyId = deep::BodyId{2},
+            .mineral = deep::Mineral::Structural,
+            .amount = std::numeric_limits<double>::quiet_NaN(),
+            .remainingDeposit = 2.0
+        }));
+    });
+
+    requireThrows("infinite remaining deposit serialization is rejected", [] {
+        static_cast<void>(deep::save::eventPayloadToJson(deep::MineralExtractedEvent{
+            .colonyId = deep::ColonyId{1},
+            .bodyId = deep::BodyId{2},
+            .mineral = deep::Mineral::Structural,
+            .amount = 1.0,
+            .remainingDeposit = std::numeric_limits<double>::infinity()
+        }));
+    });
+}
+
 void test_integer_overflow_is_rejected() {
     // quantity and days_remaining narrow from persisted int64 values to int.
     // Overflow must fail at the save boundary instead of wrapping silently.
@@ -249,6 +273,7 @@ void runAllTests() {
     test_missing_required_field_is_rejected();
     test_invalid_mineral_ordinal_is_rejected();
     test_non_finite_numeric_payload_is_rejected();
+    test_non_finite_numeric_serialization_is_rejected();
     test_integer_overflow_is_rejected();
     test_event_type_names_are_stable_schema_v1_strings();
 }
