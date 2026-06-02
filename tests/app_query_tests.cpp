@@ -112,7 +112,39 @@ void test_fleet_summaries_resolve_location_and_order() {
     require(fleets.front().destinationBodyName == "Mars", "fleet summary resolves destination body");
     require(fleets.front().shipCount == 1, "fleet summary includes ship count");
     require(fleets.front().activeOrderName == "MoveToBody", "fleet summary includes active order type");
+    require(fleets.front().hasActiveOrder, "fleet summary marks active movement orders");
     require(fleets.front().daysRemaining == 5, "fleet summary includes remaining movement days");
+}
+
+void test_single_record_queries_return_matching_summaries() {
+    // Verifies the small lookup helpers used by command-oriented UI controls.
+    // This prevents panels from rebuilding their own raw GameState lookups.
+    deep::SimulationService service;
+    const deep::ColonyId colonyId = service.state().colonies.front().id;
+    const deep::ShipClassId shipClassId = service.state().shipClasses.front().id;
+
+    require(service.execute(deep::AssignShipyardBuildCommand{
+        .colonyId = colonyId,
+        .shipClassId = shipClassId,
+        .quantity = 1
+    }).ok, "build order is accepted before single-record query test");
+    static_cast<void>(service.advanceDays(5));
+
+    const deep::SimulationQueries queries{service};
+    const deep::FleetId fleetId = service.state().fleets.front().id;
+    const deep::BodyId terraId = service.state().bodies.front().id;
+
+    const auto fleet = queries.fleet(fleetId);
+    const auto body = queries.strategicBody(terraId);
+    const auto missingFleet = queries.fleet(deep::FleetId{9999});
+    const auto missingBody = queries.strategicBody(deep::BodyId{9999});
+
+    require(fleet.has_value(), "existing fleet ID returns a fleet summary");
+    require(fleet->id == fleetId, "fleet lookup preserves the requested ID");
+    require(body.has_value(), "existing body ID returns a strategic body summary");
+    require(body->name == "Terra", "body lookup resolves Terra");
+    require(!missingFleet.has_value(), "missing fleet ID returns no summary");
+    require(!missingBody.has_value(), "missing body ID returns no summary");
 }
 
 void test_strategic_map_summaries_resolve_positions() {
@@ -189,6 +221,7 @@ int main() {
         test_shipyard_order_summaries_resolve_names();
         test_ship_class_summaries_expose_build_targets();
         test_fleet_summaries_resolve_location_and_order();
+        test_single_record_queries_return_matching_summaries();
         test_strategic_map_summaries_resolve_positions();
         test_recent_events_returns_limited_chronological_tail();
     } catch (const std::exception& ex) {

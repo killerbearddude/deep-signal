@@ -30,12 +30,19 @@ struct MoveFleetCommand {
     BodyId destinationBodyId;
 };
 
+// Requests cancellation of the fleet's current active order. The prototype keeps
+// movement all-or-nothing, so cancellation leaves the fleet at its current body.
+struct CancelFleetOrderCommand {
+    FleetId fleetId;
+};
+
 // Command envelope used by Simulation::execute. Each variant alternative must
 // have a validation branch in Simulation.cpp.
 using SimCommand = std::variant<
     AdvanceDaysCommand,
     AssignShipyardBuildCommand,
-    MoveFleetCommand
+    MoveFleetCommand,
+    CancelFleetOrderCommand
 >;
 
 } // namespace deep

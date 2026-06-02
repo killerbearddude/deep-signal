@@ -8,8 +8,8 @@
 #include "sim/Minerals.h"
 
 #include <algorithm>
+#include <optional>
 #include <sstream>
-#include <string_view>
 #include <type_traits>
 
 namespace deep {
@@ -261,11 +261,21 @@ std::vector<FleetSummary> SimulationQueries::fleets() const {
             .shipCount = fleet.shipIds.size(),
             .activeOrderType = fleet.activeOrder.type,
             .activeOrderName = fleetOrderName(fleet.activeOrder.type),
+            .hasActiveOrder = fleet.activeOrder.type != FleetOrderType::None,
             .daysRemaining = fleet.activeOrder.daysRemaining
         });
     }
 
     return summaries;
+}
+
+
+std::optional<FleetSummary> SimulationQueries::fleet(const FleetId id) const {
+    const std::vector<FleetSummary> summaries = fleets();
+    const auto it = std::find_if(summaries.begin(), summaries.end(), [id](const FleetSummary& summary) {
+        return summary.id == id;
+    });
+    return it == summaries.end() ? std::optional<FleetSummary>{} : std::optional<FleetSummary>{*it};
 }
 
 std::vector<StrategicBodySummary> SimulationQueries::strategicBodies() const {
@@ -285,6 +295,15 @@ std::vector<StrategicBodySummary> SimulationQueries::strategicBodies() const {
     }
 
     return summaries;
+}
+
+
+std::optional<StrategicBodySummary> SimulationQueries::strategicBody(const BodyId id) const {
+    const std::vector<StrategicBodySummary> summaries = strategicBodies();
+    const auto it = std::find_if(summaries.begin(), summaries.end(), [id](const StrategicBodySummary& summary) {
+        return summary.id == id;
+    });
+    return it == summaries.end() ? std::optional<StrategicBodySummary>{} : std::optional<StrategicBodySummary>{*it};
 }
 
 std::vector<StrategicFleetSummary> SimulationQueries::strategicFleets() const {

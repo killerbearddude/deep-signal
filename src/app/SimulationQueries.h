@@ -66,6 +66,7 @@ struct FleetSummary {
     std::size_t shipCount = 0;
     FleetOrderType activeOrderType = FleetOrderType::None;
     std::string activeOrderName;
+    bool hasActiveOrder = false;
     int daysRemaining = 0;
 };
 
@@ -126,8 +127,14 @@ public:
     // Returns one summary row per fleet, including location and order state.
     [[nodiscard]] std::vector<FleetSummary> fleets() const;
 
+    // Returns a single fleet summary when the ID exists in the active snapshot.
+    [[nodiscard]] std::optional<FleetSummary> fleet(FleetId id) const;
+
     // Returns one map row per body, including abstract prototype coordinates.
     [[nodiscard]] std::vector<StrategicBodySummary> strategicBodies() const;
+
+    // Returns a single map-ready body summary when the ID exists.
+    [[nodiscard]] std::optional<StrategicBodySummary> strategicBody(BodyId id) const;
 
     // Returns one map row per fleet, resolving marker coordinates from bodies.
     [[nodiscard]] std::vector<StrategicFleetSummary> strategicFleets() const;

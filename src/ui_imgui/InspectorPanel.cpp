@@ -1,14 +1,17 @@
 #include "ui_imgui/InspectorPanel.h"
 
-// Implements the shared read-only inspector panel.
-// All lookups walk copied query DTOs, so the inspector never retains references
-// into GameState and cannot mutate simulation state directly.
+// Implements the shared inspector panel plus the first small command workflow.
+// All detail lookups walk copied query DTOs, so the inspector never retains
+// references into GameState and cannot mutate simulation state directly.
+
+#include "sim/Commands.h"
+#include "sim/Error.h"
 
 #include <imgui.h>
 
 #include <algorithm>
 #include <optional>
-#include <string_view>
+#include <string>
 #include <vector>
 
 namespace deep::ui_imgui {
@@ -38,7 +41,7 @@ template <typename Summary, typename IdT>
 }
 
 void drawBodyDetails(const SimulationQueries& queries, const BodyId bodyId) {
-    const std::optional<StrategicBodySummary> body = findById(queries.strategicBodies(), bodyId);
+    const std::optional<StrategicBodySummary> body = queries.strategicBody(bodyId);
     if (!body.has_value()) {
         ImGui::Text("Body #%lld was not found in the current query snapshot.", static_cast<long long>(bodyId.value));
         return;
@@ -79,7 +82,7 @@ void drawColonyDetails(const SimulationQueries& queries, const ColonyId colonyId
 }
 
 void drawFleetDetails(const SimulationQueries& queries, const FleetId fleetId) {
-    const std::optional<FleetSummary> fleet = findById(queries.fleets(), fleetId);
+    const std::optional<FleetSummary> fleet = queries.fleet(fleetId);
     if (!fleet.has_value()) {
         ImGui::Text("Fleet #%lld was not found in the current query snapshot.", static_cast<long long>(fleetId.value));
         return;
@@ -87,17 +90,49 @@ void drawFleetDetails(const SimulationQueries& queries, const FleetId fleetId) {
 
     ImGui::Text("ID: %lld", static_cast<long long>(fleet->id.value));
     ImGui::Text("Name: %s", fleet->name.c_str());
-    ImGui::Text("Location: %s", fleet->currentBodyName.c_str());
+    ImGui::Text("Origin/current body: %s", fleet->currentBodyName.c_str());
     ImGui::Text("Ships: %zu", fleet->shipCount);
     ImGui::Text("Order: %s", fleet->activeOrderName.c_str());
     ImGui::Text("Destination: %s", fleet->destinationBodyName.empty() ? "-" : fleet->destinationBodyName.c_str());
     ImGui::Text("Days remaining: %d", fleet->daysRemaining);
 }
 
+[[nodiscard]] std::string fleetLabel(const SimulationQueries& queries, const FleetId fleetId) {
+    const std::optional<FleetSummary> fleet = queries.fleet(fleetId);
+    if (!fleet.has_value()) {
+        return "Fleet #" + std::to_string(fleetId.value) + " <missing>";
+    }
+
+    return fleet->name + " (#" + std::to_string(fleet->id.value) + ")";
+}
+
+void drawCommandStatus(const char* label, const bool succeeded, const std::string& status) {
+    ImGui::Text("%s: %s", label, succeeded ? "OK" : "Error");
+    ImGui::TextWrapped("%s", status.c_str());
+}
+
+
 } // namespace
 
-void InspectorPanel::render(const SimulationQueries& queries, const SelectionState& selection) const {
-    ImGui::Begin("Inspector");
+void InspectorPanel::render(const SimulationQueries& queries,
+                            SimulationService& service,
+                            const SelectionState& selection,
+                            bool& visible) {
+    if (!visible) {
+        return;
+    }
+
+    if (!ImGui::Begin("Inspector", &visible)) {
+        ImGui::End();
+        return;
+    }
+
+    if (selection.type() == SelectedObjectType::Fleet) {
+        // Selecting a fleet arms it as the source for the next body-click move
+        // command. Body selection can then focus the destination without losing
+        // the chosen source fleet.
+        fleetMoveSource_ = selection.fleetId();
+    }
 
     ImGui::Text("Selected type: %s", selectedTypeName(selection.type()));
     if (selection.type() != SelectedObjectType::None) {
@@ -119,6 +154,74 @@ void InspectorPanel::render(const SimulationQueries& queries, const SelectionSta
         drawFleetDetails(queries, selection.fleetId());
         break;
     }
+
+    ImGui::Separator();
+    ImGui::TextUnformatted("Fleet Movement");
+
+    const std::optional<FleetSummary> sourceFleet = fleetMoveSource_.has_value()
+        ? queries.fleet(*fleetMoveSource_)
+        : std::optional<FleetSummary>{};
+    if (sourceFleet.has_value()) {
+        ImGui::Text("Fleet: %s", fleetLabel(queries, sourceFleet->id).c_str());
+    } else {
+        ImGui::TextUnformatted("Fleet: select a fleet from the map or fleet table.");
+    }
+
+    const bool bodySelected = selection.type() == SelectedObjectType::Body;
+    const std::optional<StrategicBodySummary> destinationBody = bodySelected
+        ? queries.strategicBody(selection.bodyId())
+        : std::optional<StrategicBodySummary>{};
+    if (destinationBody.has_value()) {
+        ImGui::Text("Destination body: %s (#%lld)", destinationBody->name.c_str(),
+                    static_cast<long long>(destinationBody->id.value));
+    } else {
+        ImGui::TextUnformatted("Destination body: select a body marker on the map.");
+    }
+
+    const bool canMove = sourceFleet.has_value() && destinationBody.has_value();
+    if (!canMove) {
+        ImGui::BeginDisabled();
+    }
+
+    if (ImGui::Button("Move Fleet Here")) {
+        const CommandResult result = service.execute(MoveFleetCommand{
+            .fleetId = sourceFleet->id,
+            .destinationBodyId = destinationBody->id
+        });
+        lastMoveSucceeded_ = result.ok;
+        lastMoveStatus_ = result.message;
+    }
+
+    if (!canMove) {
+        ImGui::EndDisabled();
+    }
+
+    drawCommandStatus("Move command", lastMoveSucceeded_, lastMoveStatus_);
+
+    ImGui::Separator();
+    ImGui::TextUnformatted("Fleet Order Cancellation");
+
+    const std::optional<FleetSummary> cancelFleet = selection.type() == SelectedObjectType::Fleet
+        ? queries.fleet(selection.fleetId())
+        : std::optional<FleetSummary>{};
+    const bool canCancel = cancelFleet.has_value() && cancelFleet->hasActiveOrder;
+    if (!canCancel) {
+        ImGui::BeginDisabled();
+    }
+
+    if (ImGui::Button("Cancel Fleet Order")) {
+        const CommandResult result = service.execute(CancelFleetOrderCommand{
+            .fleetId = selection.fleetId()
+        });
+        lastCancelSucceeded_ = result.ok;
+        lastCancelStatus_ = result.message;
+    }
+
+    if (!canCancel) {
+        ImGui::EndDisabled();
+    }
+
+    drawCommandStatus("Cancel command", lastCancelSucceeded_, lastCancelStatus_);
 
     ImGui::End();
 }

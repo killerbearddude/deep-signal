@@ -172,6 +172,53 @@ void test_fleet_movement() {
             "fleet arrival remains in event log");
 }
 
+void test_cancel_fleet_order() {
+    // Verifies that the player can cancel an active movement order without
+    // teleporting the fleet. This protects the first UI cancel button from
+    // leaving stale destination or active-order state behind.
+    deep::Simulation sim{deep::createHomeSystemScenario()};
+
+    const deep::ColonyId colonyId = sim.state().colonies.front().id;
+    const deep::ShipClassId shipClassId = sim.state().shipClasses.front().id;
+    const deep::BodyId terraId = sim.state().bodies.front().id;
+    const deep::BodyId marsId = sim.state().bodies.at(1).id;
+
+    require(sim.execute(deep::AssignShipyardBuildCommand{
+        .colonyId = colonyId,
+        .shipClassId = shipClassId,
+        .quantity = 1
+    }).ok, "build order accepted before cancel test");
+    sim.advanceDays(5);
+
+    const deep::FleetId fleetId = sim.state().fleets.front().id;
+    require(sim.execute(deep::MoveFleetCommand{
+        .fleetId = fleetId,
+        .destinationBodyId = marsId
+    }).ok, "move order accepted before cancel test");
+
+    sim.advanceDays(2);
+    require(sim.state().fleets.front().activeOrder.daysRemaining == 3,
+            "movement countdown advances before cancellation");
+
+    const auto cancelResult = sim.execute(deep::CancelFleetOrderCommand{
+        .fleetId = fleetId
+    });
+
+    require(cancelResult.ok, "active fleet order can be cancelled");
+    require(sim.state().fleets.front().currentBodyId == terraId,
+            "cancelled fleet remains at its current body");
+    require(!sim.state().fleets.front().destinationBodyId.has_value(),
+            "cancelled fleet clears destination body");
+    require(sim.state().fleets.front().activeOrder.type == deep::FleetOrderType::None,
+            "cancelled fleet clears active order type");
+    require(sim.state().fleets.front().activeOrder.daysRemaining == 0,
+            "cancelled fleet clears remaining order time");
+
+    sim.advanceDays(5);
+    require(sim.state().fleets.front().currentBodyId == terraId,
+            "cancelled fleet does not arrive after the old duration elapses");
+}
+
 void test_rejected_invalid_command() {
     // Verifies that invalid commands fail through CommandResult and are recorded
     // in the audit log. Prevents silent validation failures in future UI code.
@@ -198,6 +245,7 @@ int main() {
         test_shipyard_completion();
         test_shipyard_temporary_mineral_shortage_recovers();
         test_fleet_movement();
+        test_cancel_fleet_order();
         test_rejected_invalid_command();
     } catch (const std::exception& ex) {
         std::cerr << "Test failure: " << ex.what() << '\n';

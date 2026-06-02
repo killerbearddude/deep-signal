@@ -1,8 +1,8 @@
 #include "ui_imgui/FleetPanel.h"
 
 // Implements a read-only fleet table for the ImGui shell.
-// Row clicks update shared SelectionState; order edits remain out of scope for
-// this patch and will continue to go through commands when added later.
+// Row clicks update shared SelectionState; the inspector remembers the selected
+// fleet as the source for the first move-order workflow.
 
 #include <imgui.h>
 
@@ -18,16 +18,25 @@ namespace {
 
 } // namespace
 
-void FleetPanel::render(const SimulationQueries& queries, SelectionState& selection) const {
-    ImGui::Begin("Fleets");
+void FleetPanel::render(const SimulationQueries& queries, SelectionState& selection, bool& visible) const {
+    if (!visible) {
+        return;
+    }
+
+    if (!ImGui::Begin("Fleets", &visible)) {
+        ImGui::End();
+        return;
+    }
 
     const std::vector<FleetSummary> fleets = queries.fleets();
     ImGui::Text("Fleets: %zu", fleets.size());
 
-    if (ImGui::BeginTable("FleetSummaryTable", 7, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
+    if (ImGui::BeginTable("FleetSummaryTable", 7, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable |
+                           ImGuiTableFlags_Reorderable | ImGuiTableFlags_Hideable |
+                           ImGuiTableFlags_SizingStretchProp)) {
         ImGui::TableSetupColumn("ID");
         ImGui::TableSetupColumn("Name");
-        ImGui::TableSetupColumn("Location");
+        ImGui::TableSetupColumn("Origin");
         ImGui::TableSetupColumn("Destination");
         ImGui::TableSetupColumn("Ships");
         ImGui::TableSetupColumn("Order");

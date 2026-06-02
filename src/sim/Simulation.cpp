@@ -72,6 +72,8 @@ CommandResult Simulation::execute(const SimCommand& command) {
             return assignShipyardBuild(concreteCommand);
         } else if constexpr (std::is_same_v<Command, MoveFleetCommand>) {
             return moveFleet(concreteCommand);
+        } else if constexpr (std::is_same_v<Command, CancelFleetOrderCommand>) {
+            return cancelFleetOrder(concreteCommand);
         }
     }, command);
 }
@@ -176,6 +178,27 @@ CommandResult Simulation::moveFleet(const MoveFleetCommand& command) {
     });
 
     return CommandResult::success("Fleet movement order accepted");
+}
+
+CommandResult Simulation::cancelFleetOrder(const CancelFleetOrderCommand& command) {
+    Fleet* fleet = findFleet(command.fleetId);
+    if (fleet == nullptr) {
+        appendEvent(EventSeverity::Warning, CommandRejectedEvent{"Fleet does not exist"});
+        return CommandResult::failure("Fleet does not exist");
+    }
+
+    if (fleet->activeOrder.type == FleetOrderType::None) {
+        appendEvent(EventSeverity::Warning, CommandRejectedEvent{"Fleet has no active order"});
+        return CommandResult::failure("Fleet has no active order");
+    }
+
+    // Prototype movement is not interpolated yet, so cancelling simply drops the
+    // pending target and leaves the fleet at its current body/origin. Future
+    // route planning can replace this with partial-progress handling.
+    fleet->destinationBodyId = std::nullopt;
+    fleet->activeOrder = FleetOrder{};
+
+    return CommandResult::success("Fleet order cancelled");
 }
 
 void Simulation::simulateOneDay(std::vector<SimEvent>& emitted) {
