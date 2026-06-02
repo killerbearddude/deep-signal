@@ -16,6 +16,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 option(DEEP_SIGNAL_BUILD_TESTS "Build headless simulation tests" ON)
 option(DEEP_SIGNAL_BUILD_SAVE "Build SQLite save/load layer" ON)
 option(DEEP_SIGNAL_BUILD_APP "Build application service and CLI" ON)
+option(DEEP_SIGNAL_BUILD_UI "Build SDL3/Dear ImGui desktop shell" OFF)
 
 
 # Shared warning set for project-owned C++ targets. Warnings are intentionally
@@ -82,6 +83,35 @@ if(DEEP_SIGNAL_BUILD_APP)
 
     target_link_libraries(deep_signal_cli PRIVATE deep_signal_app)
     target_compile_options(deep_signal_cli PRIVATE ${DEEP_SIGNAL_WARNINGS})
+endif()
+
+
+if(DEEP_SIGNAL_BUILD_UI)
+    if(NOT DEEP_SIGNAL_BUILD_APP)
+        message(FATAL_ERROR "DEEP_SIGNAL_BUILD_UI requires DEEP_SIGNAL_BUILD_APP")
+    endif()
+
+    find_package(SDL3 CONFIG REQUIRED)
+    find_package(imgui CONFIG REQUIRED)
+
+    if(NOT TARGET SDL3::SDL3)
+        message(FATAL_ERROR "SDL3 package was found, but target SDL3::SDL3 is unavailable")
+    endif()
+
+    if(NOT TARGET imgui::imgui)
+        message(FATAL_ERROR "imgui package was found, but target imgui::imgui is unavailable")
+    endif()
+
+    add_executable(deep_signal_imgui
+        src/platform/SdlApp.cpp
+        src/ui_imgui/ImGuiApp.cpp
+    )
+
+    target_link_libraries(deep_signal_imgui
+        PRIVATE deep_signal_app SDL3::SDL3 imgui::imgui
+    )
+
+    target_compile_options(deep_signal_imgui PRIVATE ${DEEP_SIGNAL_WARNINGS})
 endif()
 
 if(DEEP_SIGNAL_BUILD_TESTS)
