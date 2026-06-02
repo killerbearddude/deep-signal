@@ -1,0 +1,320 @@
+#include "sim/GameStateValidation.h"
+
+// Implements zero-trust validation for fully assembled simulation snapshots.
+// The checks intentionally duplicate some SQLite CHECK/FOREIGN KEY constraints
+// because database files can be hand-edited with constraints disabled and because
+// GameState can also enter the system without going through SQLite.
+
+#include <algorithm>
+#include <cmath>
+#include <cstdint>
+#include <stdexcept>
+#include <string>
+#include <string_view>
+#include <type_traits>
+#include <unordered_set>
+#include <variant>
+
+namespace deep {
+namespace {
+
+template <typename IdT>
+[[nodiscard]] std::int64_t idValue(const IdT id) noexcept {
+    return id.value;
+}
+
+[[nodiscard]] bool isFinite(const double value) noexcept {
+    return std::isfinite(value);
+}
+
+void requireState(const bool condition, const std::string_view message) {
+    if (!condition) {
+        throw std::runtime_error{std::string{"Invalid GameState: "} + std::string{message}};
+    }
+}
+
+[[nodiscard]] bool isValidBodyType(const BodyType value) noexcept {
+    switch (value) {
+    case BodyType::Star:
+    case BodyType::Terrestrial:
+    case BodyType::GasGiant:
+    case BodyType::Moon:
+    case BodyType::Asteroid:
+        return true;
+    }
+    return false;
+}
+
+[[nodiscard]] bool isValidShipRole(const ShipRole value) noexcept {
+    switch (value) {
+    case ShipRole::Survey:
+    case ShipRole::Freighter:
+    case ShipRole::Escort:
+        return true;
+    }
+    return false;
+}
+
+[[nodiscard]] bool isValidShipyardOrderStatus(const ShipyardOrderStatus value) noexcept {
+    switch (value) {
+    case ShipyardOrderStatus::Active:
+    case ShipyardOrderStatus::Completed:
+        return true;
+    }
+    return false;
+}
+
+[[nodiscard]] bool isValidFleetOrderType(const FleetOrderType value) noexcept {
+    switch (value) {
+    case FleetOrderType::None:
+    case FleetOrderType::MoveToBody:
+        return true;
+    }
+    return false;
+}
+
+[[nodiscard]] bool isValidEventSeverity(const EventSeverity value) noexcept {
+    switch (value) {
+    case EventSeverity::Info:
+    case EventSeverity::Warning:
+    case EventSeverity::Critical:
+        return true;
+    }
+    return false;
+}
+
+[[nodiscard]] bool isValidMineral(const Mineral value) noexcept {
+    const auto index = static_cast<std::size_t>(value);
+    return index < mineralCount();
+}
+
+template <typename T, typename IdT>
+[[nodiscard]] bool containsId(const std::vector<T>& items, const IdT id) noexcept {
+    return std::any_of(items.begin(), items.end(), [id](const T& item) {
+        return item.id == id;
+    });
+}
+
+
+// Validates that IDs are positive, unique, and below their monotonic allocator.
+// This prevents stale counters from producing duplicate IDs after a loaded game
+// continues simulating and allocating new records.
+template <typename T, typename IdT>
+void validateIdsAndCounter(const std::vector<T>& items,
+                           const std::int64_t nextId,
+                           const std::string_view label) {
+    requireState(nextId > 0, std::string{label} + " counter must be positive");
+
+    std::unordered_set<std::int64_t> seen;
+    std::int64_t maxId = 0;
+    for (const T& item : items) {
+        const std::int64_t value = idValue(item.id);
+        requireState(value > 0, std::string{label} + " ID must be positive");
+        requireState(seen.insert(value).second, std::string{label} + " IDs must be unique");
+        maxId = std::max(maxId, value);
+    }
+
+    requireState(nextId > maxId, std::string{label} + " counter must be greater than max loaded ID");
+}
+
+template <typename IdT>
+void requireValidReference(const bool exists, const IdT id, const std::string_view label) {
+    requireState(static_cast<bool>(id), std::string{label} + " ID must be positive");
+    requireState(exists, std::string{label} + " reference is missing");
+}
+
+void validateMineralSet(const MineralSet& set, const std::string_view label) {
+    for (const double amount : set.amount) {
+        requireState(isFinite(amount), std::string{label} + " amount must be finite");
+        requireState(amount >= 0.0, std::string{label} + " amount must be non-negative");
+    }
+}
+
+void validateFleetOrder(const GameState& state, const Fleet& fleet) {
+    requireState(isValidFleetOrderType(fleet.activeOrder.type), "fleet order type must be valid");
+    requireState(fleet.activeOrder.daysRemaining >= 0, "fleet order days must be non-negative");
+
+    if (fleet.activeOrder.type == FleetOrderType::None) {
+        requireState(!fleet.destinationBodyId.has_value(), "idle fleet must not have a destination body");
+        requireState(!fleet.activeOrder.targetBodyId.has_value(), "idle fleet must not have an order target");
+        requireState(fleet.activeOrder.daysRemaining == 0, "idle fleet must have zero order days remaining");
+        return;
+    }
+
+    requireState(fleet.destinationBodyId.has_value(), "moving fleet must have a destination body");
+    requireState(fleet.activeOrder.targetBodyId.has_value(), "moving fleet must have an order target body");
+    requireState(*fleet.destinationBodyId == *fleet.activeOrder.targetBodyId,
+                 "moving fleet destination and target body must match");
+    requireState(fleet.activeOrder.daysRemaining > 0, "moving fleet must have positive days remaining");
+    requireState(*fleet.destinationBodyId != fleet.currentBodyId, "moving fleet destination must differ from current body");
+    requireValidReference(containsId(state.bodies, *fleet.destinationBodyId), *fleet.destinationBodyId,
+                          "fleet destination body");
+}
+
+void validateEventPayload(const GameState& state, const SimEventPayload& payload) {
+    std::visit([&state](const auto& event) {
+        using Event = std::decay_t<decltype(event)>;
+        if constexpr (std::is_same_v<Event, MineralExtractedEvent>) {
+            requireValidReference(containsId(state.colonies, event.colonyId), event.colonyId, "event colony");
+            requireValidReference(containsId(state.bodies, event.bodyId), event.bodyId, "event body");
+            requireState(isValidMineral(event.mineral), "event mineral must be valid");
+            requireState(isFinite(event.amount) && event.amount > 0.0, "extracted amount must be positive and finite");
+            requireState(isFinite(event.remainingDeposit) && event.remainingDeposit >= 0.0,
+                         "remaining deposit must be finite and non-negative");
+        } else if constexpr (std::is_same_v<Event, ShipyardOrderCreatedEvent>) {
+            requireValidReference(containsId(state.shipyardOrders, event.orderId), event.orderId, "event shipyard order");
+            requireValidReference(containsId(state.colonies, event.colonyId), event.colonyId, "event colony");
+            requireValidReference(containsId(state.shipClasses, event.shipClassId), event.shipClassId, "event ship class");
+            requireState(event.quantity > 0, "event quantity must be positive");
+        } else if constexpr (std::is_same_v<Event, ShipCompletedEvent>) {
+            requireValidReference(containsId(state.shipyardOrders, event.orderId), event.orderId, "event shipyard order");
+            requireValidReference(containsId(state.colonies, event.colonyId), event.colonyId, "event colony");
+            requireValidReference(containsId(state.ships, event.shipId), event.shipId, "event ship");
+            requireValidReference(containsId(state.fleets, event.fleetId), event.fleetId, "event fleet");
+            requireValidReference(containsId(state.shipClasses, event.shipClassId), event.shipClassId, "event ship class");
+        } else if constexpr (std::is_same_v<Event, FleetOrderAssignedEvent>) {
+            requireValidReference(containsId(state.fleets, event.fleetId), event.fleetId, "event fleet");
+            requireValidReference(containsId(state.bodies, event.originBodyId), event.originBodyId, "event origin body");
+            requireValidReference(containsId(state.bodies, event.destinationBodyId), event.destinationBodyId,
+                                  "event destination body");
+            requireState(event.originBodyId != event.destinationBodyId,
+                         "fleet-order event origin and destination must differ");
+            requireState(event.daysRemaining > 0, "fleet-order event days remaining must be positive");
+        } else if constexpr (std::is_same_v<Event, FleetArrivedEvent>) {
+            requireValidReference(containsId(state.fleets, event.fleetId), event.fleetId, "event fleet");
+            requireValidReference(containsId(state.bodies, event.destinationBodyId), event.destinationBodyId,
+                                  "event destination body");
+        } else if constexpr (std::is_same_v<Event, CommandRejectedEvent>) {
+            requireState(!event.reason.empty(), "command-rejected event reason must be non-empty");
+        }
+    }, payload);
+}
+
+} // namespace
+
+void validateGameState(const GameState& state) {
+    requireState(state.date.day >= 0, "current day must be non-negative");
+
+    validateIdsAndCounter<StarSystem, StarSystemId>(state.starSystems, state.ids.nextStarSystemId, "star system");
+    validateIdsAndCounter<Body, BodyId>(state.bodies, state.ids.nextBodyId, "body");
+    validateIdsAndCounter<Colony, ColonyId>(state.colonies, state.ids.nextColonyId, "colony");
+    validateIdsAndCounter<ShipClass, ShipClassId>(state.shipClasses, state.ids.nextShipClassId, "ship class");
+    validateIdsAndCounter<ShipyardOrder, ShipyardOrderId>(state.shipyardOrders,
+                                                            state.ids.nextShipyardOrderId,
+                                                            "shipyard order");
+    validateIdsAndCounter<Ship, ShipId>(state.ships, state.ids.nextShipId, "ship");
+    validateIdsAndCounter<Fleet, FleetId>(state.fleets, state.ids.nextFleetId, "fleet");
+    validateIdsAndCounter<SimEvent, EventId>(state.eventLog, state.ids.nextEventId, "event");
+
+    for (const StarSystem& system : state.starSystems) {
+        requireState(!system.name.empty(), "star system name must be non-empty");
+    }
+
+    for (const Body& body : state.bodies) {
+        requireValidReference(containsId(state.starSystems, body.systemId), body.systemId, "body system");
+        requireState(!body.name.empty(), "body name must be non-empty");
+        requireState(isValidBodyType(body.type), "body type must be valid");
+        requireState(isFinite(body.x) && isFinite(body.y), "body coordinates must be finite");
+    }
+
+    for (const Colony& colony : state.colonies) {
+        requireValidReference(containsId(state.bodies, colony.bodyId), colony.bodyId, "colony body");
+        requireState(!colony.name.empty(), "colony name must be non-empty");
+        validateMineralSet(colony.stockpile, "colony stockpile");
+        requireState(isFinite(colony.mines) && colony.mines >= 0.0, "colony mines must be finite and non-negative");
+        requireState(isFinite(colony.shipyardCapacity) && colony.shipyardCapacity >= 0.0,
+                     "shipyard capacity must be finite and non-negative");
+    }
+
+    std::unordered_set<std::string> depositKeys;
+    for (const MineralDeposit& deposit : state.mineralDeposits) {
+        requireValidReference(containsId(state.bodies, deposit.bodyId), deposit.bodyId, "deposit body");
+        requireState(isValidMineral(deposit.mineral), "deposit mineral must be valid");
+        requireState(isFinite(deposit.remaining) && deposit.remaining >= 0.0,
+                     "deposit remaining must be finite and non-negative");
+        requireState(isFinite(deposit.accessibility) && deposit.accessibility >= 0.0,
+                     "deposit accessibility must be finite and non-negative");
+        const std::string key = std::to_string(deposit.bodyId.value) + ":" +
+                                std::to_string(static_cast<std::size_t>(deposit.mineral));
+        requireState(depositKeys.insert(key).second, "duplicate mineral deposit rows are invalid");
+    }
+
+    for (const ShipClass& shipClass : state.shipClasses) {
+        requireState(!shipClass.name.empty(), "ship class name must be non-empty");
+        requireState(isValidShipRole(shipClass.role), "ship role must be valid");
+        validateMineralSet(shipClass.buildCost, "ship class build cost");
+        requireState(isFinite(shipClass.buildPoints) && shipClass.buildPoints > 0.0,
+                     "ship class build points must be positive and finite");
+        requireState(isFinite(shipClass.speedKmPerDay) && shipClass.speedKmPerDay >= 0.0,
+                     "ship class speed must be finite and non-negative");
+        requireState(isFinite(shipClass.fuelCapacity) && shipClass.fuelCapacity >= 0.0,
+                     "ship class fuel capacity must be finite and non-negative");
+    }
+
+    for (const ShipyardOrder& order : state.shipyardOrders) {
+        requireValidReference(containsId(state.colonies, order.colonyId), order.colonyId, "shipyard order colony");
+        requireValidReference(containsId(state.shipClasses, order.shipClassId), order.shipClassId,
+                              "shipyard order ship class");
+        requireState(order.quantityRequested > 0, "shipyard order requested quantity must be positive");
+        requireState(order.quantityCompleted >= 0, "shipyard order completed quantity must be non-negative");
+        requireState(order.quantityCompleted <= order.quantityRequested,
+                     "shipyard order completed quantity must not exceed requested quantity");
+        requireState(isFinite(order.accumulatedBuildPoints) && order.accumulatedBuildPoints >= 0.0,
+                     "shipyard order build points must be finite and non-negative");
+        requireState(isValidShipyardOrderStatus(order.status), "shipyard order status must be valid");
+
+        // Shipyard order status is a small state machine. Validate the lifecycle
+        // shape explicitly so hand-edited saves cannot load states that the
+        // production tick would never create on its own.
+        if (order.status == ShipyardOrderStatus::Active) {
+            requireState(order.quantityCompleted < order.quantityRequested,
+                         "active shipyard order must not already be complete");
+        } else if (order.status == ShipyardOrderStatus::Completed) {
+            requireState(order.quantityCompleted == order.quantityRequested,
+                         "completed shipyard order must have completed all requested ships");
+            requireState(order.accumulatedBuildPoints == 0.0,
+                         "completed shipyard order must not retain build progress");
+        }
+    }
+
+    for (const Fleet& fleet : state.fleets) {
+        requireState(!fleet.name.empty(), "fleet name must be non-empty");
+        requireValidReference(containsId(state.bodies, fleet.currentBodyId), fleet.currentBodyId, "fleet current body");
+        validateFleetOrder(state, fleet);
+
+        std::unordered_set<std::int64_t> fleetShipIds;
+        for (const ShipId shipId : fleet.shipIds) {
+            requireValidReference(containsId(state.ships, shipId), shipId, "fleet ship");
+            requireState(fleetShipIds.insert(shipId.value).second, "fleet ship IDs must be unique within a fleet");
+        }
+    }
+
+    for (const Ship& ship : state.ships) {
+        requireValidReference(containsId(state.shipClasses, ship.shipClassId), ship.shipClassId, "ship class");
+        requireValidReference(containsId(state.fleets, ship.fleetId), ship.fleetId, "ship fleet");
+        requireState(!ship.name.empty(), "ship name must be non-empty");
+        requireState(isFinite(ship.fuel) && ship.fuel >= 0.0, "ship fuel must be finite and non-negative");
+
+        const auto fleetIt = std::find_if(state.fleets.begin(), state.fleets.end(), [ship](const Fleet& fleet) {
+            return fleet.id == ship.fleetId;
+        });
+        requireState(fleetIt != state.fleets.end(), "ship fleet must exist");
+        const bool fleetListsShip = std::find(fleetIt->shipIds.begin(), fleetIt->shipIds.end(), ship.id) != fleetIt->shipIds.end();
+        requireState(fleetListsShip, "ship/fleet references must be bidirectional");
+    }
+
+    std::int64_t previousEventId = 0;
+    std::int64_t previousEventDay = 0;
+    for (const SimEvent& event : state.eventLog) {
+        requireState(event.id.value > previousEventId, "event IDs must be stored in strictly increasing order");
+        previousEventId = event.id.value;
+        requireState(event.day >= 0, "event day must be non-negative");
+        requireState(event.day <= state.date.day, "event day must not exceed current simulation day");
+        requireState(event.day >= previousEventDay, "event days must be non-decreasing by event ID order");
+        previousEventDay = event.day;
+        requireState(isValidEventSeverity(event.severity), "event severity must be valid");
+        validateEventPayload(state, event.payload);
+    }
+}
+
+} // namespace deep

@@ -1,0 +1,91 @@
+#pragma once
+
+// Defines typed simulation events emitted by commands and daily ticks.
+// Events are the audit trail consumed by tests, the CLI, the future UI, and the
+// planned SQLite persistence layer.
+
+#include "sim/IdTypes.h"
+#include "sim/Minerals.h"
+
+#include <cstdint>
+#include <string>
+#include <variant>
+
+namespace deep {
+
+// Severity lets UI and tests distinguish informational events from warnings or
+// future critical simulation failures.
+enum class EventSeverity {
+    Info,
+    Warning,
+    Critical
+};
+
+// Emitted when colony mines extract a mineral from a body deposit.
+struct MineralExtractedEvent {
+    ColonyId colonyId;
+    BodyId bodyId;
+    Mineral mineral = Mineral::Structural;
+    double amount = 0.0;
+    double remainingDeposit = 0.0;
+};
+
+// Emitted when a shipyard build command is accepted.
+struct ShipyardOrderCreatedEvent {
+    ShipyardOrderId orderId;
+    ColonyId colonyId;
+    ShipClassId shipClassId;
+    int quantity = 1;
+};
+
+// Emitted once per completed ship. Prototype 0.1 creates one new fleet for each
+// completed ship to keep movement testing simple and explicit.
+struct ShipCompletedEvent {
+    ShipyardOrderId orderId;
+    ColonyId colonyId;
+    ShipId shipId;
+    FleetId fleetId;
+    ShipClassId shipClassId;
+};
+
+// Emitted when a fleet movement command is accepted.
+struct FleetOrderAssignedEvent {
+    FleetId fleetId;
+    BodyId originBodyId;
+    BodyId destinationBodyId;
+    int daysRemaining = 0;
+};
+
+// Emitted when a fleet movement order reaches its target body.
+struct FleetArrivedEvent {
+    FleetId fleetId;
+    BodyId destinationBodyId;
+};
+
+// Emitted when validation rejects a command or a daily process detects invalid
+// state. The reason should be precise enough for UI display and test assertions.
+struct CommandRejectedEvent {
+    std::string reason;
+};
+
+// Variant envelope for all event payloads. Adding a new event type requires
+// updating persistence serialization and CLI/UI visitors.
+using SimEventPayload = std::variant<
+    MineralExtractedEvent,
+    ShipyardOrderCreatedEvent,
+    ShipCompletedEvent,
+    FleetOrderAssignedEvent,
+    FleetArrivedEvent,
+    CommandRejectedEvent
+>;
+
+// Full event record. id is monotonic within a GameState; day is captured when
+// the event is emitted so later UI filtering does not depend on current time.
+struct SimEvent {
+    EventId id;
+    std::int64_t day = 0;
+    EventSeverity severity = EventSeverity::Info;
+    SimEventPayload payload;
+};
+
+} // namespace deep

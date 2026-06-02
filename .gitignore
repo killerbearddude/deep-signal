@@ -1,0 +1,11 @@
+/build*/
+/.cache/
+compile_commands.json
+*.sqlite
+*.db
+*.o
+*.a
+*.so
+*.dylib
+*.dll
+*.exe
