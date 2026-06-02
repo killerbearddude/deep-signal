@@ -103,6 +103,17 @@ if(DEEP_SIGNAL_BUILD_TESTS)
 
     add_test(NAME deep_signal_validation_tests COMMAND deep_signal_validation_tests)
 
+    if(DEEP_SIGNAL_BUILD_SAVE)
+        add_executable(deep_signal_event_json_tests
+            tests/event_json_tests.cpp
+        )
+
+        target_link_libraries(deep_signal_event_json_tests PRIVATE deep_signal_save)
+        target_compile_options(deep_signal_event_json_tests PRIVATE ${DEEP_SIGNAL_WARNINGS})
+
+        add_test(NAME deep_signal_event_json_tests COMMAND deep_signal_event_json_tests)
+    endif()
+
     if(DEEP_SIGNAL_BUILD_SAVE AND DEEP_SIGNAL_BUILD_APP)
         add_executable(deep_signal_save_load_tests
             tests/save_load_tests.cpp
