@@ -9,3 +9,6 @@ compile_commands.json
 *.dylib
 *.dll
 *.exe
+
+# Dear ImGui local window layout state
+imgui.ini
