@@ -61,6 +61,7 @@ int ImGuiApp::run() {
         ImGui::NewFrame();
 
         renderDockspace();
+        renderMainMenu();
         renderPanels();
 
         ImGui::Render();
@@ -78,12 +79,17 @@ void ImGuiApp::renderDockspace() {
     ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport(), ImGuiDockNodeFlags_PassthruCentralNode);
 }
 
+void ImGuiApp::renderMainMenu() {
+    mainMenuBar_.render(service_, saveLoadPanel_);
+}
+
 void ImGuiApp::renderPanels() {
     // Recreate the query facade each frame so panels read a fresh snapshot after
     // time-control commands mutate SimulationService. The facade is lightweight
     // and does not expose mutable GameState access to panel code.
     const SimulationQueries queries{service_};
 
+    saveLoadPanel_.render(service_);
     timeControlPanel_.render(service_);
     strategicMapPanel_.render(queries, selection_);
     colonyPanel_.render(queries, selection_);

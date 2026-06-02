@@ -11,6 +11,8 @@
 #include "ui_imgui/EventLogPanel.h"
 #include "ui_imgui/FleetPanel.h"
 #include "ui_imgui/InspectorPanel.h"
+#include "ui_imgui/MainMenuBar.h"
+#include "ui_imgui/SaveLoadPanel.h"
 #include "ui_imgui/StrategicMapPanel.h"
 #include "ui_imgui/TimeControlPanel.h"
 
@@ -39,11 +41,16 @@ private:
     // Draws a full-window dockspace that future panels can dock into.
     void renderDockspace();
 
+    // Draws application-level menu commands that route through service APIs.
+    void renderMainMenu();
+
     // Draws the first functional simulation panels using app-layer query DTOs.
     void renderPanels();
 
     platform::SdlApp sdl_;
     SimulationService service_;
+    MainMenuBar mainMenuBar_;
+    SaveLoadPanel saveLoadPanel_;
     TimeControlPanel timeControlPanel_;
     ColonyPanel colonyPanel_;
     FleetPanel fleetPanel_;
