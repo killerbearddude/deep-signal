@@ -219,6 +219,91 @@ void addMineralSet(MineralAmountTotals& totals, const MineralSet& minerals, cons
     return totals;
 }
 
+[[nodiscard]] std::string shipyardOrderStatusName(const ShipyardOrderStatus status) {
+    switch (status) {
+    case ShipyardOrderStatus::Active:
+        return "Active";
+    case ShipyardOrderStatus::Completed:
+        return "Completed";
+    }
+
+    return "Unknown";
+}
+
+[[nodiscard]] MineralSet scaledMineralSet(const MineralSet& minerals, const int scale) noexcept {
+    MineralSet result{};
+    if (scale <= 0) {
+        return result;
+    }
+
+    for (std::size_t i = 0; i < result.amount.size(); ++i) {
+        result.amount[i] = minerals.amount[i] * static_cast<double>(scale);
+    }
+    return result;
+}
+
+[[nodiscard]] std::optional<Mineral> firstBlockingMineral(const MineralSet& stockpile, const MineralSet& required) noexcept {
+    for (std::size_t i = 0; i < required.amount.size(); ++i) {
+        if (stockpile.amount[i] + kMineralComparisonEpsilon < required.amount[i]) {
+            return mineralFromIndex(i);
+        }
+    }
+    return std::nullopt;
+}
+
+[[nodiscard]] std::optional<int> queueAwareShipyardEtaDays(const double buildPointsAhead,
+                                                           const double orderBuildPointsRemaining,
+                                                           const double colonyCapacity) {
+    if (orderBuildPointsRemaining <= 0.0) {
+        return 0;
+    }
+
+    if (colonyCapacity <= 0.0) {
+        return std::nullopt;
+    }
+
+    return ceilToNonNegativeDays((buildPointsAhead + orderBuildPointsRemaining) / colonyCapacity);
+}
+
+[[nodiscard]] std::string productionBacklogStatusName(const ShipyardOrder& order,
+                                                      const bool blockedByMineral,
+                                                      const std::string& blockingMineralName) {
+    if (order.status == ShipyardOrderStatus::Completed || order.quantityCompleted >= order.quantityRequested) {
+        return "Completed";
+    }
+
+    if (blockedByMineral) {
+        return "Blocked: " + blockingMineralName;
+    }
+
+    return shipyardOrderStatusName(order.status);
+}
+
+[[nodiscard]] std::string productionBacklogExplanation(const int queuePosition,
+                                                       const double buildPointsAhead,
+                                                       const double orderBuildPointsRemaining,
+                                                       const double colonyCapacity,
+                                                       const std::optional<int> etaDays,
+                                                       const bool blockedByMineral,
+                                                       const std::string& blockingMineralName) {
+    std::ostringstream out;
+    out << "Queue position " << queuePosition << "; "
+        << buildPointsAhead << " build points ahead + "
+        << orderBuildPointsRemaining << " order build points remaining";
+
+    if (etaDays.has_value()) {
+        out << " / " << colonyCapacity << " colony capacity per day = " << *etaDays << " day(s)";
+    } else {
+        out << "; no positive colony shipyard capacity, so ETA cannot be estimated";
+    }
+
+    if (blockedByMineral) {
+        out << "; current stockpiles are short of " << blockingMineralName;
+    }
+
+    return out.str();
+}
+
 [[nodiscard]] std::string shipyardEtaExplanation(const ShipyardOrder& order,
                                                  const ShipClass* shipClass,
                                                  const Colony* colony,
@@ -403,6 +488,102 @@ std::vector<ShipyardOrderEtaForecast> ForecastService::shipyardOrderEtas() const
             .buildPointsRemaining = remainingBuildPoints,
             .etaDays = eta,
             .explanation = shipyardEtaExplanation(order, shipClass, colony, eta)
+        });
+    }
+
+    return forecasts;
+}
+
+std::vector<ProductionBacklogForecast> ForecastService::productionBacklog() const {
+    const GameState& state = service_.state();
+
+    struct ColonyQueueForecastState {
+        ColonyId colonyId;
+        int nextQueuePosition = 1;
+        double buildPointsAhead = 0.0;
+    };
+
+    std::vector<ColonyQueueForecastState> queueStates;
+    queueStates.reserve(state.colonies.size());
+    for (const Colony& colony : state.colonies) {
+        queueStates.push_back(ColonyQueueForecastState{
+            .colonyId = colony.id,
+            .nextQueuePosition = 1,
+            .buildPointsAhead = 0.0
+        });
+    }
+
+    std::vector<ProductionBacklogForecast> forecasts;
+    forecasts.reserve(state.shipyardOrders.size());
+
+    for (const ShipyardOrder& order : state.shipyardOrders) {
+        const Colony* colony = findById(state.colonies, order.colonyId);
+        const ShipClass* shipClass = findById(state.shipClasses, order.shipClassId);
+        const int shipsRemaining = std::max(0, order.quantityRequested - order.quantityCompleted);
+        const double buildPointsRemaining = shipClass == nullptr ? 0.0 : totalBuildPointsRemaining(order, *shipClass);
+        const MineralSet requiredMinerals = shipClass == nullptr
+            ? MineralSet{}
+            : scaledMineralSet(shipClass->buildCost, shipsRemaining);
+
+        int queuePosition = 0;
+        double buildPointsAhead = 0.0;
+        double colonyCapacity = colony == nullptr ? 0.0 : std::max(0.0, colony->shipyardCapacity);
+        std::optional<int> etaDays;
+
+        if (order.status == ShipyardOrderStatus::Completed || shipsRemaining == 0) {
+            etaDays = 0;
+        } else if (colony != nullptr && shipClass != nullptr) {
+            auto queueIt = std::find_if(queueStates.begin(), queueStates.end(), [order](const ColonyQueueForecastState& queueState) {
+                return queueState.colonyId == order.colonyId;
+            });
+
+            if (queueIt != queueStates.end()) {
+                queuePosition = queueIt->nextQueuePosition;
+                buildPointsAhead = queueIt->buildPointsAhead;
+                etaDays = queueAwareShipyardEtaDays(buildPointsAhead, buildPointsRemaining, colonyCapacity);
+
+                // Match simulation's FIFO capacity rule: this order's remaining
+                // build-point need is queued before later active orders at the
+                // same colony, regardless of whether minerals later delay it.
+                ++queueIt->nextQueuePosition;
+                queueIt->buildPointsAhead += buildPointsRemaining;
+            }
+        }
+
+        const std::optional<Mineral> blockingMineral = colony == nullptr
+            ? std::nullopt
+            : firstBlockingMineral(colony->stockpile, requiredMinerals);
+        const bool blockedByMineral = blockingMineral.has_value()
+            && order.status == ShipyardOrderStatus::Active
+            && shipsRemaining > 0;
+        const std::string blockerName = blockingMineral.has_value() ? mineralName(*blockingMineral) : std::string{};
+
+        forecasts.push_back(ProductionBacklogForecast{
+            .orderId = order.id,
+            .colonyId = order.colonyId,
+            .shipClassId = order.shipClassId,
+            .colonyName = colonyName(state, order.colonyId),
+            .shipClassName = shipClassName(state, order.shipClassId),
+            .quantityRequested = order.quantityRequested,
+            .quantityCompleted = order.quantityCompleted,
+            .shipsRemaining = shipsRemaining,
+            .queuePosition = queuePosition,
+            .colonyShipyardCapacity = colonyCapacity,
+            .accumulatedBuildPoints = order.accumulatedBuildPoints,
+            .buildPointsRemaining = buildPointsRemaining,
+            .requiredMineralsRemaining = requiredMinerals,
+            .blockedByMineral = blockedByMineral,
+            .blockingMineral = blockedByMineral ? blockingMineral : std::nullopt,
+            .blockingMineralName = blockedByMineral ? blockerName : std::string{},
+            .etaDays = etaDays,
+            .statusName = productionBacklogStatusName(order, blockedByMineral, blockerName),
+            .explanation = productionBacklogExplanation(queuePosition,
+                                                        buildPointsAhead,
+                                                        buildPointsRemaining,
+                                                        colonyCapacity,
+                                                        etaDays,
+                                                        blockedByMineral,
+                                                        blockerName)
         });
     }
 

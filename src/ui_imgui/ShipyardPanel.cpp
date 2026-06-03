@@ -17,14 +17,6 @@
 namespace deep::ui_imgui {
 namespace {
 
-[[nodiscard]] double progressPercent(const ShipyardOrderSummary& order) noexcept {
-    if (order.requiredBuildPoints <= 0.0) {
-        return 0.0;
-    }
-
-    return (order.accumulatedBuildPoints / order.requiredBuildPoints) * 100.0;
-}
-
 [[nodiscard]] std::optional<ColonySummary> firstProductionColony(const std::vector<ColonySummary>& colonies) {
     const auto it = std::find_if(colonies.begin(), colonies.end(), [](const ColonySummary& colony) {
         return colony.shipyardCapacity > 0.0;
@@ -61,29 +53,35 @@ void ShipyardPanel::render(const SimulationQueries& queries, SimulationService& 
     ImGui::TextWrapped("%s", lastCommandMessage_.c_str());
     ImGui::Separator();
 
-    const std::vector<ShipyardOrderSummary> orders = queries.shipyardOrders();
-    ImGui::Text("Shipyard orders: %zu", orders.size());
+    const std::vector<ProductionBacklogSummary> backlog = queries.productionBacklog();
+    ImGui::Text("Shipyard orders: %zu", backlog.size());
 
-    if (ImGui::BeginTable("ShipyardOrderTable", 8, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable |
+    if (ImGui::BeginTable("ShipyardOrderTable", 9, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable |
                            ImGuiTableFlags_Reorderable | ImGuiTableFlags_Hideable |
                            ImGuiTableFlags_SizingStretchProp)) {
-        ImGui::TableSetupColumn("ID");
         ImGui::TableSetupColumn("Colony");
+        ImGui::TableSetupColumn("Order");
         ImGui::TableSetupColumn("Class");
-        ImGui::TableSetupColumn("Requested");
+        ImGui::TableSetupColumn("Qty");
         ImGui::TableSetupColumn("Done");
-        ImGui::TableSetupColumn("BP");
-        ImGui::TableSetupColumn("Progress");
+        ImGui::TableSetupColumn("BP Remaining");
+        ImGui::TableSetupColumn("ETA");
+        ImGui::TableSetupColumn("Blocking Mineral");
         ImGui::TableSetupColumn("Status");
         ImGui::TableHeadersRow();
 
-        for (const ShipyardOrderSummary& order : orders) {
+        for (const ProductionBacklogSummary& order : backlog) {
             ImGui::TableNextRow();
             ImGui::TableSetColumnIndex(0);
-            ImGui::Text("%lld", static_cast<long long>(order.id.value));
+            ImGui::TextUnformatted(order.colonyName.c_str());
 
             ImGui::TableSetColumnIndex(1);
-            ImGui::TextUnformatted(order.colonyName.c_str());
+            if (order.queuePosition > 0) {
+                ImGui::Text("%lld (#%d)", static_cast<long long>(order.orderId.value), order.queuePosition);
+            } else {
+                ImGui::Text("%lld", static_cast<long long>(order.orderId.value));
+            }
+
             ImGui::TableSetColumnIndex(2);
             ImGui::TextUnformatted(order.shipClassName.c_str());
             ImGui::TableSetColumnIndex(3);
@@ -91,12 +89,17 @@ void ShipyardPanel::render(const SimulationQueries& queries, SimulationService& 
             ImGui::TableSetColumnIndex(4);
             ImGui::Text("%d", order.quantityCompleted);
             ImGui::TableSetColumnIndex(5);
-            ImGui::Text("%.1f / %.1f", order.accumulatedBuildPoints, order.requiredBuildPoints);
+            ImGui::Text("%.1f", order.buildPointsRemaining);
             ImGui::TableSetColumnIndex(6);
-            ImGui::Text("%.1f%%", progressPercent(order));
+            if (order.etaDays.has_value()) {
+                ImGui::Text("%d d", *order.etaDays);
+            } else {
+                ImGui::TextUnformatted("--");
+            }
             ImGui::TableSetColumnIndex(7);
+            ImGui::TextUnformatted(order.blockingMineralName.empty() ? "--" : order.blockingMineralName.c_str());
+            ImGui::TableSetColumnIndex(8);
             ImGui::TextUnformatted(order.statusName.c_str());
-
         }
 
         ImGui::EndTable();

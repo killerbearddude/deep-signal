@@ -208,6 +208,71 @@ void test_shipyard_order_eta_uses_capacity_and_accumulated_progress() {
             "shipyard ETA explains capacity-only limitation");
 }
 
+void test_production_backlog_uses_fifo_colony_capacity() {
+    // Verifies backlog ETAs account for the single shared colony capacity pool.
+    // The second active order waits behind the first instead of receiving a
+    // duplicate full allocation in the same forecast window.
+    deep::SimulationService service;
+    const deep::ColonyId colonyId = service.state().colonies.front().id;
+    const deep::ShipClassId shipClassId = service.state().shipClasses.front().id;
+
+    require(service.execute(deep::AssignShipyardBuildCommand{
+        .colonyId = colonyId,
+        .shipClassId = shipClassId,
+        .quantity = 1
+    }).ok, "first build order is accepted before backlog forecast");
+    require(service.execute(deep::AssignShipyardBuildCommand{
+        .colonyId = colonyId,
+        .shipClassId = shipClassId,
+        .quantity = 1
+    }).ok, "second build order is accepted before backlog forecast");
+
+    const deep::ForecastService forecasts{service};
+    const auto backlog = forecasts.productionBacklog();
+
+    require(backlog.size() == 2, "two backlog forecast rows are returned");
+    require(backlog.front().queuePosition == 1, "first order is first in colony queue");
+    require(backlog.at(1).queuePosition == 2, "second order is second in colony queue");
+    requireNear(backlog.front().buildPointsRemaining, 500.0, "first order has one ship of BP remaining");
+    requireNear(backlog.at(1).buildPointsRemaining, 500.0, "second order has one ship of BP remaining");
+    require(backlog.front().etaDays.has_value(), "first order has capacity ETA");
+    require(backlog.at(1).etaDays.has_value(), "second order has queue-aware ETA");
+    require(*backlog.front().etaDays == 5, "first order ETA uses direct colony capacity");
+    require(*backlog.at(1).etaDays == 10, "second order ETA includes first order backlog ahead");
+    require(backlog.at(1).explanation.find("build points ahead") != std::string::npos,
+            "backlog explanation exposes queue capacity math");
+}
+
+void test_production_backlog_reports_blocking_mineral() {
+    // Verifies the backlog forecast identifies the first mineral preventing an
+    // order from completing with current stockpiles. This is an app-layer
+    // explanation only; it does not change simulation production rules.
+    deep::GameState state = deep::createHomeSystemScenario();
+    state.colonies.front().stockpile.set(deep::Mineral::Structural, 100.0);
+
+    deep::SimulationService service{std::move(state)};
+    const deep::ColonyId colonyId = service.state().colonies.front().id;
+    const deep::ShipClassId shipClassId = service.state().shipClasses.front().id;
+
+    require(service.execute(deep::AssignShipyardBuildCommand{
+        .colonyId = colonyId,
+        .shipClassId = shipClassId,
+        .quantity = 1
+    }).ok, "build order is accepted before blocker forecast");
+
+    const deep::ForecastService forecasts{service};
+    const auto backlog = forecasts.productionBacklog();
+
+    require(backlog.size() == 1, "one blocked backlog row is returned");
+    require(backlog.front().blockedByMineral, "backlog row marks mineral blocker");
+    require(backlog.front().blockingMineral.has_value(), "blocking mineral enum is set");
+    require(*backlog.front().blockingMineral == deep::Mineral::Structural, "structural is the blocking mineral");
+    require(backlog.front().blockingMineralName == "Structural", "blocking mineral name is display-ready");
+    requireNear(backlog.front().requiredMineralsRemaining.get(deep::Mineral::Structural), 500.0,
+                "required remaining minerals include one Survey Cutter structural cost");
+    require(backlog.front().statusName == "Blocked: Structural", "status names the blocking mineral");
+}
+
 void test_fleet_arrival_eta_reports_active_move_order() {
     // Verifies fleet forecasts expose movement arrival timing and destination
     // names without future map panels reading raw Fleet records directly.
@@ -253,6 +318,8 @@ int main() {
         test_mineral_forecast_cause_chains_omit_runout_for_surplus();
         test_deposit_exhaustion_estimate_uses_current_income_rate();
         test_shipyard_order_eta_uses_capacity_and_accumulated_progress();
+        test_production_backlog_uses_fifo_colony_capacity();
+        test_production_backlog_reports_blocking_mineral();
         test_fleet_arrival_eta_reports_active_move_order();
     } catch (const std::exception& ex) {
         std::cerr << "Test failure: " << ex.what() << '\n';

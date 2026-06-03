@@ -79,6 +79,31 @@ struct ShipyardOrderEtaForecast {
     std::string explanation;
 };
 
+// Production backlog row for one shipyard order. The forecast models colony
+// capacity as a single FIFO pool, matching simulation production allocation,
+// and reports mineral pressure without changing production mechanics.
+struct ProductionBacklogForecast {
+    ShipyardOrderId orderId;
+    ColonyId colonyId;
+    ShipClassId shipClassId;
+    std::string colonyName;
+    std::string shipClassName;
+    int quantityRequested = 0;
+    int quantityCompleted = 0;
+    int shipsRemaining = 0;
+    int queuePosition = 0;
+    double colonyShipyardCapacity = 0.0;
+    double accumulatedBuildPoints = 0.0;
+    double buildPointsRemaining = 0.0;
+    MineralSet requiredMineralsRemaining;
+    bool blockedByMineral = false;
+    std::optional<Mineral> blockingMineral;
+    std::string blockingMineralName;
+    std::optional<int> etaDays;
+    std::string statusName;
+    std::string explanation;
+};
+
 // Arrival estimate for one fleet. etaDays is empty when the fleet is idle or has
 // invalid movement state that cannot produce an arrival projection.
 struct FleetArrivalEtaForecast {
@@ -113,6 +138,10 @@ public:
 
     // Returns capacity-only ETAs for shipyard orders.
     [[nodiscard]] std::vector<ShipyardOrderEtaForecast> shipyardOrderEtas() const;
+
+    // Returns production backlog rows that account for FIFO colony capacity and
+    // current mineral blockers. This is read-only forecasting only.
+    [[nodiscard]] std::vector<ProductionBacklogForecast> productionBacklog() const;
 
     // Returns fleet arrival ETAs for idle and moving fleets.
     [[nodiscard]] std::vector<FleetArrivalEtaForecast> fleetArrivalEtas() const;
