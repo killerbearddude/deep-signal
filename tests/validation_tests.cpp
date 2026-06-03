@@ -108,6 +108,52 @@ void test_non_finite_stockpile_amounts_are_rejected() {
     });
 }
 
+void test_invalid_processing_policy_is_rejected() {
+    // Loaded/imported states may contain enum ordinals that no simulation switch
+    // handles. Reject them at the trust boundary before a daily tick can run.
+    expectInvalidState("invalid processing policy", [](deep::GameState& state) {
+        state.colonies.front().processingPolicy = static_cast<deep::ProcessingPolicy>(999);
+    });
+}
+
+void test_invalid_manual_processing_material_is_rejected() {
+    // Manual allocations are persisted player intent. Their material IDs must be
+    // validated even when the current policy is a preset that is not using them.
+    expectInvalidState("invalid manual material", [](deep::GameState& state) {
+        state.colonies.front().manualProcessingAllocations = {
+            deep::ProcessingAllocation{.material = static_cast<deep::ProcessedMaterial>(999), .weight = 1.0}
+        };
+    });
+}
+
+void test_invalid_manual_processing_weights_are_rejected() {
+    // Non-finite and negative weights can corrupt normalized processing shares.
+    // Validation rejects both forms before simulation or forecasts see them.
+    expectInvalidState("non-finite manual weight", [](deep::GameState& state) {
+        state.colonies.front().manualProcessingAllocations = {
+            deep::ProcessingAllocation{.material = deep::ProcessedMaterial::Electronics,
+                                       .weight = std::numeric_limits<double>::quiet_NaN()}
+        };
+    });
+
+    expectInvalidState("negative manual weight", [](deep::GameState& state) {
+        state.colonies.front().manualProcessingAllocations = {
+            deep::ProcessingAllocation{.material = deep::ProcessedMaterial::Electronics, .weight = -1.0}
+        };
+    });
+}
+
+void test_manual_processing_policy_without_positive_total_weight_is_rejected() {
+    // Manual policy has no preset fallback. A zero total would leave the colony
+    // with processing capacity that appears configured but produces nothing.
+    expectInvalidState("manual policy without positive weight", [](deep::GameState& state) {
+        state.colonies.front().processingPolicy = deep::ProcessingPolicy::Manual;
+        state.colonies.front().manualProcessingAllocations = {
+            deep::ProcessingAllocation{.material = deep::ProcessedMaterial::Electronics, .weight = 0.0}
+        };
+    });
+}
+
 void test_ship_missing_from_owning_fleet_is_rejected() {
     // Ship and fleet references must be bidirectional. A ship whose fleet does
     // not list it would disappear from fleet-level views and order resolution.
@@ -189,6 +235,10 @@ int main() {
         test_stale_id_counters_are_rejected();
         test_negative_colony_mines_are_rejected();
         test_non_finite_stockpile_amounts_are_rejected();
+        test_invalid_processing_policy_is_rejected();
+        test_invalid_manual_processing_material_is_rejected();
+        test_invalid_manual_processing_weights_are_rejected();
+        test_manual_processing_policy_without_positive_total_weight_is_rejected();
         test_ship_missing_from_owning_fleet_is_rejected();
         test_fleet_listing_nonexistent_ship_is_rejected();
         test_ship_claimed_by_multiple_fleets_is_rejected();

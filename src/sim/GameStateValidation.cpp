@@ -56,6 +56,19 @@ void requireState(const bool condition, const std::string_view message) {
     return false;
 }
 
+[[nodiscard]] bool isValidProcessingPolicy(const ProcessingPolicy value) noexcept {
+    switch (value) {
+    case ProcessingPolicy::Balanced:
+    case ProcessingPolicy::ShipbuildingFocus:
+    case ProcessingPolicy::FuelFocus:
+    case ProcessingPolicy::ElectronicsFocus:
+    case ProcessingPolicy::StockpileRecovery:
+    case ProcessingPolicy::Manual:
+        return true;
+    }
+    return false;
+}
+
 [[nodiscard]] bool isValidShipyardOrderStatus(const ShipyardOrderStatus value) noexcept {
     switch (value) {
     case ShipyardOrderStatus::Active:
@@ -87,6 +100,11 @@ void requireState(const bool condition, const std::string_view message) {
 [[nodiscard]] bool isValidMineral(const Mineral value) noexcept {
     const auto index = static_cast<std::size_t>(value);
     return index < mineralCount();
+}
+
+[[nodiscard]] bool isValidProcessedMaterial(const ProcessedMaterial value) noexcept {
+    const auto index = static_cast<std::size_t>(value);
+    return index < processedMaterialCount();
 }
 
 template <typename T, typename IdT>
@@ -135,6 +153,26 @@ void validateProcessedMaterialSet(const ProcessedMaterialSet& set, const std::st
     for (const double amount : set.amount) {
         requireState(isFinite(amount), std::string{label} + " amount must be finite");
         requireState(amount >= 0.0, std::string{label} + " amount must be non-negative");
+    }
+}
+
+void validateProcessingPolicy(const Colony& colony) {
+    requireState(isValidProcessingPolicy(colony.processingPolicy), "colony processing policy must be valid");
+
+    double manualWeightTotal = 0.0;
+    for (const ProcessingAllocation& allocation : colony.manualProcessingAllocations) {
+        requireState(isValidProcessedMaterial(allocation.material),
+                     "manual processing allocation material must be valid");
+        requireState(isFinite(allocation.weight), "manual processing allocation weight must be finite");
+        requireState(allocation.weight >= 0.0, "manual processing allocation weight must be non-negative");
+        manualWeightTotal += allocation.weight;
+    }
+
+    // Manual policy has no preset fallback. Require at least one positive weight
+    // so a loaded or imported state cannot silently spend zero processor capacity.
+    if (colony.processingPolicy == ProcessingPolicy::Manual) {
+        requireState(manualWeightTotal > kProcessedMaterialComparisonEpsilon,
+                     "manual processing policy requires positive total weight");
     }
 }
 
@@ -235,6 +273,7 @@ void validateGameState(const GameState& state) {
                      "processor capacity must be finite and non-negative");
         requireState(isFinite(colony.shipyardCapacity) && colony.shipyardCapacity >= 0.0,
                      "shipyard capacity must be finite and non-negative");
+        validateProcessingPolicy(colony);
     }
 
     std::unordered_set<std::string> depositKeys;

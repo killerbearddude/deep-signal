@@ -12,6 +12,7 @@
 #include <cstdlib>
 #include <exception>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -256,6 +257,62 @@ void test_manual_processing_policy_requires_positive_weight() {
             "rejected manual policy leaves the existing processing policy unchanged");
 }
 
+void test_manual_processing_policy_rejects_invalid_weights() {
+    // Verifies command-level numeric validation before weights reach the daily
+    // processing tick. NaN/Inf would otherwise normalize into non-finite shares
+    // and poison raw or processed stockpile arithmetic.
+    deep::Simulation sim{deep::createHomeSystemScenario()};
+    const deep::ColonyId colonyId = sim.state().colonies.front().id;
+
+    const auto negativeResult = sim.execute(deep::SetColonyProcessingPolicyCommand{
+        .colonyId = colonyId,
+        .policy = deep::ProcessingPolicy::Manual,
+        .manualAllocations = {
+            deep::ProcessingAllocation{.material = deep::ProcessedMaterial::Electronics, .weight = -1.0}
+        }
+    });
+    require(!negativeResult.ok, "negative manual processing weights are rejected");
+
+    const auto nanResult = sim.execute(deep::SetColonyProcessingPolicyCommand{
+        .colonyId = colonyId,
+        .policy = deep::ProcessingPolicy::Manual,
+        .manualAllocations = {
+            deep::ProcessingAllocation{.material = deep::ProcessedMaterial::Electronics,
+                                       .weight = std::numeric_limits<double>::quiet_NaN()}
+        }
+    });
+    require(!nanResult.ok, "NaN manual processing weights are rejected");
+
+    const auto infiniteResult = sim.execute(deep::SetColonyProcessingPolicyCommand{
+        .colonyId = colonyId,
+        .policy = deep::ProcessingPolicy::Manual,
+        .manualAllocations = {
+            deep::ProcessingAllocation{.material = deep::ProcessedMaterial::Electronics,
+                                       .weight = std::numeric_limits<double>::infinity()}
+        }
+    });
+    require(!infiniteResult.ok, "infinite manual processing weights are rejected");
+    require(sim.state().colonies.front().processingPolicy == deep::ProcessingPolicy::Balanced,
+            "rejected invalid weights leave the existing processing policy unchanged");
+}
+
+void test_processing_policy_command_rejects_invalid_enum() {
+    // Verifies command validation for the policy enum itself. UI/save boundaries
+    // must not be able to store an ordinal that no policy switch handles.
+    deep::Simulation sim{deep::createHomeSystemScenario()};
+    const deep::ColonyId colonyId = sim.state().colonies.front().id;
+
+    const auto result = sim.execute(deep::SetColonyProcessingPolicyCommand{
+        .colonyId = colonyId,
+        .policy = static_cast<deep::ProcessingPolicy>(999),
+        .manualAllocations = {}
+    });
+
+    require(!result.ok, "invalid processing policy enum is rejected");
+    require(sim.state().colonies.front().processingPolicy == deep::ProcessingPolicy::Balanced,
+            "rejected invalid policy leaves the existing processing policy unchanged");
+}
+
 void test_shipyard_completion() {
     // Verifies that a command-created shipyard order consumes build time and
     // produces a ship plus fleet. Prevents direct-state-mutation regressions.
@@ -470,6 +527,8 @@ int main() {
         test_manual_processing_weights_are_normalized();
         test_non_manual_policy_preserves_manual_weights();
         test_manual_processing_policy_requires_positive_weight();
+        test_manual_processing_policy_rejects_invalid_weights();
+        test_processing_policy_command_rejects_invalid_enum();
         test_shipyard_completion();
         test_shipyard_capacity_is_shared_by_fifo_orders();
         test_shipyard_temporary_processed_material_shortage_recovers();

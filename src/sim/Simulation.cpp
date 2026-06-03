@@ -110,6 +110,19 @@ using ProcessingShares = std::array<double, processedMaterialCount()>;
     return processedMaterialIndex(material) < processedMaterialCount();
 }
 
+[[nodiscard]] bool isValidProcessingPolicy(const ProcessingPolicy policy) noexcept {
+    switch (policy) {
+    case ProcessingPolicy::Balanced:
+    case ProcessingPolicy::ShipbuildingFocus:
+    case ProcessingPolicy::FuelFocus:
+    case ProcessingPolicy::ElectronicsFocus:
+    case ProcessingPolicy::StockpileRecovery:
+    case ProcessingPolicy::Manual:
+        return true;
+    }
+    return false;
+}
+
 void addProcessingWeight(ProcessingShares& weights, const ProcessedMaterial material, const double weight) noexcept {
     if (weight <= 0.0 || !isValidProcessedMaterial(material)) {
         return;
@@ -359,11 +372,21 @@ CommandResult Simulation::setColonyProcessingPolicy(const SetColonyProcessingPol
         return CommandResult::failure("Colony does not exist");
     }
 
+    if (!isValidProcessingPolicy(command.policy)) {
+        appendEvent(EventSeverity::Warning, CommandRejectedEvent{"Processing policy is invalid"});
+        return CommandResult::failure("Processing policy is invalid");
+    }
+
     double manualWeightTotal = 0.0;
     for (const ProcessingAllocation& allocation : command.manualAllocations) {
         if (!isValidProcessedMaterial(allocation.material)) {
             appendEvent(EventSeverity::Warning, CommandRejectedEvent{"Manual processing allocation has invalid material"});
             return CommandResult::failure("Manual processing allocation has invalid material");
+        }
+
+        if (!std::isfinite(allocation.weight)) {
+            appendEvent(EventSeverity::Warning, CommandRejectedEvent{"Manual processing allocation weight must be finite"});
+            return CommandResult::failure("Manual processing allocation weight must be finite");
         }
 
         if (allocation.weight < 0.0) {
