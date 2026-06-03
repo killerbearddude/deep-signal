@@ -6,8 +6,11 @@
 
 #include "app/SelectionState.h"
 #include "app/SimulationService.h"
+#include "app/ForecastService.h"
 #include "platform/SdlApp.h"
+#include "ui_imgui/BodiesPanel.h"
 #include "ui_imgui/ColonyPanel.h"
+#include "ui_imgui/EconomyForecastPanel.h"
 #include "ui_imgui/EventLogPanel.h"
 #include "ui_imgui/FleetPanel.h"
 #include "ui_imgui/InspectorPanel.h"
@@ -53,7 +56,9 @@ private:
     MainMenuBar mainMenuBar_;
     SaveLoadPanel saveLoadPanel_;
     TimeControlPanel timeControlPanel_;
+    BodiesPanel bodiesPanel_;
     ShipyardPanel shipyardPanel_;
+    EconomyForecastPanel economyForecastPanel_;
     ColonyPanel colonyPanel_;
     FleetPanel fleetPanel_;
     EventLogPanel eventLogPanel_;

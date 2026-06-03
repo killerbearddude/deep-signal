@@ -99,7 +99,9 @@ if(DEEP_SIGNAL_BUILD_UI)
         src/platform/SdlApp.cpp
         src/render/MapCamera.cpp
         src/render/StrategicMapView.cpp
+        src/ui_imgui/BodiesPanel.cpp
         src/ui_imgui/ColonyPanel.cpp
+        src/ui_imgui/EconomyForecastPanel.cpp
         src/ui_imgui/EventLogPanel.cpp
         src/ui_imgui/FleetPanel.cpp
         src/ui_imgui/ImGuiApp.cpp

@@ -1,5 +1,7 @@
 #include "app/SimulationQueries.h"
 
+#include "app/ForecastService.h"
+
 // Implements read-only query projection from GameState into app-layer DTOs.
 // The functions in this file are intentionally presentation-adjacent but UI-free:
 // they resolve names and flatten variants without depending on ImGui or SDL.
@@ -225,6 +227,33 @@ std::vector<ShipyardOrderSummary> SimulationQueries::shipyardOrders() const {
     return summaries;
 }
 
+std::vector<ProductionBacklogSummary> SimulationQueries::productionBacklog() const {
+    const ForecastService forecasts{service_};
+    const std::vector<ProductionBacklogForecast> backlog = forecasts.productionBacklog();
+
+    std::vector<ProductionBacklogSummary> summaries;
+    summaries.reserve(backlog.size());
+    for (const ProductionBacklogForecast& row : backlog) {
+        summaries.push_back(ProductionBacklogSummary{
+            .orderId = row.orderId,
+            .colonyId = row.colonyId,
+            .shipClassId = row.shipClassId,
+            .colonyName = row.colonyName,
+            .shipClassName = row.shipClassName,
+            .quantityRequested = row.quantityRequested,
+            .quantityCompleted = row.quantityCompleted,
+            .queuePosition = row.queuePosition,
+            .accumulatedBuildPoints = row.accumulatedBuildPoints,
+            .buildPointsRemaining = row.buildPointsRemaining,
+            .etaDays = row.etaDays,
+            .blockingMineralName = row.blockingMineralName,
+            .statusName = row.statusName
+        });
+    }
+
+    return summaries;
+}
+
 std::vector<ShipClassSummary> SimulationQueries::shipClasses() const {
     const GameState& state = service_.state();
     std::vector<ShipClassSummary> summaries;
@@ -276,6 +305,35 @@ std::optional<FleetSummary> SimulationQueries::fleet(const FleetId id) const {
         return summary.id == id;
     });
     return it == summaries.end() ? std::optional<FleetSummary>{} : std::optional<FleetSummary>{*it};
+}
+
+std::vector<BodySystemSummary> SimulationQueries::bodySystemOverview() const {
+    const GameState& state = service_.state();
+    std::vector<BodySystemSummary> summaries;
+    summaries.reserve(state.bodies.size());
+
+    for (const Body& body : state.bodies) {
+        const auto onBody = [body](const auto& item) {
+            return item.bodyId == body.id;
+        };
+        const auto fleetAtBody = [body](const Fleet& fleet) {
+            return fleet.currentBodyId == body.id;
+        };
+
+        // Counts are derived here rather than in the UI so the Bodies/System
+        // panel remains a read-only projection over stable app DTOs.
+        summaries.push_back(BodySystemSummary{
+            .id = body.id,
+            .name = body.name,
+            .type = body.type,
+            .typeName = bodyTypeName(body.type),
+            .colonyCount = static_cast<std::size_t>(std::count_if(state.colonies.begin(), state.colonies.end(), onBody)),
+            .mineralDepositCount = static_cast<std::size_t>(std::count_if(state.mineralDeposits.begin(), state.mineralDeposits.end(), onBody)),
+            .fleetCount = static_cast<std::size_t>(std::count_if(state.fleets.begin(), state.fleets.end(), fleetAtBody))
+        });
+    }
+
+    return summaries;
 }
 
 std::vector<StrategicBodySummary> SimulationQueries::strategicBodies() const {

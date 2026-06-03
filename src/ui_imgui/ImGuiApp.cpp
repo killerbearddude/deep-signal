@@ -88,13 +88,16 @@ void ImGuiApp::renderPanels() {
     // time-control commands mutate SimulationService. The facade is lightweight
     // and does not expose mutable GameState access to panel code.
     const SimulationQueries queries{service_};
+    const ForecastService forecasts{service_};
 
     saveLoadPanel_.render(service_, visibility_.saveLoad);
     timeControlPanel_.render(service_, visibility_.timeControl);
     shipyardPanel_.render(queries, service_, visibility_.shipyard);
     strategicMapPanel_.render(queries, selection_, visibility_.strategicMap);
+    bodiesPanel_.render(queries, selection_, visibility_.bodies);
     colonyPanel_.render(queries, selection_, visibility_.colonies);
     fleetPanel_.render(queries, selection_, visibility_.fleets);
+    economyForecastPanel_.render(forecasts, visibility_.economyForecast);
     eventLogPanel_.render(queries, visibility_.eventLog);
     inspectorPanel_.render(queries, service_, selection_, visibility_.inspector);
 }

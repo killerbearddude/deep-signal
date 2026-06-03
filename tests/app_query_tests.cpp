@@ -68,6 +68,40 @@ void test_shipyard_order_summaries_resolve_names() {
 }
 
 
+void test_production_backlog_summaries_expose_queue_eta() {
+    // Verifies the UI-facing backlog query includes FIFO queue position and
+    // queue-aware ETA so the Shipyard panel does not recalculate production.
+    deep::SimulationService service;
+    const deep::ColonyId colonyId = service.state().colonies.front().id;
+    const deep::ShipClassId shipClassId = service.state().shipClasses.front().id;
+
+    require(service.execute(deep::AssignShipyardBuildCommand{
+        .colonyId = colonyId,
+        .shipClassId = shipClassId,
+        .quantity = 1
+    }).ok, "first build order is accepted before backlog query");
+    require(service.execute(deep::AssignShipyardBuildCommand{
+        .colonyId = colonyId,
+        .shipClassId = shipClassId,
+        .quantity = 1
+    }).ok, "second build order is accepted before backlog query");
+
+    const deep::SimulationQueries queries{service};
+    const auto backlog = queries.productionBacklog();
+
+    require(backlog.size() == 2, "two production backlog summaries are returned");
+    require(backlog.front().colonyName == "Terra Directorate", "backlog summary resolves colony name");
+    require(backlog.front().shipClassName == "Survey Cutter", "backlog summary resolves ship class name");
+    require(backlog.front().queuePosition == 1, "first backlog row has queue position one");
+    require(backlog.at(1).queuePosition == 2, "second backlog row has queue position two");
+    require(backlog.front().etaDays.has_value(), "first backlog row has ETA");
+    require(backlog.at(1).etaDays.has_value(), "second backlog row has ETA");
+    require(*backlog.front().etaDays == 5, "first backlog ETA uses direct capacity");
+    require(*backlog.at(1).etaDays == 10, "second backlog ETA includes first order capacity use");
+    require(backlog.front().blockingMineralName.empty(), "well-stocked order has no blocking mineral name");
+    require(backlog.front().statusName == "Active", "well-stocked order remains active");
+}
+
 void test_ship_class_summaries_expose_build_targets() {
     // Verifies that UI production panels can discover buildable ship classes
     // through query DTOs instead of reading GameState::shipClasses directly.
@@ -147,6 +181,36 @@ void test_single_record_queries_return_matching_summaries() {
     require(!missingBody.has_value(), "missing body ID returns no summary");
 }
 
+
+void test_body_system_overview_exposes_counts() {
+    // Verifies the Bodies/System panel can show body-level context without
+    // scanning raw GameState bodies, colonies, deposits, or fleets in UI code.
+    deep::SimulationService service;
+    const deep::ColonyId colonyId = service.state().colonies.front().id;
+    const deep::ShipClassId shipClassId = service.state().shipClasses.front().id;
+
+    require(service.execute(deep::AssignShipyardBuildCommand{
+        .colonyId = colonyId,
+        .shipClassId = shipClassId,
+        .quantity = 1
+    }).ok, "build order is accepted before body overview query");
+    static_cast<void>(service.advanceDays(5));
+
+    const deep::SimulationQueries queries{service};
+    const auto bodies = queries.bodySystemOverview();
+
+    require(bodies.size() == 2, "home scenario exposes two body overview rows");
+    require(bodies.front().name == "Terra", "first body overview row resolves Terra");
+    require(bodies.front().typeName == "Terrestrial", "body overview resolves body type name");
+    require(bodies.front().colonyCount == 1, "Terra body overview counts the colony");
+    require(bodies.front().mineralDepositCount == 2, "Terra body overview counts mineral deposits");
+    require(bodies.front().fleetCount == 1, "Terra body overview counts the newly completed fleet");
+    require(bodies.at(1).name == "Mars", "second body overview row resolves Mars");
+    require(bodies.at(1).colonyCount == 0, "Mars body overview has no colonies in the home scenario");
+    require(bodies.at(1).mineralDepositCount == 0, "Mars body overview has no deposits in the home scenario");
+    require(bodies.at(1).fleetCount == 0, "Mars body overview has no fleets before movement");
+}
+
 void test_strategic_map_summaries_resolve_positions() {
     // Verifies that the map can draw bodies and fleets from DTOs instead of
     // reading raw GameState body/fleet vectors in UI code.
@@ -219,9 +283,11 @@ int main() {
     try {
         test_colony_summaries_resolve_body_context();
         test_shipyard_order_summaries_resolve_names();
+        test_production_backlog_summaries_expose_queue_eta();
         test_ship_class_summaries_expose_build_targets();
         test_fleet_summaries_resolve_location_and_order();
         test_single_record_queries_return_matching_summaries();
+        test_body_system_overview_exposes_counts();
         test_strategic_map_summaries_resolve_positions();
         test_recent_events_returns_limited_chronological_tail();
     } catch (const std::exception& ex) {

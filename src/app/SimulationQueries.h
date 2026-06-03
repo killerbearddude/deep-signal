@@ -44,6 +44,24 @@ struct ShipyardOrderSummary {
     std::string statusName;
 };
 
+// Display-ready production backlog row. This mirrors app-layer production
+// forecasts so the UI can show queue ETA and blockers without reading raw state.
+struct ProductionBacklogSummary {
+    ShipyardOrderId orderId;
+    ColonyId colonyId;
+    ShipClassId shipClassId;
+    std::string colonyName;
+    std::string shipClassName;
+    int quantityRequested = 0;
+    int quantityCompleted = 0;
+    int queuePosition = 0;
+    double accumulatedBuildPoints = 0.0;
+    double buildPointsRemaining = 0.0;
+    std::optional<int> etaDays;
+    std::string blockingMineralName;
+    std::string statusName;
+};
+
 // Display-ready buildable ship class row. The UI can use these IDs to submit
 // production commands without reading GameState::shipClasses directly.
 struct ShipClassSummary {
@@ -68,6 +86,18 @@ struct FleetSummary {
     std::string activeOrderName;
     bool hasActiveOrder = false;
     int daysRemaining = 0;
+};
+
+// Display-ready body/system overview row. Counts are resolved in the app layer
+// so UI overview panels do not need to scan raw GameState vectors.
+struct BodySystemSummary {
+    BodyId id;
+    std::string name;
+    BodyType type = BodyType::Terrestrial;
+    std::string typeName;
+    std::size_t colonyCount = 0;
+    std::size_t mineralDepositCount = 0;
+    std::size_t fleetCount = 0;
 };
 
 // Map-ready body row with coarse simulation coordinates copied from GameState.
@@ -121,6 +151,9 @@ public:
     // Returns one summary row per shipyard order, including colony/class names.
     [[nodiscard]] std::vector<ShipyardOrderSummary> shipyardOrders() const;
 
+    // Returns one production backlog forecast row per shipyard order.
+    [[nodiscard]] std::vector<ProductionBacklogSummary> productionBacklog() const;
+
     // Returns one summary row per buildable ship class.
     [[nodiscard]] std::vector<ShipClassSummary> shipClasses() const;
 
@@ -129,6 +162,9 @@ public:
 
     // Returns a single fleet summary when the ID exists in the active snapshot.
     [[nodiscard]] std::optional<FleetSummary> fleet(FleetId id) const;
+
+    // Returns one overview row per body with colony, deposit, and fleet counts.
+    [[nodiscard]] std::vector<BodySystemSummary> bodySystemOverview() const;
 
     // Returns one map row per body, including abstract prototype coordinates.
     [[nodiscard]] std::vector<StrategicBodySummary> strategicBodies() const;

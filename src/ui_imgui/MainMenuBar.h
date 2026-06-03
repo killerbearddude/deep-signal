@@ -17,10 +17,12 @@ struct PanelVisibility {
     bool saveLoad = true;
     bool timeControl = true;
     bool strategicMap = true;
+    bool bodies = true;
     bool inspector = true;
     bool colonies = true;
     bool fleets = true;
     bool shipyard = true;
+    bool economyForecast = true;
     bool eventLog = true;
 };
 
