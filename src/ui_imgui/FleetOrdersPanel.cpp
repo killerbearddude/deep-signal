@@ -55,10 +55,11 @@ void drawQueuedOrders(const FleetSummary& fleet) {
         return;
     }
 
-    if (ImGui::BeginTable("fleet_order_queue", 3, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
+    if (ImGui::BeginTable("fleet_order_queue", 4, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
         ImGui::TableSetupColumn("#");
         ImGui::TableSetupColumn("Order");
         ImGui::TableSetupColumn("Destination");
+        ImGui::TableSetupColumn("ETA Days");
         ImGui::TableHeadersRow();
 
         for (const FleetQueuedOrderSummary& queuedOrder : fleet.queuedOrders) {
@@ -69,6 +70,8 @@ void drawQueuedOrders(const FleetSummary& fleet) {
             ImGui::TextUnformatted(queuedOrder.orderName.c_str());
             ImGui::TableSetColumnIndex(2);
             ImGui::TextUnformatted(queuedOrder.destinationBodyName.empty() ? "-" : queuedOrder.destinationBodyName.c_str());
+            ImGui::TableSetColumnIndex(3);
+            ImGui::Text("%d", queuedOrder.etaDays);
         }
 
         ImGui::EndTable();

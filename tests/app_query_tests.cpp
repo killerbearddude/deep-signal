@@ -243,6 +243,8 @@ void test_fleet_summaries_include_queued_orders() {
     require(fleet->queuedOrders.front().orderName == "MoveToBody", "queued order summary resolves order name");
     require(fleet->queuedOrders.front().destinationBodyId == terraId, "queued order summary includes destination ID");
     require(fleet->queuedOrders.front().destinationBodyName == "Terra", "queued order summary resolves destination name");
+    require(fleet->queuedOrders.front().etaDays == 10,
+            "queued order summary exposes cumulative ETA after the active order and queued move");
 }
 
 void test_single_record_queries_return_matching_summaries() {

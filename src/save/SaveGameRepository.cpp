@@ -367,10 +367,14 @@ void saveFleets(Database& db, const GameState& state) {
 
         for (std::size_t i = 0; i < fleet.queuedOrders.size(); ++i) {
             const QueuedFleetOrder& queuedOrder = fleet.queuedOrders.at(i);
+            if (!queuedOrder.targetBodyId.has_value()) {
+                throw std::runtime_error{"queued fleet order is missing a target body"};
+            }
+
             queueStmt.bindInt64(1, idValue(fleet.id));
             queueStmt.bindInt64(2, static_cast<std::int64_t>(i));
             queueStmt.bindInt64(3, enumValue(queuedOrder.type));
-            bindOptionalId(queueStmt, 4, queuedOrder.targetBodyId);
+            queueStmt.bindInt64(4, idValue(*queuedOrder.targetBodyId));
             queueStmt.execute();
             reuse(queueStmt);
         }

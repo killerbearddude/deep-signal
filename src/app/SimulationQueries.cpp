@@ -94,6 +94,11 @@ template <typename T, typename IdT>
     return "Unknown";
 }
 
+// TEMP: Fleet movement uses the simulation's fixed five-day prototype duration
+// until route distance, speed, and fuel rules exist. Queue ETA is therefore a
+// deterministic UI forecast rather than a route-planning calculation.
+constexpr int kPrototypeQueuedMoveDurationDays = 5;
+
 [[nodiscard]] std::string fleetOrderName(const FleetOrderType type) {
     switch (type) {
     case FleetOrderType::None:
@@ -462,6 +467,9 @@ std::vector<FleetSummary> SimulationQueries::fleets() const {
     for (const Fleet& fleet : state.fleets) {
         std::vector<FleetQueuedOrderSummary> queuedOrders;
         queuedOrders.reserve(fleet.queuedOrders.size());
+        const int activeOrderEtaDays = fleet.activeOrder.type == FleetOrderType::None
+            ? 0
+            : fleet.activeOrder.daysRemaining;
         for (std::size_t i = 0; i < fleet.queuedOrders.size(); ++i) {
             const QueuedFleetOrder& order = fleet.queuedOrders.at(i);
             queuedOrders.push_back(FleetQueuedOrderSummary{
@@ -471,7 +479,9 @@ std::vector<FleetSummary> SimulationQueries::fleets() const {
                 .destinationBodyId = order.targetBodyId,
                 .destinationBodyName = order.targetBodyId.has_value()
                     ? bodyName(state, *order.targetBodyId)
-                    : std::string{}
+                    : std::string{},
+                .etaDays = activeOrderEtaDays +
+                    (static_cast<int>(i) + 1) * kPrototypeQueuedMoveDurationDays
             });
         }
 

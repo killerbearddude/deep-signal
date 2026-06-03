@@ -110,6 +110,7 @@ struct FleetQueuedOrderSummary {
     std::string orderName;
     std::optional<BodyId> destinationBodyId;
     std::string destinationBodyName;
+    int etaDays = 0;
 };
 
 // Display-ready fleet row with resolved body names and order state. Destination

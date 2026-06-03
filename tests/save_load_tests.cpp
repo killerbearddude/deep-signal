@@ -366,7 +366,11 @@ void test_sqlite_save_load_round_trip() {
     require(service.execute(deep::QueueFleetMoveOrderCommand{
         .fleetId = fleetId,
         .destinationBodyId = service.state().bodies.front().id
-    }).ok, "queued follow-up order accepted before save");
+    }).ok, "first queued follow-up order accepted before save");
+    require(service.execute(deep::QueueFleetMoveOrderCommand{
+        .fleetId = fleetId,
+        .destinationBodyId = marsId
+    }).ok, "second queued follow-up order accepted before save");
 
     service.advanceDays(2);
     require(service.execute(deep::AssignShipyardBuildCommand{
@@ -406,7 +410,15 @@ void test_sqlite_save_load_round_trip() {
 
     loadedService.advanceDays(5);
     require(loadedService.state().fleets.front().currentBodyId == service.state().bodies.front().id,
-            "loaded fleet completes promoted queued order");
+            "loaded fleet completes first promoted queued order");
+    require(loadedService.state().fleets.front().activeOrder.type == deep::FleetOrderType::MoveToBody,
+            "loaded fleet starts second persisted queued order");
+    require(loadedService.state().fleets.front().activeOrder.targetBodyId == marsId,
+            "second persisted queued order keeps its destination after promotion");
+
+    loadedService.advanceDays(5);
+    require(loadedService.state().fleets.front().currentBodyId == marsId,
+            "loaded fleet completes second promoted queued order");
     require(loadedService.state().fleets.front().activeOrder.type == deep::FleetOrderType::None,
             "loaded fleet clears movement order after queued route finishes");
 
@@ -588,6 +600,16 @@ void test_malformed_save_bad_queued_fleet_order_is_rejected() {
                                 true);
 }
 
+void test_malformed_save_queued_fleet_order_bad_destination_is_rejected() {
+    // Foreign-key validation catches hand-edited queued moves that point at
+    // missing bodies before app queries or fleet promotion can inspect them.
+    expectMalformedSaveRejected("bad_queued_fleet_order_destination",
+                                "INSERT INTO fleet_order_queue(fleet_id, ordinal, order_type, target_body_id) "
+                                "VALUES (1, 0, 1, 999);",
+                                false,
+                                true);
+}
+
 void test_malformed_save_completed_order_with_build_progress_is_rejected() {
     // Completed production orders are terminal snapshots. Keeping build progress
     // on a completed order would make a future production tick ambiguous.
@@ -656,6 +678,7 @@ int main() {
         test_malformed_save_broken_fleet_target_reference_is_rejected();
         test_malformed_save_impossible_idle_fleet_order_is_rejected();
         test_malformed_save_bad_queued_fleet_order_is_rejected();
+        test_malformed_save_queued_fleet_order_bad_destination_is_rejected();
         test_malformed_save_completed_order_with_build_progress_is_rejected();
         test_malformed_save_active_order_already_complete_is_rejected();
         test_malformed_save_unknown_order_status_is_rejected();

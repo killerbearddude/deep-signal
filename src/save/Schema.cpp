@@ -167,6 +167,8 @@ void initializeSchema(Database& db) {
             FOREIGN KEY(order_target_body_id) REFERENCES bodies(id)
         );
 
+        -- Durable queued fleet intent. Active fleet orders are stored on fleets;
+        -- this table preserves future player-authored moves in execution order.
         CREATE TABLE IF NOT EXISTS fleet_order_queue (
             fleet_id INTEGER NOT NULL CHECK(fleet_id > 0),
             ordinal INTEGER NOT NULL CHECK(ordinal >= 0),
