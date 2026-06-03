@@ -421,17 +421,6 @@ void addProcessedMaterialSet(ProcessedMaterialAmountTotals& totals, const Proces
     return totals;
 }
 
-[[nodiscard]] std::string shipyardOrderStatusName(const ShipyardOrderStatus status) {
-    switch (status) {
-    case ShipyardOrderStatus::Active:
-        return "Active";
-    case ShipyardOrderStatus::Completed:
-        return "Completed";
-    }
-
-    return "Unknown";
-}
-
 [[nodiscard]] ProcessedMaterialSet scaledMaterialSet(const ProcessedMaterialSet& materials, const int scale) noexcept {
     ProcessedMaterialSet result{};
     if (scale <= 0) {
@@ -469,17 +458,16 @@ void addProcessedMaterialSet(ProcessedMaterialAmountTotals& totals, const Proces
 }
 
 [[nodiscard]] std::string productionBacklogStatusName(const ShipyardOrder& order,
-                                                      const bool blockedByMaterial,
-                                                      const std::string& blockingMaterialName) {
+                                                      const bool blockedByMaterial) {
     if (order.status == ShipyardOrderStatus::Completed || order.quantityCompleted >= order.quantityRequested) {
-        return "Completed";
+        return "Complete";
     }
 
     if (blockedByMaterial) {
-        return "Blocked: " + blockingMaterialName;
+        return "Waiting for materials";
     }
 
-    return shipyardOrderStatusName(order.status);
+    return "Building";
 }
 
 [[nodiscard]] std::string productionBacklogExplanation(const int queuePosition,
@@ -818,7 +806,7 @@ std::vector<ProductionBacklogForecast> ForecastService::productionBacklog() cons
             .blockingMaterial = blockedByMaterial ? blockingMaterial : std::nullopt,
             .blockingMaterialName = blockedByMaterial ? blockerName : std::string{},
             .etaDays = etaDays,
-            .statusName = productionBacklogStatusName(order, blockedByMaterial, blockerName),
+            .statusName = productionBacklogStatusName(order, blockedByMaterial),
             .explanation = productionBacklogExplanation(queuePosition,
                                                         buildPointsAhead,
                                                         buildPointsRemaining,

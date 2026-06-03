@@ -95,7 +95,8 @@ struct ShipyardOrderEtaForecast {
 
 // Production backlog row for one shipyard order. The forecast models colony
 // capacity as a single FIFO pool, matching simulation production allocation,
-// and reports mineral pressure without changing production mechanics.
+// and reports processed-material pressure without changing production mechanics.
+// statusName is display text: Building, Waiting for materials, or Complete.
 struct ProductionBacklogForecast {
     ShipyardOrderId orderId;
     ColonyId colonyId;

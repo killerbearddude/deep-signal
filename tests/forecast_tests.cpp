@@ -327,6 +327,7 @@ void test_production_backlog_uses_fifo_colony_capacity() {
     require(backlog.at(1).etaDays.has_value(), "second order has queue-aware ETA");
     require(*backlog.front().etaDays == 5, "first order ETA uses direct colony capacity");
     require(*backlog.at(1).etaDays == 10, "second order ETA includes first order backlog ahead");
+    require(backlog.front().statusName == "Building", "unblocked active order reports building status");
     require(backlog.at(1).explanation.find("build points ahead") != std::string::npos,
             "backlog explanation exposes queue capacity math");
 }
@@ -359,7 +360,7 @@ void test_production_backlog_reports_blocking_material() {
     require(backlog.front().blockingMaterialName == "Structural Alloys", "blocking material name is display-ready");
     requireNear(backlog.front().requiredMaterialsRemaining.get(deep::ProcessedMaterial::StructuralAlloys), 250.0,
                 "required remaining materials include one Survey Cutter structural alloy cost");
-    require(backlog.front().statusName == "Blocked: Structural Alloys", "status names the blocking material");
+    require(backlog.front().statusName == "Waiting for materials", "status reports material wait state");
 }
 
 void test_fleet_arrival_eta_reports_active_move_order() {

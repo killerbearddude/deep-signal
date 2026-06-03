@@ -236,6 +236,27 @@ void addProcessingWeight(ProcessingShares& weights, const ProcessedMaterial mate
     return summaries;
 }
 
+[[nodiscard]] std::vector<ProcessedMaterialStockpileSummary> summarizeMaterialRequirements(const ProcessedMaterialSet& materials) {
+    std::vector<ProcessedMaterialStockpileSummary> summaries;
+    summaries.reserve(processedMaterialCount());
+
+    for (std::size_t i = 0; i < processedMaterialCount(); ++i) {
+        const double amount = materials.amount[i];
+        if (amount <= kProcessedMaterialComparisonEpsilon) {
+            continue;
+        }
+
+        const ProcessedMaterial material = static_cast<ProcessedMaterial>(i);
+        summaries.push_back(ProcessedMaterialStockpileSummary{
+            .material = material,
+            .materialName = processedMaterialName(material),
+            .amount = amount
+        });
+    }
+
+    return summaries;
+}
+
 [[nodiscard]] std::string severityName(const EventSeverity severity) {
     switch (severity) {
     case EventSeverity::Info:
@@ -401,8 +422,10 @@ std::vector<ProductionBacklogSummary> SimulationQueries::productionBacklog() con
             .quantityRequested = row.quantityRequested,
             .quantityCompleted = row.quantityCompleted,
             .queuePosition = row.queuePosition,
+            .shipsRemaining = row.shipsRemaining,
             .accumulatedBuildPoints = row.accumulatedBuildPoints,
             .buildPointsRemaining = row.buildPointsRemaining,
+            .requiredMaterialsRemaining = summarizeMaterialRequirements(row.requiredMaterialsRemaining),
             .etaDays = row.etaDays,
             .blockingMaterialName = row.blockingMaterialName,
             .statusName = row.statusName

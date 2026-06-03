@@ -81,8 +81,12 @@ struct ProductionBacklogSummary {
     int quantityRequested = 0;
     int quantityCompleted = 0;
     int queuePosition = 0;
+    int shipsRemaining = 0;
     double accumulatedBuildPoints = 0.0;
     double buildPointsRemaining = 0.0;
+    // Nonzero remaining processed-material requirements for the incomplete
+    // portion of this order, suitable for direct display in production tables.
+    std::vector<ProcessedMaterialStockpileSummary> requiredMaterialsRemaining;
     std::optional<int> etaDays;
     std::string blockingMaterialName;
     std::string statusName;

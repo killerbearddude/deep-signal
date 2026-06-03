@@ -147,8 +147,14 @@ void test_production_backlog_summaries_expose_queue_eta() {
     require(backlog.at(1).etaDays.has_value(), "second backlog row has ETA");
     require(*backlog.front().etaDays == 5, "first backlog ETA uses direct capacity");
     require(*backlog.at(1).etaDays == 10, "second backlog ETA includes first order capacity use");
+    require(backlog.front().shipsRemaining == 1, "backlog summary exposes ships remaining");
+    require(!backlog.front().requiredMaterialsRemaining.empty(), "backlog summary exposes processed material requirements");
+    require(backlog.front().requiredMaterialsRemaining.front().material == deep::ProcessedMaterial::StructuralAlloys,
+            "first material requirement names structural alloys");
+    requireNear(backlog.front().requiredMaterialsRemaining.front().amount, 250.0,
+                "first material requirement preserves remaining structural alloy need");
     require(backlog.front().blockingMaterialName.empty(), "well-stocked order has no blocking material name");
-    require(backlog.front().statusName == "Active", "well-stocked order remains active");
+    require(backlog.front().statusName == "Building", "well-stocked order reports building status");
 }
 
 void test_ship_class_summaries_expose_build_targets() {
