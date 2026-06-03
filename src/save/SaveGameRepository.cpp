@@ -1,6 +1,6 @@
 #include "save/SaveGameRepository.h"
 
-// Implements schema v2 save/load mapping for the headless simulation state.
+// Implements schema v3 save/load mapping for the headless simulation state.
 // The repository uses prepared statements and transactions throughout; raw SQL
 // execution is limited to static schema/table maintenance statements with no data.
 
@@ -55,6 +55,8 @@ template <typename EnumT>
         return value >= 0 && value <= static_cast<std::int64_t>(BodyType::Asteroid);
     } else if constexpr (std::is_same_v<EnumT, ShipRole>) {
         return value >= 0 && value <= static_cast<std::int64_t>(ShipRole::Escort);
+    } else if constexpr (std::is_same_v<EnumT, ProcessingPolicy>) {
+        return value >= 0 && value <= static_cast<std::int64_t>(ProcessingPolicy::Manual);
     } else if constexpr (std::is_same_v<EnumT, ShipyardOrderStatus>) {
         // Schema v1 persists only the lifecycle states the simulation can
         // produce from valid input. Temporary shortages remain Active.
@@ -155,6 +157,7 @@ void clearExistingSave(Database& db) {
         DELETE FROM shipyard_orders;
         DELETE FROM ship_class_material_costs;
         DELETE FROM ship_classes;
+        DELETE FROM colony_processing_allocations;
         DELETE FROM colony_materials;
         DELETE FROM colony_minerals;
         DELETE FROM mineral_deposits;
@@ -229,11 +232,15 @@ void saveBodies(Database& db, const GameState& state) {
 
 void saveColonies(Database& db, const GameState& state) {
     Statement colonyStmt{db, R"sql(
-        INSERT INTO colonies(id, body_id, name, mines, processor_capacity, shipyard_capacity)
-        VALUES (?, ?, ?, ?, ?, ?);
+        INSERT INTO colonies(id, body_id, name, mines, processor_capacity, shipyard_capacity, processing_policy)
+        VALUES (?, ?, ?, ?, ?, ?, ?);
     )sql"};
     Statement mineralStmt{db, "INSERT INTO colony_minerals(colony_id, mineral, amount) VALUES (?, ?, ?);"};
     Statement materialStmt{db, "INSERT INTO colony_materials(colony_id, material, amount) VALUES (?, ?, ?);"};
+    Statement allocationStmt{db, R"sql(
+        INSERT INTO colony_processing_allocations(colony_id, ordinal, material, weight)
+        VALUES (?, ?, ?, ?);
+    )sql"};
 
     for (const Colony& colony : state.colonies) {
         colonyStmt.bindInt64(1, idValue(colony.id));
@@ -242,6 +249,7 @@ void saveColonies(Database& db, const GameState& state) {
         colonyStmt.bindDouble(4, colony.mines);
         colonyStmt.bindDouble(5, colony.processorCapacity);
         colonyStmt.bindDouble(6, colony.shipyardCapacity);
+        colonyStmt.bindInt64(7, enumValue(colony.processingPolicy));
         colonyStmt.execute();
         reuse(colonyStmt);
 
@@ -259,6 +267,16 @@ void saveColonies(Database& db, const GameState& state) {
             materialStmt.bindDouble(3, colony.processedStockpile.amount.at(material));
             materialStmt.execute();
             reuse(materialStmt);
+        }
+
+        for (std::size_t ordinal = 0; ordinal < colony.manualProcessingAllocations.size(); ++ordinal) {
+            const ProcessingAllocation& allocation = colony.manualProcessingAllocations.at(ordinal);
+            allocationStmt.bindInt64(1, idValue(colony.id));
+            allocationStmt.bindInt64(2, static_cast<std::int64_t>(ordinal));
+            allocationStmt.bindInt64(3, enumValue(allocation.material));
+            allocationStmt.bindDouble(4, allocation.weight);
+            allocationStmt.execute();
+            reuse(allocationStmt);
         }
     }
 }
@@ -444,7 +462,11 @@ void loadBodies(Database& db, GameState& state) {
 }
 
 void loadColonies(Database& db, GameState& state) {
-    Statement colonies{db, "SELECT id, body_id, name, mines, processor_capacity, shipyard_capacity FROM colonies ORDER BY id;"};
+    Statement colonies{db, R"sql(
+        SELECT id, body_id, name, mines, processor_capacity, shipyard_capacity, processing_policy
+        FROM colonies
+        ORDER BY id;
+    )sql"};
     while (colonies.step()) {
         state.colonies.push_back(Colony{
             .id = ColonyId{colonies.columnInt64(0)},
@@ -455,7 +477,7 @@ void loadColonies(Database& db, GameState& state) {
             .mines = colonies.columnDouble(3),
             .processorCapacity = colonies.columnDouble(4),
             .shipyardCapacity = colonies.columnDouble(5),
-            .processingPolicy = ProcessingPolicy::Balanced,
+            .processingPolicy = enumFromValue<ProcessingPolicy>(colonies.columnInt64(6)),
             .manualProcessingAllocations = {}
         });
     }
@@ -478,6 +500,23 @@ void loadColonies(Database& db, GameState& state) {
             throw std::runtime_error{"colony_materials references a missing colony"};
         }
         colony->processedStockpile.set(enumFromValue<ProcessedMaterial>(materials.columnInt64(1)), materials.columnDouble(2));
+    }
+
+    Statement allocations{db, R"sql(
+        SELECT colony_id, material, weight
+        FROM colony_processing_allocations
+        ORDER BY colony_id, ordinal;
+    )sql"};
+    while (allocations.step()) {
+        const ColonyId colonyId{allocations.columnInt64(0)};
+        Colony* colony = findById(state.colonies, colonyId);
+        if (colony == nullptr) {
+            throw std::runtime_error{"colony_processing_allocations references a missing colony"};
+        }
+        colony->manualProcessingAllocations.push_back(ProcessingAllocation{
+            .material = enumFromValue<ProcessedMaterial>(allocations.columnInt64(1)),
+            .weight = allocations.columnDouble(2)
+        });
     }
 }
 

@@ -5,7 +5,7 @@
 #include "sim/Minerals.h"
 
 // Regression tests for SQLite save/load round-tripping.
-// These tests verify that schema v2 persists durable Prototype 0.1 state,
+// These tests verify that schema v3 persists durable Prototype 0.1 state,
 // including ID counters, economy rows, production, active fleet orders, and events.
 // Runtime-only economy telemetry is tested separately as intentionally transient.
 
@@ -20,6 +20,7 @@
 #include <string_view>
 #include <type_traits>
 #include <variant>
+#include <vector>
 
 namespace {
 
@@ -60,6 +61,20 @@ bool sameMineralSet(const deep::MineralSet& lhs, const deep::MineralSet& rhs) no
 bool sameProcessedMaterialSet(const deep::ProcessedMaterialSet& lhs, const deep::ProcessedMaterialSet& rhs) noexcept {
     for (std::size_t i = 0; i < deep::processedMaterialCount(); ++i) {
         if (!almostEqual(lhs.amount.at(i), rhs.amount.at(i))) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool sameProcessingAllocations(const std::vector<deep::ProcessingAllocation>& lhs,
+                               const std::vector<deep::ProcessingAllocation>& rhs) noexcept {
+    if (lhs.size() != rhs.size()) {
+        return false;
+    }
+
+    for (std::size_t i = 0; i < lhs.size(); ++i) {
+        if (lhs.at(i).material != rhs.at(i).material || !almostEqual(lhs.at(i).weight, rhs.at(i).weight)) {
             return false;
         }
     }
@@ -153,6 +168,9 @@ void requireSameState(const deep::GameState& expected, const deep::GameState& ac
         require(almostEqual(left.mines, right.mines), "colony mines round-trip");
         require(almostEqual(left.processorCapacity, right.processorCapacity), "processor capacity round-trips");
         require(almostEqual(left.shipyardCapacity, right.shipyardCapacity), "shipyard capacity round-trips");
+        require(left.processingPolicy == right.processingPolicy, "colony processing policy round-trips");
+        require(sameProcessingAllocations(left.manualProcessingAllocations, right.manualProcessingAllocations),
+                "colony manual processing allocations round-trip");
     }
 
     require(expected.mineralDeposits.size() == actual.mineralDeposits.size(), "deposit row count round-trips");
@@ -344,6 +362,14 @@ void test_sqlite_save_load_round_trip() {
         .shipClassId = shipClassId,
         .quantity = 1
     }).ok == false, "invalid command creates warning event before save");
+    require(service.execute(deep::SetColonyProcessingPolicyCommand{
+        .colonyId = colonyId,
+        .policy = deep::ProcessingPolicy::Manual,
+        .manualAllocations = {
+            deep::ProcessingAllocation{.material = deep::ProcessedMaterial::Electronics, .weight = 2.5},
+            deep::ProcessingAllocation{.material = deep::ProcessedMaterial::Propellant, .weight = 1.5}
+        }
+    }).ok, "manual processing policy is set before save");
 
     const deep::GameState expected = service.state();
     const auto saveResult = service.saveGame(path);
@@ -367,8 +393,46 @@ void test_sqlite_save_load_round_trip() {
     std::filesystem::remove(path);
 }
 
+void test_manual_processing_policy_state_round_trips() {
+    // Verifies the player-facing processing allocation controls are durable.
+    // Without this coverage, loading a save can silently revert production intent
+    // to Balanced and discard Manual weights.
+    const std::filesystem::path path = std::filesystem::temp_directory_path() /
+                                      "deep_signal_processing_policy_roundtrip.sqlite";
+    std::filesystem::remove(path);
+
+    deep::SimulationService service;
+    const deep::ColonyId colonyId = service.state().colonies.front().id;
+    require(service.execute(deep::SetColonyProcessingPolicyCommand{
+        .colonyId = colonyId,
+        .policy = deep::ProcessingPolicy::Manual,
+        .manualAllocations = {
+            deep::ProcessingAllocation{.material = deep::ProcessedMaterial::StructuralAlloys, .weight = 3.0},
+            deep::ProcessingAllocation{.material = deep::ProcessedMaterial::Electronics, .weight = 2.0},
+            deep::ProcessingAllocation{.material = deep::ProcessedMaterial::Propellant, .weight = 1.0}
+        }
+    }).ok, "manual processing policy is accepted before round-trip save");
+
+    const auto saveResult = service.saveGame(path);
+    require(saveResult.ok, "service saves manual processing policy state");
+
+    const deep::GameState loaded = deep::save::SaveGameRepository::load(path);
+    requireSameState(service.state(), loaded);
+    require(loaded.colonies.front().processingPolicy == deep::ProcessingPolicy::Manual,
+            "manual processing policy survives repository load");
+    require(loaded.colonies.front().manualProcessingAllocations.size() == 3,
+            "manual processing allocation rows survive repository load");
+
+    deep::SimulationService loadedService;
+    const auto loadResult = loadedService.loadGame(path);
+    require(loadResult.ok, "service loads manual processing policy state");
+    requireSameState(service.state(), loadedService.state());
+
+    std::filesystem::remove(path);
+}
+
 void test_daily_economy_snapshots_are_runtime_only() {
-    // Confirms the schema v2 contract for high-volume economy telemetry. The
+    // Confirms the schema v3 contract for high-volume economy telemetry. The
     // stockpile/deposit state is durable, but per-day mining samples are a
     // current-session UI/forecast/debug aid and intentionally reload empty.
     const std::filesystem::path path = std::filesystem::temp_directory_path() / "deep_signal_transient_telemetry.sqlite";
@@ -546,6 +610,7 @@ void test_malformed_save_event_payload_missing_field_is_rejected() {
 int main() {
     try {
         test_sqlite_save_load_round_trip();
+        test_manual_processing_policy_state_round_trips();
         test_daily_economy_snapshots_are_runtime_only();
         test_malformed_save_missing_schema_version_is_rejected();
         test_malformed_save_unsupported_schema_version_is_rejected();

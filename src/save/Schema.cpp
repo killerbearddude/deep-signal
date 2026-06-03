@@ -1,6 +1,6 @@
 #include "save/Schema.h"
 
-// Implements schema v2 for Prototype 0.1 saves.
+// Implements schema v3 for Prototype 0.1 saves.
 // The schema mirrors GameState-owned records and keeps event payloads as typed
 // JSON text for inspectable, forward-migratable audit history. CHECK constraints
 // intentionally duplicate core invariants so hand-edited save files fail early.
@@ -36,7 +36,7 @@ void initializeSchema(Database& db) {
 
         CREATE TABLE IF NOT EXISTS schema_version (
             id INTEGER PRIMARY KEY CHECK(id = 1),
-            version INTEGER NOT NULL CHECK(version = 2)
+            version INTEGER NOT NULL CHECK(version = 3)
         );
 
         CREATE TABLE IF NOT EXISTS game_meta (
@@ -71,6 +71,7 @@ void initializeSchema(Database& db) {
             mines REAL NOT NULL CHECK(mines >= 0.0),
             processor_capacity REAL NOT NULL CHECK(processor_capacity >= 0.0),
             shipyard_capacity REAL NOT NULL CHECK(shipyard_capacity >= 0.0),
+            processing_policy INTEGER NOT NULL CHECK(processing_policy BETWEEN 0 AND 5),
             FOREIGN KEY(body_id) REFERENCES bodies(id)
         );
 
@@ -87,6 +88,15 @@ void initializeSchema(Database& db) {
             material INTEGER NOT NULL CHECK(material BETWEEN 0 AND 5),
             amount REAL NOT NULL CHECK(amount >= 0.0),
             PRIMARY KEY(colony_id, material),
+            FOREIGN KEY(colony_id) REFERENCES colonies(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS colony_processing_allocations (
+            colony_id INTEGER NOT NULL CHECK(colony_id > 0),
+            ordinal INTEGER NOT NULL CHECK(ordinal >= 0),
+            material INTEGER NOT NULL CHECK(material BETWEEN 0 AND 5),
+            weight REAL NOT NULL CHECK(weight >= 0.0),
+            PRIMARY KEY(colony_id, ordinal),
             FOREIGN KEY(colony_id) REFERENCES colonies(id)
         );
 
@@ -177,6 +187,8 @@ void initializeSchema(Database& db) {
 
         CREATE INDEX IF NOT EXISTS idx_bodies_system_id ON bodies(system_id);
         CREATE INDEX IF NOT EXISTS idx_colonies_body_id ON colonies(body_id);
+        CREATE INDEX IF NOT EXISTS idx_colony_processing_allocations_colony_id
+            ON colony_processing_allocations(colony_id);
         CREATE INDEX IF NOT EXISTS idx_ships_fleet_id ON ships(fleet_id);
         CREATE INDEX IF NOT EXISTS idx_events_day ON event_log(day);
     )sql");
