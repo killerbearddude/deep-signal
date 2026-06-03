@@ -7,6 +7,7 @@
 // These tests protect the future UI contract: panels should receive explainable
 // projections from src/app instead of recalculating against raw GameState data.
 
+#include <algorithm>
 #include <cstdlib>
 #include <exception>
 #include <iostream>
@@ -36,6 +37,17 @@ void requireNear(const double actual, const double expected, const std::string_v
     if (delta > kTolerance) {
         throw TestFailure{message};
     }
+}
+
+const deep::MineralForecastCauseChain& requireCauseChain(const std::vector<deep::MineralForecastCauseChain>& chains,
+                                                         const deep::Mineral mineral) {
+    const auto it = std::find_if(chains.begin(), chains.end(), [mineral](const deep::MineralForecastCauseChain& chain) {
+        return chain.mineral == mineral;
+    });
+    if (it == chains.end()) {
+        throw TestFailure{"expected mineral forecast cause chain was not returned"};
+    }
+    return *it;
 }
 
 void test_mineral_income_per_day_uses_current_mining_formula() {
@@ -104,6 +116,51 @@ void test_mineral_income_per_day_shares_deposits_between_colonies() {
     requireNear(structuralIncomeTotal, 10.0, "combined income does not exceed shared deposit remaining");
     requireNear(*firstColonyStructuralIncome, 10.0, "first colony receives the capped remaining deposit");
     requireNear(*secondColonyStructuralIncome, 0.0, "later colony receives no income after deposit exhaustion");
+}
+
+void test_mineral_forecast_cause_chains_report_shipyard_demand() {
+    // Verifies the v1 cause-chain DTO explains why a mineral forecast is moving
+    // negative: current mining is offset by active shipyard commitments.
+    deep::SimulationService service;
+    const deep::ColonyId colonyId = service.state().colonies.front().id;
+    const deep::ShipClassId shipClassId = service.state().shipClasses.front().id;
+
+    require(service.execute(deep::AssignShipyardBuildCommand{
+        .colonyId = colonyId,
+        .shipClassId = shipClassId,
+        .quantity = 1
+    }).ok, "build order is accepted before cause-chain forecast");
+
+    const deep::ForecastService forecasts{service};
+    const auto chains = forecasts.mineralForecastCauseChains();
+    const deep::MineralForecastCauseChain& structural = requireCauseChain(chains, deep::Mineral::Structural);
+
+    require(chains.size() == deep::mineralCount(), "one cause chain is returned for every mineral");
+    require(structural.mineralName == "Structural", "cause chain exposes mineral name");
+    requireNear(structural.stockpile, 10000.0, "cause chain sums colony stockpiles");
+    requireNear(structural.miningIncomePerDay, 10.0, "cause chain includes mining income per day");
+    requireNear(structural.activeShipyardDemandPerDay, 100.0, "cause chain amortizes active shipyard demand");
+    requireNear(structural.netPerDay, -90.0, "cause chain computes net mineral flow");
+    require(structural.stockpileRunoutDays.has_value(), "negative net flow yields stockpile runout");
+    require(*structural.stockpileRunoutDays == 112, "runout rounds stockpile divided by deficit up to days");
+    require(structural.causes.size() == 2, "cause chain contains the v1 explanation rows");
+    require(structural.causes.front().label == "Mining", "first cause row explains mining");
+    require(structural.causes.at(1).label == "Active shipyard orders", "second cause row explains shipyard demand");
+    requireNear(structural.causes.at(1).amountPerDay, -100.0, "shipyard cause row reports demand as a negative contribution");
+}
+
+void test_mineral_forecast_cause_chains_omit_runout_for_surplus() {
+    // Verifies a mineral with non-negative net flow does not report a false
+    // shortage timer when no active shipyard order is consuming it.
+    const deep::SimulationService service;
+    const deep::ForecastService forecasts{service};
+    const auto chains = forecasts.mineralForecastCauseChains();
+    const deep::MineralForecastCauseChain& structural = requireCauseChain(chains, deep::Mineral::Structural);
+
+    requireNear(structural.miningIncomePerDay, 10.0, "surplus forecast includes current mining income");
+    requireNear(structural.activeShipyardDemandPerDay, 0.0, "surplus forecast has no active shipyard demand");
+    requireNear(structural.netPerDay, 10.0, "surplus forecast computes positive net flow");
+    require(!structural.stockpileRunoutDays.has_value(), "non-negative net flow has no runout day");
 }
 
 void test_deposit_exhaustion_estimate_uses_current_income_rate() {
@@ -192,6 +249,8 @@ int main() {
     try {
         test_mineral_income_per_day_uses_current_mining_formula();
         test_mineral_income_per_day_shares_deposits_between_colonies();
+        test_mineral_forecast_cause_chains_report_shipyard_demand();
+        test_mineral_forecast_cause_chains_omit_runout_for_surplus();
         test_deposit_exhaustion_estimate_uses_current_income_rate();
         test_shipyard_order_eta_uses_capacity_and_accumulated_progress();
         test_fleet_arrival_eta_reports_active_move_order();

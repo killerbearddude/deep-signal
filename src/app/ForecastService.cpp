@@ -7,6 +7,7 @@
 #include "sim/GameState.h"
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cmath>
 #include <sstream>
@@ -71,6 +72,59 @@ template <typename T, typename IdT>
     return out.str();
 }
 
+using MineralAmountTotals = std::array<double, mineralCount()>;
+
+void addMineralSet(MineralAmountTotals& totals, const MineralSet& minerals, const double scale = 1.0) noexcept {
+    for (std::size_t i = 0; i < totals.size(); ++i) {
+        totals[i] += minerals.amount[i] * scale;
+    }
+}
+
+[[nodiscard]] Mineral mineralFromIndex(const std::size_t index) noexcept {
+    return static_cast<Mineral>(index);
+}
+
+[[nodiscard]] std::optional<int> stockpileRunoutDays(const double stockpile, const double netPerDay) {
+    if (netPerDay >= -kMineralComparisonEpsilon) {
+        return std::nullopt;
+    }
+
+    if (stockpile <= 0.0) {
+        return 0;
+    }
+
+    return ceilToNonNegativeDays(stockpile / -netPerDay);
+}
+
+[[nodiscard]] std::string miningCauseExplanation(const double incomePerDay) {
+    std::ostringstream out;
+    out << incomePerDay << " per day from current mines and accessible deposits";
+    return out.str();
+}
+
+[[nodiscard]] std::string shipyardDemandCauseExplanation(const double demandPerDay) {
+    std::ostringstream out;
+    out << demandPerDay << " per day committed to active shipyard orders; "
+        << "demand is amortized over capacity-only order ETAs";
+    return out.str();
+}
+
+[[nodiscard]] MineralAmountTotals totalColonyStockpiles(const GameState& state) noexcept {
+    MineralAmountTotals totals{};
+    for (const Colony& colony : state.colonies) {
+        addMineralSet(totals, colony.stockpile);
+    }
+    return totals;
+}
+
+[[nodiscard]] MineralAmountTotals miningIncomeByMineral(const std::vector<MineralIncomeForecast>& incomeRows) noexcept {
+    MineralAmountTotals totals{};
+    for (const MineralIncomeForecast& row : incomeRows) {
+        totals[mineralIndex(row.mineral)] += row.incomePerDay;
+    }
+    return totals;
+}
+
 [[nodiscard]] double totalDailyExtraction(const GameState& state, const MineralDeposit& deposit) noexcept {
     double potentialIncome = 0.0;
     for (const Colony& colony : state.colonies) {
@@ -132,6 +186,37 @@ template <typename T, typename IdT>
     }
 
     return ceilToNonNegativeDays(totalBuildPointsRemaining(order, shipClass) / colony.shipyardCapacity);
+}
+
+[[nodiscard]] MineralAmountTotals activeShipyardDemandByMineral(const GameState& state) {
+    MineralAmountTotals totals{};
+
+    for (const ShipyardOrder& order : state.shipyardOrders) {
+        if (order.status != ShipyardOrderStatus::Active || order.quantityCompleted >= order.quantityRequested) {
+            continue;
+        }
+
+        const Colony* colony = findById(state.colonies, order.colonyId);
+        const ShipClass* shipClass = findById(state.shipClasses, order.shipClassId);
+        if (colony == nullptr || shipClass == nullptr) {
+            continue;
+        }
+
+        const std::optional<int> etaDays = shipyardEtaDays(order, *shipClass, *colony);
+        if (!etaDays.has_value() || *etaDays <= 0) {
+            continue;
+        }
+
+        // Prototype v1 explains committed production as an amortized demand flow,
+        // not exact per-day spending. Simulation still spends minerals only when
+        // a ship completes; this projection spreads the remaining committed ship
+        // costs across the capacity-only ETA so empire forecasts show pressure.
+        const int shipsRemaining = std::max(0, order.quantityRequested - order.quantityCompleted);
+        const double perDayScale = static_cast<double>(shipsRemaining) / static_cast<double>(*etaDays);
+        addMineralSet(totals, shipClass->buildCost, perDayScale);
+    }
+
+    return totals;
 }
 
 [[nodiscard]] std::string shipyardEtaExplanation(const ShipyardOrder& order,
@@ -224,6 +309,45 @@ std::vector<MineralIncomeForecast> ForecastService::mineralIncomePerDay() const 
                 .explanation = mineralIncomeExplanation(colony, deposit, income)
             });
         }
+    }
+
+    return forecasts;
+}
+
+std::vector<MineralForecastCauseChain> ForecastService::mineralForecastCauseChains() const {
+    const GameState& state = service_.state();
+    const MineralAmountTotals stockpiles = totalColonyStockpiles(state);
+    const MineralAmountTotals miningIncome = miningIncomeByMineral(mineralIncomePerDay());
+    const MineralAmountTotals shipyardDemand = activeShipyardDemandByMineral(state);
+
+    std::vector<MineralForecastCauseChain> forecasts;
+    forecasts.reserve(mineralCount());
+
+    for (std::size_t i = 0; i < mineralCount(); ++i) {
+        const Mineral mineral = mineralFromIndex(i);
+        const double netPerDay = miningIncome[i] - shipyardDemand[i];
+
+        forecasts.push_back(MineralForecastCauseChain{
+            .mineral = mineral,
+            .mineralName = mineralName(mineral),
+            .stockpile = stockpiles[i],
+            .miningIncomePerDay = miningIncome[i],
+            .activeShipyardDemandPerDay = shipyardDemand[i],
+            .netPerDay = netPerDay,
+            .stockpileRunoutDays = stockpileRunoutDays(stockpiles[i], netPerDay),
+            .causes = {
+                MineralForecastCauseRow{
+                    .label = "Mining",
+                    .amountPerDay = miningIncome[i],
+                    .explanation = miningCauseExplanation(miningIncome[i])
+                },
+                MineralForecastCauseRow{
+                    .label = "Active shipyard orders",
+                    .amountPerDay = -shipyardDemand[i],
+                    .explanation = shipyardDemandCauseExplanation(shipyardDemand[i])
+                }
+            }
+        });
     }
 
     return forecasts;

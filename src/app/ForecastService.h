@@ -29,6 +29,28 @@ struct MineralIncomeForecast {
     std::string explanation;
 };
 
+// One signed contribution row in a mineral forecast cause chain. Positive values
+// increase stockpile, while negative values represent committed demand.
+struct MineralForecastCauseRow {
+    std::string label;
+    double amountPerDay = 0.0;
+    std::string explanation;
+};
+
+// Empire-level mineral forecast with simple cause rows for UI explanation.
+// This v1 forecast uses current mining income and amortized active shipyard
+// commitments; it does not introduce new economy systems or future automation.
+struct MineralForecastCauseChain {
+    Mineral mineral = Mineral::Structural;
+    std::string mineralName;
+    double stockpile = 0.0;
+    double miningIncomePerDay = 0.0;
+    double activeShipyardDemandPerDay = 0.0;
+    double netPerDay = 0.0;
+    std::optional<int> stockpileRunoutDays;
+    std::vector<MineralForecastCauseRow> causes;
+};
+
 // Deposit lifetime estimate for one currently-known mineral deposit.
 // exhaustionDays is empty when no positive extraction rate exists.
 struct DepositExhaustionForecast {
@@ -81,6 +103,10 @@ public:
     // Returns next-day mineral income rows for each colony/deposit pair. Rows
     // share deposit remaining in deterministic colony/deposit order.
     [[nodiscard]] std::vector<MineralIncomeForecast> mineralIncomePerDay() const;
+
+    // Returns empire-level mineral cause chains showing mining income, active
+    // shipyard commitments, net flow, and stockpile runout where applicable.
+    [[nodiscard]] std::vector<MineralForecastCauseChain> mineralForecastCauseChains() const;
 
     // Returns deposit lifetime estimates using current daily extraction rates.
     [[nodiscard]] std::vector<DepositExhaustionForecast> depositExhaustionEstimates() const;
