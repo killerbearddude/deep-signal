@@ -203,6 +203,11 @@ void test_fleet_summaries_resolve_location_and_order() {
     require(fleets.front().activeOrderName == "MoveToBody", "fleet summary includes active order type");
     require(fleets.front().hasActiveOrder, "fleet summary marks active movement orders");
     require(fleets.front().daysRemaining == 5, "fleet summary includes remaining movement days");
+    require(fleets.front().activeOrderEtaDays.has_value(), "active movement exposes an ETA");
+    require(*fleets.front().activeOrderEtaDays == 5, "active movement ETA uses remaining movement days");
+    require(fleets.front().activeOrderProjectedArrivalDay == service.state().date.day + 5,
+            "active movement exposes projected arrival day");
+    require(fleets.front().totalRouteDurationDays == 5, "single active order route lasts five days");
     require(fleets.front().queuedOrders.empty(), "fleet summary exposes an empty queue for immediate movement");
 }
 
@@ -245,6 +250,39 @@ void test_fleet_summaries_include_queued_orders() {
     require(fleet->queuedOrders.front().destinationBodyName == "Terra", "queued order summary resolves destination name");
     require(fleet->queuedOrders.front().etaDays == 10,
             "queued order summary exposes cumulative ETA after the active order and queued move");
+    require(fleet->queuedOrders.front().projectedStartDay == service.state().date.day + 5,
+            "queued order summary exposes projected start after active order arrival");
+    require(fleet->queuedOrders.front().projectedArrivalDay == service.state().date.day + 10,
+            "queued order summary exposes projected arrival after queued move duration");
+    require(fleet->totalRouteDurationDays == 10, "fleet summary exposes total route duration through the queue");
+}
+
+
+void test_fleet_summaries_report_empty_timeline_for_idle_fleet() {
+    // Verifies that the UI can warn about a fleet with no active or queued
+    // orders without inferring state from raw Fleet records.
+    deep::SimulationService service;
+    const deep::ColonyId colonyId = service.state().colonies.front().id;
+    const deep::ShipClassId shipClassId = service.state().shipClasses.front().id;
+
+    require(service.execute(deep::AssignShipyardBuildCommand{
+        .colonyId = colonyId,
+        .shipClassId = shipClassId,
+        .quantity = 1
+    }).ok, "build order is accepted before idle fleet timeline test");
+
+    static_cast<void>(service.advanceDays(5));
+
+    const deep::SimulationQueries queries{service};
+    const auto fleet = queries.fleet(service.state().fleets.front().id);
+
+    require(fleet.has_value(), "completed starter ship creates a fleet summary");
+    require(!fleet->hasActiveOrder, "new fleet starts idle");
+    require(!fleet->activeOrderEtaDays.has_value(), "idle fleet has no active-order ETA");
+    require(fleet->totalRouteDurationDays == 0, "idle fleet has zero route duration");
+    require(fleet->activeOrderProjectedArrivalDay == service.state().date.day,
+            "idle fleet projected arrival defaults to the current day");
+    require(fleet->queuedOrders.empty(), "idle fleet has no queued-order timeline rows");
 }
 
 void test_single_record_queries_return_matching_summaries() {
@@ -385,6 +423,7 @@ int main() {
         test_ship_class_summaries_expose_build_targets();
         test_fleet_summaries_resolve_location_and_order();
         test_fleet_summaries_include_queued_orders();
+        test_fleet_summaries_report_empty_timeline_for_idle_fleet();
         test_single_record_queries_return_matching_summaries();
         test_body_system_overview_exposes_counts();
         test_strategic_map_summaries_resolve_positions();

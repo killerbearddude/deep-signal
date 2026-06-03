@@ -45,22 +45,49 @@ void drawCurrentOrder(const FleetSummary& fleet) {
 
     ImGui::Text("Order: %s", fleet.activeOrderName.c_str());
     ImGui::Text("Destination: %s", fleet.destinationBodyName.empty() ? "-" : fleet.destinationBodyName.c_str());
-    ImGui::Text("Days remaining: %d", fleet.daysRemaining);
+    ImGui::Text("ETA: %d day(s)", fleet.activeOrderEtaDays.value_or(fleet.daysRemaining));
+    ImGui::Text("Projected arrival day: %lld", static_cast<long long>(fleet.activeOrderProjectedArrivalDay));
 }
 
-void drawQueuedOrders(const FleetSummary& fleet) {
-    ImGui::SeparatorText("Queued Orders");
-    if (fleet.queuedOrders.empty()) {
-        ImGui::TextUnformatted("No queued orders.");
+void drawTimelinePreview(const FleetSummary& fleet) {
+    ImGui::SeparatorText("Timeline Preview");
+
+    if (!fleet.hasActiveOrder && fleet.queuedOrders.empty()) {
+        ImGui::TextUnformatted("No active or queued orders for this fleet.");
         return;
     }
 
-    if (ImGui::BeginTable("fleet_order_queue", 4, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
-        ImGui::TableSetupColumn("#");
+    if (fleet.queuedOrders.empty()) {
+        ImGui::TextUnformatted("Queue is empty; only the current order will execute.");
+    }
+
+    ImGui::Text("Total route duration: %d day(s)", fleet.totalRouteDurationDays);
+
+    if (ImGui::BeginTable("fleet_order_timeline", 6, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
+                           ImGuiTableFlags_Resizable | ImGuiTableFlags_SizingStretchProp)) {
+        ImGui::TableSetupColumn("Step");
         ImGui::TableSetupColumn("Order");
         ImGui::TableSetupColumn("Destination");
-        ImGui::TableSetupColumn("ETA Days");
+        ImGui::TableSetupColumn("Start Day");
+        ImGui::TableSetupColumn("Arrival Day");
+        ImGui::TableSetupColumn("ETA");
         ImGui::TableHeadersRow();
+
+        if (fleet.hasActiveOrder) {
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            ImGui::TextUnformatted("Current");
+            ImGui::TableSetColumnIndex(1);
+            ImGui::TextUnformatted(fleet.activeOrderName.c_str());
+            ImGui::TableSetColumnIndex(2);
+            ImGui::TextUnformatted(fleet.destinationBodyName.empty() ? "-" : fleet.destinationBodyName.c_str());
+            ImGui::TableSetColumnIndex(3);
+            ImGui::TextUnformatted("Now");
+            ImGui::TableSetColumnIndex(4);
+            ImGui::Text("%lld", static_cast<long long>(fleet.activeOrderProjectedArrivalDay));
+            ImGui::TableSetColumnIndex(5);
+            ImGui::Text("%d day(s)", fleet.activeOrderEtaDays.value_or(fleet.daysRemaining));
+        }
 
         for (const FleetQueuedOrderSummary& queuedOrder : fleet.queuedOrders) {
             ImGui::TableNextRow();
@@ -71,7 +98,11 @@ void drawQueuedOrders(const FleetSummary& fleet) {
             ImGui::TableSetColumnIndex(2);
             ImGui::TextUnformatted(queuedOrder.destinationBodyName.empty() ? "-" : queuedOrder.destinationBodyName.c_str());
             ImGui::TableSetColumnIndex(3);
-            ImGui::Text("%d", queuedOrder.etaDays);
+            ImGui::Text("%lld", static_cast<long long>(queuedOrder.projectedStartDay));
+            ImGui::TableSetColumnIndex(4);
+            ImGui::Text("%lld", static_cast<long long>(queuedOrder.projectedArrivalDay));
+            ImGui::TableSetColumnIndex(5);
+            ImGui::Text("%d day(s)", queuedOrder.etaDays);
         }
 
         ImGui::EndTable();
@@ -108,7 +139,7 @@ void FleetOrdersPanel::render(const SimulationQueries& queries,
     if (fleet.has_value()) {
         drawFleetSummary(*fleet);
         drawCurrentOrder(*fleet);
-        drawQueuedOrders(*fleet);
+        drawTimelinePreview(*fleet);
     } else {
         ImGui::TextUnformatted("Select a fleet from the map or Fleets table.");
     }

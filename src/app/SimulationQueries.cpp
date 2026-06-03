@@ -465,13 +465,18 @@ std::vector<FleetSummary> SimulationQueries::fleets() const {
     summaries.reserve(state.fleets.size());
 
     for (const Fleet& fleet : state.fleets) {
+        const bool hasActiveOrder = fleet.activeOrder.type != FleetOrderType::None;
+        const int activeOrderEtaDays = hasActiveOrder ? std::max(0, fleet.activeOrder.daysRemaining) : 0;
+        const std::int64_t currentDay = state.date.day;
+        std::int64_t nextStartDay = currentDay + activeOrderEtaDays;
+
         std::vector<FleetQueuedOrderSummary> queuedOrders;
         queuedOrders.reserve(fleet.queuedOrders.size());
-        const int activeOrderEtaDays = fleet.activeOrder.type == FleetOrderType::None
-            ? 0
-            : fleet.activeOrder.daysRemaining;
         for (std::size_t i = 0; i < fleet.queuedOrders.size(); ++i) {
             const QueuedFleetOrder& order = fleet.queuedOrders.at(i);
+            const std::int64_t startDay = nextStartDay;
+            const std::int64_t arrivalDay = startDay + kPrototypeQueuedMoveDurationDays;
+
             queuedOrders.push_back(FleetQueuedOrderSummary{
                 .queuePosition = i + 1U,
                 .orderType = order.type,
@@ -480,10 +485,18 @@ std::vector<FleetSummary> SimulationQueries::fleets() const {
                 .destinationBodyName = order.targetBodyId.has_value()
                     ? bodyName(state, *order.targetBodyId)
                     : std::string{},
-                .etaDays = activeOrderEtaDays +
-                    (static_cast<int>(i) + 1) * kPrototypeQueuedMoveDurationDays
+                .etaDays = static_cast<int>(arrivalDay - currentDay),
+                .projectedStartDay = startDay,
+                .projectedArrivalDay = arrivalDay
             });
+
+            // Queued v1 moves execute serially. Each preview row starts when the
+            // previous active/queued move is projected to arrive.
+            nextStartDay = arrivalDay;
         }
+
+        const int totalRouteDurationDays = static_cast<int>(std::max<std::int64_t>(0, nextStartDay - currentDay));
+        const std::int64_t activeArrivalDay = hasActiveOrder ? currentDay + activeOrderEtaDays : currentDay;
 
         summaries.push_back(FleetSummary{
             .id = fleet.id,
@@ -497,8 +510,11 @@ std::vector<FleetSummary> SimulationQueries::fleets() const {
             .shipCount = fleet.shipIds.size(),
             .activeOrderType = fleet.activeOrder.type,
             .activeOrderName = fleetOrderName(fleet.activeOrder.type),
-            .hasActiveOrder = fleet.activeOrder.type != FleetOrderType::None,
+            .hasActiveOrder = hasActiveOrder,
             .daysRemaining = fleet.activeOrder.daysRemaining,
+            .activeOrderEtaDays = hasActiveOrder ? std::optional<int>{activeOrderEtaDays} : std::optional<int>{},
+            .totalRouteDurationDays = totalRouteDurationDays,
+            .activeOrderProjectedArrivalDay = activeArrivalDay,
             .queuedOrders = std::move(queuedOrders)
         });
     }

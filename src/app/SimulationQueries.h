@@ -111,6 +111,12 @@ struct FleetQueuedOrderSummary {
     std::optional<BodyId> destinationBodyId;
     std::string destinationBodyName;
     int etaDays = 0;
+
+    // Absolute simulation days projected from the current snapshot. These are
+    // preview values only; future movement/range rules may replace the fixed
+    // prototype duration used by the query layer.
+    std::int64_t projectedStartDay = 0;
+    std::int64_t projectedArrivalDay = 0;
 };
 
 // Display-ready fleet row with resolved body names and order state. Destination
@@ -127,6 +133,12 @@ struct FleetSummary {
     std::string activeOrderName;
     bool hasActiveOrder = false;
     int daysRemaining = 0;
+
+    // ETA fields summarize the active order plus queued moves from the current
+    // simulation day. They are zero when the fleet has no active/queued orders.
+    std::optional<int> activeOrderEtaDays;
+    int totalRouteDurationDays = 0;
+    std::int64_t activeOrderProjectedArrivalDay = 0;
     std::vector<FleetQueuedOrderSummary> queuedOrders;
 };
 

@@ -31,7 +31,7 @@ void FleetPanel::render(const SimulationQueries& queries, SelectionState& select
     const std::vector<FleetSummary> fleets = queries.fleets();
     ImGui::Text("Fleets: %zu", fleets.size());
 
-    if (ImGui::BeginTable("FleetSummaryTable", 7, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable |
+    if (ImGui::BeginTable("FleetSummaryTable", 9, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable |
                            ImGuiTableFlags_Reorderable | ImGuiTableFlags_Hideable |
                            ImGuiTableFlags_SizingStretchProp)) {
         ImGui::TableSetupColumn("ID");
@@ -40,7 +40,9 @@ void FleetPanel::render(const SimulationQueries& queries, SelectionState& select
         ImGui::TableSetupColumn("Destination");
         ImGui::TableSetupColumn("Ships");
         ImGui::TableSetupColumn("Order");
-        ImGui::TableSetupColumn("Days Left");
+        ImGui::TableSetupColumn("Active ETA");
+        ImGui::TableSetupColumn("Queued");
+        ImGui::TableSetupColumn("Route Days");
         ImGui::TableHeadersRow();
 
         for (const FleetSummary& fleet : fleets) {
@@ -65,7 +67,15 @@ void FleetPanel::render(const SimulationQueries& queries, SelectionState& select
             ImGui::TableSetColumnIndex(5);
             ImGui::TextUnformatted(fleet.activeOrderName.c_str());
             ImGui::TableSetColumnIndex(6);
-            ImGui::Text("%d", fleet.daysRemaining);
+            if (fleet.activeOrderEtaDays.has_value()) {
+                ImGui::Text("%d", *fleet.activeOrderEtaDays);
+            } else {
+                ImGui::TextUnformatted("-");
+            }
+            ImGui::TableSetColumnIndex(7);
+            ImGui::Text("%zu", fleet.queuedOrders.size());
+            ImGui::TableSetColumnIndex(8);
+            ImGui::Text("%d", fleet.totalRouteDurationDays);
         }
 
         ImGui::EndTable();
