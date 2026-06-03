@@ -16,7 +16,8 @@
 namespace deep {
 
 // Next-day mineral production forecast for one colony/deposit pair.
-// incomePerDay uses the same prototype mining formula as Simulation.
+// incomePerDay uses the same prototype mining formula and shared-deposit
+// consumption order as Simulation::simulateMining.
 struct MineralIncomeForecast {
     ColonyId colonyId;
     BodyId bodyId;
@@ -77,7 +78,8 @@ public:
     // the referenced service alive longer than this object.
     explicit ForecastService(const SimulationService& service) noexcept;
 
-    // Returns next-day mineral income rows for each colony/deposit pair.
+    // Returns next-day mineral income rows for each colony/deposit pair. Rows
+    // share deposit remaining in deterministic colony/deposit order.
     [[nodiscard]] std::vector<MineralIncomeForecast> mineralIncomePerDay() const;
 
     // Returns deposit lifetime estimates using current daily extraction rates.

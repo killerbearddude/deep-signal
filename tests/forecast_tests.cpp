@@ -1,6 +1,7 @@
 #include "app/ForecastService.h"
 #include "app/SimulationService.h"
 #include "sim/Commands.h"
+#include "sim/ScenarioFactory.h"
 
 // Self-contained regression tests for app-layer forecast DTOs.
 // These tests protect the future UI contract: panels should receive explainable
@@ -13,6 +14,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <utility>
 
 namespace {
 
@@ -51,6 +53,57 @@ void test_mineral_income_per_day_uses_current_mining_formula() {
     requireNear(income.front().incomePerDay, 10.0, "structural income uses mines times accessibility");
     requireNear(income.at(1).incomePerDay, 4.5, "propulsion income uses accessibility multiplier");
     require(!income.front().explanation.empty(), "income forecast includes explanation text");
+}
+
+void test_mineral_income_per_day_shares_deposits_between_colonies() {
+    // Verifies per-colony income rows use the same shared-deposit rule as the
+    // simulation tick. This prevents UI forecasts from overstating income when
+    // multiple colonies mine one body and an early colony exhausts the deposit.
+    deep::GameState state = deep::createHomeSystemScenario();
+    const deep::BodyId terraId = state.bodies.front().id;
+    const deep::ColonyId firstColonyId = state.colonies.front().id;
+    const deep::ColonyId secondColonyId{state.ids.nextColonyId++};
+
+    for (deep::MineralDeposit& deposit : state.mineralDeposits) {
+        if (deposit.bodyId == terraId && deposit.mineral == deep::Mineral::Structural) {
+            deposit.remaining = 10.0;
+        }
+    }
+
+    state.colonies.push_back(deep::Colony{
+        .id = secondColonyId,
+        .bodyId = terraId,
+        .name = "Second Mining Office",
+        .stockpile = deep::MineralSet{},
+        .mines = 10.0,
+        .shipyardCapacity = 0.0
+    });
+
+    const deep::SimulationService service{std::move(state)};
+    const deep::ForecastService forecasts{service};
+    const auto income = forecasts.mineralIncomePerDay();
+
+    double structuralIncomeTotal = 0.0;
+    std::optional<double> firstColonyStructuralIncome;
+    std::optional<double> secondColonyStructuralIncome;
+    for (const deep::MineralIncomeForecast& row : income) {
+        if (row.bodyId != terraId || row.mineral != deep::Mineral::Structural) {
+            continue;
+        }
+
+        structuralIncomeTotal += row.incomePerDay;
+        if (row.colonyId == firstColonyId) {
+            firstColonyStructuralIncome = row.incomePerDay;
+        } else if (row.colonyId == secondColonyId) {
+            secondColonyStructuralIncome = row.incomePerDay;
+        }
+    }
+
+    require(firstColonyStructuralIncome.has_value(), "first colony structural forecast row exists");
+    require(secondColonyStructuralIncome.has_value(), "second colony structural forecast row exists");
+    requireNear(structuralIncomeTotal, 10.0, "combined income does not exceed shared deposit remaining");
+    requireNear(*firstColonyStructuralIncome, 10.0, "first colony receives the capped remaining deposit");
+    requireNear(*secondColonyStructuralIncome, 0.0, "later colony receives no income after deposit exhaustion");
 }
 
 void test_deposit_exhaustion_estimate_uses_current_income_rate() {
@@ -138,6 +191,7 @@ void test_fleet_arrival_eta_reports_active_move_order() {
 int main() {
     try {
         test_mineral_income_per_day_uses_current_mining_formula();
+        test_mineral_income_per_day_shares_deposits_between_colonies();
         test_deposit_exhaustion_estimate_uses_current_income_rate();
         test_shipyard_order_eta_uses_capacity_and_accumulated_progress();
         test_fleet_arrival_eta_reports_active_move_order();

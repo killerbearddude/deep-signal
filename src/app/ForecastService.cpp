@@ -7,6 +7,7 @@
 #include "sim/GameState.h"
 
 #include <algorithm>
+#include <cstddef>
 #include <cmath>
 #include <sstream>
 #include <string_view>
@@ -50,14 +51,17 @@ template <typename T, typename IdT>
 }
 
 // Mirrors Simulation::simulateMining for a single colony/deposit pair without
-// mutating state. The last extraction day is capped by remaining deposit amount.
-[[nodiscard]] double dailyExtraction(const Colony& colony, const MineralDeposit& deposit) noexcept {
-    if (deposit.remaining <= 0.0) {
+// mutating state. availableRemaining is the shared amount left after earlier
+// colonies in deterministic state order have taken their forecast extraction.
+[[nodiscard]] double dailyExtraction(const Colony& colony,
+                                     const MineralDeposit& deposit,
+                                     const double availableRemaining) noexcept {
+    if (availableRemaining <= 0.0) {
         return 0.0;
     }
 
     const double potentialExtraction = colony.mines * deposit.accessibility;
-    return std::min(deposit.remaining, std::max(0.0, potentialExtraction));
+    return std::min(availableRemaining, std::max(0.0, potentialExtraction));
 }
 
 [[nodiscard]] std::string mineralIncomeExplanation(const Colony& colony, const MineralDeposit& deposit, const double incomePerDay) {
@@ -189,13 +193,26 @@ std::vector<MineralIncomeForecast> ForecastService::mineralIncomePerDay() const 
     std::vector<MineralIncomeForecast> forecasts;
     forecasts.reserve(state.colonies.size() * state.mineralDeposits.size());
 
+    std::vector<double> remainingByDeposit;
+    remainingByDeposit.reserve(state.mineralDeposits.size());
+    for (const MineralDeposit& deposit : state.mineralDeposits) {
+        remainingByDeposit.push_back(deposit.remaining);
+    }
+
     for (const Colony& colony : state.colonies) {
-        for (const MineralDeposit& deposit : state.mineralDeposits) {
+        for (std::size_t depositIndex = 0; depositIndex < state.mineralDeposits.size(); ++depositIndex) {
+            const MineralDeposit& deposit = state.mineralDeposits[depositIndex];
             if (deposit.bodyId != colony.bodyId) {
                 continue;
             }
 
-            const double income = dailyExtraction(colony, deposit);
+            // Forecast extraction must share each deposit in the same deterministic
+            // colony/deposit order used by Simulation::simulateMining. Without
+            // this shared running balance, multiple colonies on one body would
+            // each cap against the full deposit and overstate total income.
+            const double income = dailyExtraction(colony, deposit, remainingByDeposit[depositIndex]);
+            remainingByDeposit[depositIndex] -= income;
+
             forecasts.push_back(MineralIncomeForecast{
                 .colonyId = colony.id,
                 .bodyId = colony.bodyId,
