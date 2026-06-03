@@ -230,9 +230,9 @@ void Simulation::simulateMining(std::vector<SimEvent>&) {
             deposit.remaining -= extracted;
             colony.stockpile.add(deposit.mineral, extracted);
 
-            // Mining is routine telemetry, not audit history. Store one
-            // append-only row per extracted mineral so future UI panels can graph
-            // daily flow without flooding the player-facing event log.
+            // Mining is routine runtime telemetry, not persisted audit history.
+            // Store one append-only row per extracted mineral for current-session
+            // UI/forecast/debug views without flooding the player-facing event log.
             state_.dailyEconomySnapshots.push_back(DailyEconomySnapshot{
                 .day = state_.date.day,
                 .colonyId = colony.id,

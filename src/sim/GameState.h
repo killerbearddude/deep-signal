@@ -42,8 +42,10 @@ struct GameState {
     std::vector<Ship> ships;
     std::vector<Fleet> fleets;
 
-    // High-volume economy telemetry is separated from the audit log so routine
-    // mining can feed future graphs/forecasts without overwhelming event views.
+    // Runtime-only economy telemetry is separated from the audit log so routine
+    // mining can feed current-session UI, forecasts, and debugging without
+    // overwhelming event views. Schema v1 intentionally does not persist these
+    // snapshots; loaded games start with this vector empty until more days run.
     std::vector<DailyEconomySnapshot> dailyEconomySnapshots;
 
     std::vector<SimEvent> eventLog;

@@ -5,8 +5,9 @@
 #include "sim/Minerals.h"
 
 // Regression tests for SQLite save/load round-tripping.
-// These tests verify that schema v1 persists the complete Prototype 0.1 state,
+// These tests verify that schema v1 persists durable Prototype 0.1 state,
 // including ID counters, economy rows, production, active fleet orders, and events.
+// Runtime-only economy telemetry is tested separately as intentionally transient.
 
 #include <cmath>
 #include <cstdlib>
@@ -100,7 +101,8 @@ bool samePayload(const deep::SimEventPayload& lhs, const deep::SimEventPayload& 
 void requireSameState(const deep::GameState& expected, const deep::GameState& actual) {
     // Verifies table-by-table persistence fidelity. These checks intentionally
     // compare many primitive fields because schema regressions often drop only
-    // one column while leaving row counts correct.
+    // one column while leaving row counts correct. dailyEconomySnapshots is not
+    // compared here because it is explicitly runtime-only telemetry.
     require(expected.date.day == actual.date.day, "date day round-trips");
     require(expected.ids.nextStarSystemId == actual.ids.nextStarSystemId, "star-system counter round-trips");
     require(expected.ids.nextBodyId == actual.ids.nextBodyId, "body counter round-trips");
@@ -353,6 +355,34 @@ void test_sqlite_save_load_round_trip() {
     std::filesystem::remove(path);
 }
 
+void test_daily_economy_snapshots_are_runtime_only() {
+    // Confirms the schema v1 contract for high-volume economy telemetry. The
+    // stockpile/deposit state is durable, but per-day mining samples are a
+    // current-session UI/forecast/debug aid and intentionally reload empty.
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / "deep_signal_transient_telemetry.sqlite";
+    std::filesystem::remove(path);
+
+    deep::SimulationService service;
+    service.advanceDays(1);
+    require(!service.state().dailyEconomySnapshots.empty(), "advancing simulation creates economy telemetry");
+
+    const auto saveResult = service.saveGame(path);
+    require(saveResult.ok, "service saves state with runtime telemetry present");
+
+    const deep::GameState loaded = deep::save::SaveGameRepository::load(path);
+    require(loaded.dailyEconomySnapshots.empty(), "repository load does not restore runtime telemetry");
+
+    deep::SimulationService loadedService;
+    const auto loadResult = loadedService.loadGame(path);
+    require(loadResult.ok, "service loads state with transient telemetry omitted");
+    require(loadedService.state().dailyEconomySnapshots.empty(), "loaded service starts with no runtime telemetry");
+
+    loadedService.advanceDays(1);
+    require(!loadedService.state().dailyEconomySnapshots.empty(), "loaded simulation creates new telemetry normally");
+
+    std::filesystem::remove(path);
+}
+
 void test_malformed_save_missing_schema_version_is_rejected() {
     // Deletes required schema metadata. This protects the loader from treating an
     // arbitrary SQLite file as a compatible save.
@@ -504,6 +534,7 @@ void test_malformed_save_event_payload_missing_field_is_rejected() {
 int main() {
     try {
         test_sqlite_save_load_round_trip();
+        test_daily_economy_snapshots_are_runtime_only();
         test_malformed_save_missing_schema_version_is_rejected();
         test_malformed_save_unsupported_schema_version_is_rejected();
         test_malformed_save_multiple_schema_versions_are_rejected();

@@ -593,6 +593,9 @@ void SaveGameRepository::save(const std::filesystem::path& path, const GameState
     saveFleets(db, state);
     saveShips(db, state);
     saveEvents(db, state);
+    // dailyEconomySnapshots is runtime-only telemetry for the active session.
+    // Schema v1 deliberately omits it, so saves contain durable state and audit
+    // events only; graphs can regenerate new samples after loading and advancing.
     transaction.commit();
 }
 
@@ -619,6 +622,10 @@ GameState SaveGameRepository::load(const std::filesystem::path& path) {
     loadFleets(db, state);
     loadShips(db, state);
     loadEvents(db, state);
+
+    // There is intentionally no load step for dailyEconomySnapshots. Economy
+    // telemetry is transient runtime data in schema v1 and remains empty until
+    // the loaded simulation advances new days.
 
     // SQLite constraints are first-line protection only. The authoritative pass
     // validates cross-table semantics such as stale counters and fleet orders.
