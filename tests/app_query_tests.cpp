@@ -203,6 +203,46 @@ void test_fleet_summaries_resolve_location_and_order() {
     require(fleets.front().activeOrderName == "MoveToBody", "fleet summary includes active order type");
     require(fleets.front().hasActiveOrder, "fleet summary marks active movement orders");
     require(fleets.front().daysRemaining == 5, "fleet summary includes remaining movement days");
+    require(fleets.front().queuedOrders.empty(), "fleet summary exposes an empty queue for immediate movement");
+}
+
+void test_fleet_summaries_include_queued_orders() {
+    // Verifies that command panels can display future fleet intent without
+    // reading raw Fleet::queuedOrders from GameState.
+    deep::SimulationService service;
+    const deep::ColonyId colonyId = service.state().colonies.front().id;
+    const deep::ShipClassId shipClassId = service.state().shipClasses.front().id;
+    const deep::BodyId terraId = service.state().bodies.front().id;
+    const deep::BodyId marsId = service.state().bodies.at(1).id;
+
+    require(service.execute(deep::AssignShipyardBuildCommand{
+        .colonyId = colonyId,
+        .shipClassId = shipClassId,
+        .quantity = 1
+    }).ok, "build order is accepted before queued fleet summary test");
+
+    static_cast<void>(service.advanceDays(5));
+    const deep::FleetId fleetId = service.state().fleets.front().id;
+
+    require(service.execute(deep::QueueFleetMoveOrderCommand{
+        .fleetId = fleetId,
+        .destinationBodyId = marsId
+    }).ok, "first queued move starts before queued summary test");
+    require(service.execute(deep::QueueFleetMoveOrderCommand{
+        .fleetId = fleetId,
+        .destinationBodyId = terraId
+    }).ok, "follow-up move remains queued before summary test");
+
+    const deep::SimulationQueries queries{service};
+    const auto fleet = queries.fleet(fleetId);
+
+    require(fleet.has_value(), "existing fleet ID returns queued fleet summary");
+    require(fleet->hasActiveOrder, "summary keeps current order separate from queued orders");
+    require(fleet->queuedOrders.size() == 1, "summary includes one queued order");
+    require(fleet->queuedOrders.front().queuePosition == 1, "queued order summary has one-based position");
+    require(fleet->queuedOrders.front().orderName == "MoveToBody", "queued order summary resolves order name");
+    require(fleet->queuedOrders.front().destinationBodyId == terraId, "queued order summary includes destination ID");
+    require(fleet->queuedOrders.front().destinationBodyName == "Terra", "queued order summary resolves destination name");
 }
 
 void test_single_record_queries_return_matching_summaries() {
@@ -342,6 +382,7 @@ int main() {
         test_production_backlog_summaries_expose_queue_eta();
         test_ship_class_summaries_expose_build_targets();
         test_fleet_summaries_resolve_location_and_order();
+        test_fleet_summaries_include_queued_orders();
         test_single_record_queries_return_matching_summaries();
         test_body_system_overview_exposes_counts();
         test_strategic_map_summaries_resolve_positions();

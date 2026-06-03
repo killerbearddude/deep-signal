@@ -185,6 +185,7 @@ void test_ship_claimed_by_multiple_fleets_is_rejected() {
             .destinationBodyId = std::nullopt,
             .shipIds = {shipId},
             .activeOrder = {},
+            .queuedOrders = {}
         });
     });
 }
@@ -198,6 +199,32 @@ void test_active_fleet_order_without_destination_is_rejected() {
         fleet.destinationBodyId = std::nullopt;
         fleet.activeOrder.targetBodyId = std::nullopt;
         fleet.activeOrder.daysRemaining = 3;
+    });
+}
+
+void test_invalid_queued_fleet_order_is_rejected() {
+    // Queued orders are persisted player intent and later become active orders.
+    // Validate their type and target references before they can corrupt the
+    // movement lifecycle.
+    expectInvalidState("queued fleet order without target", [](deep::GameState& state) {
+        state.fleets.front().queuedOrders.push_back(deep::QueuedFleetOrder{
+            .type = deep::FleetOrderType::MoveToBody,
+            .targetBodyId = std::nullopt
+        });
+    });
+
+    expectInvalidState("queued fleet order with idle type", [](deep::GameState& state) {
+        state.fleets.front().queuedOrders.push_back(deep::QueuedFleetOrder{
+            .type = deep::FleetOrderType::None,
+            .targetBodyId = state.bodies.at(1).id
+        });
+    });
+
+    expectInvalidState("queued fleet order with missing body", [](deep::GameState& state) {
+        state.fleets.front().queuedOrders.push_back(deep::QueuedFleetOrder{
+            .type = deep::FleetOrderType::MoveToBody,
+            .targetBodyId = deep::BodyId{999}
+        });
     });
 }
 
@@ -243,6 +270,7 @@ int main() {
         test_fleet_listing_nonexistent_ship_is_rejected();
         test_ship_claimed_by_multiple_fleets_is_rejected();
         test_active_fleet_order_without_destination_is_rejected();
+        test_invalid_queued_fleet_order_is_rejected();
         test_event_day_after_current_day_is_rejected();
         test_event_ids_out_of_order_are_rejected();
         test_completed_order_with_build_progress_is_rejected();

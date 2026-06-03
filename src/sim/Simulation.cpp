@@ -234,6 +234,10 @@ CommandResult Simulation::execute(const SimCommand& command) {
             return assignShipyardBuild(concreteCommand);
         } else if constexpr (std::is_same_v<Command, MoveFleetCommand>) {
             return moveFleet(concreteCommand);
+        } else if constexpr (std::is_same_v<Command, QueueFleetMoveOrderCommand>) {
+            return queueFleetMoveOrder(concreteCommand);
+        } else if constexpr (std::is_same_v<Command, ClearFleetOrderQueueCommand>) {
+            return clearFleetOrderQueue(concreteCommand);
         } else if constexpr (std::is_same_v<Command, CancelFleetOrderCommand>) {
             return cancelFleetOrder(concreteCommand);
         } else if constexpr (std::is_same_v<Command, SetColonyProcessingPolicyCommand>) {
@@ -344,6 +348,50 @@ CommandResult Simulation::moveFleet(const MoveFleetCommand& command) {
     return CommandResult::success("Fleet movement order accepted");
 }
 
+CommandResult Simulation::queueFleetMoveOrder(const QueueFleetMoveOrderCommand& command) {
+    Fleet* fleet = findFleet(command.fleetId);
+    if (fleet == nullptr) {
+        appendEvent(EventSeverity::Warning, CommandRejectedEvent{"Fleet does not exist"});
+        return CommandResult::failure("Fleet does not exist");
+    }
+
+    if (findBody(command.destinationBodyId) == nullptr) {
+        appendEvent(EventSeverity::Warning, CommandRejectedEvent{"Destination body does not exist"});
+        return CommandResult::failure("Destination body does not exist");
+    }
+
+    if (fleet->activeOrder.type == FleetOrderType::None && fleet->currentBodyId == command.destinationBodyId) {
+        appendEvent(EventSeverity::Warning, CommandRejectedEvent{"Fleet is already at destination body"});
+        return CommandResult::failure("Fleet is already at destination body");
+    }
+
+    fleet->queuedOrders.push_back(QueuedFleetOrder{
+        .type = FleetOrderType::MoveToBody,
+        .targetBodyId = command.destinationBodyId
+    });
+
+    // Idle fleets should not force the player to advance time before the first
+    // queued order becomes the current order. Active fleets keep the new order in
+    // the queue until movement completion starts it from the new location.
+    if (fleet->activeOrder.type == FleetOrderType::None) {
+        static_cast<void>(startNextQueuedFleetOrder(*fleet, nullptr));
+        return CommandResult::success("Queued fleet move order started");
+    }
+
+    return CommandResult::success("Fleet move order queued");
+}
+
+CommandResult Simulation::clearFleetOrderQueue(const ClearFleetOrderQueueCommand& command) {
+    Fleet* fleet = findFleet(command.fleetId);
+    if (fleet == nullptr) {
+        appendEvent(EventSeverity::Warning, CommandRejectedEvent{"Fleet does not exist"});
+        return CommandResult::failure("Fleet does not exist");
+    }
+
+    fleet->queuedOrders.clear();
+    return CommandResult::success("Fleet order queue cleared");
+}
+
 CommandResult Simulation::cancelFleetOrder(const CancelFleetOrderCommand& command) {
     Fleet* fleet = findFleet(command.fleetId);
     if (fleet == nullptr) {
@@ -411,6 +459,70 @@ CommandResult Simulation::setColonyProcessingPolicy(const SetColonyProcessingPol
     }
 
     return CommandResult::success("Colony processing policy updated");
+}
+
+bool Simulation::startNextQueuedFleetOrder(Fleet& fleet, std::vector<SimEvent>* emitted) {
+    while (!fleet.queuedOrders.empty()) {
+        const QueuedFleetOrder queuedOrder = fleet.queuedOrders.front();
+        fleet.queuedOrders.erase(fleet.queuedOrders.begin());
+
+        if (queuedOrder.type != FleetOrderType::MoveToBody || !queuedOrder.targetBodyId.has_value()) {
+            // Defensive repair for imported/future states. Validation rejects
+            // malformed queues, but this keeps runtime robust if a queue is
+            // mutated before validation has a chance to run.
+            const CommandRejectedEvent rejected{"Queued fleet order was invalid"};
+            if (emitted == nullptr) {
+                appendEvent(EventSeverity::Warning, rejected);
+            } else {
+                emitEvent(*emitted, EventSeverity::Warning, rejected);
+            }
+            continue;
+        }
+
+        const BodyId destinationBodyId = *queuedOrder.targetBodyId;
+        if (findBody(destinationBodyId) == nullptr) {
+            const CommandRejectedEvent rejected{"Queued fleet order referenced missing destination body"};
+            if (emitted == nullptr) {
+                appendEvent(EventSeverity::Warning, rejected);
+            } else {
+                emitEvent(*emitted, EventSeverity::Warning, rejected);
+            }
+            continue;
+        }
+
+        if (fleet.currentBodyId == destinationBodyId) {
+            const CommandRejectedEvent rejected{"Queued fleet order already at destination body"};
+            if (emitted == nullptr) {
+                appendEvent(EventSeverity::Warning, rejected);
+            } else {
+                emitEvent(*emitted, EventSeverity::Warning, rejected);
+            }
+            continue;
+        }
+
+        const BodyId originBodyId = fleet.currentBodyId;
+        fleet.destinationBodyId = destinationBodyId;
+        fleet.activeOrder = FleetOrder{
+            .type = FleetOrderType::MoveToBody,
+            .targetBodyId = destinationBodyId,
+            .daysRemaining = kPrototypeMoveDurationDays
+        };
+
+        FleetOrderAssignedEvent assigned{
+            .fleetId = fleet.id,
+            .originBodyId = originBodyId,
+            .destinationBodyId = destinationBodyId,
+            .daysRemaining = kPrototypeMoveDurationDays
+        };
+        if (emitted == nullptr) {
+            appendEvent(EventSeverity::Info, assigned);
+        } else {
+            emitEvent(*emitted, EventSeverity::Info, assigned);
+        }
+        return true;
+    }
+
+    return false;
 }
 
 void Simulation::simulateOneDay(std::vector<SimEvent>& emitted) {
@@ -577,7 +689,8 @@ void Simulation::simulateShipyards(std::vector<SimEvent>& emitted) {
                 .currentBodyId = colony->bodyId,
                 .destinationBodyId = std::nullopt,
                 .shipIds = {shipId},
-                .activeOrder = FleetOrder{}
+                .activeOrder = FleetOrder{},
+                .queuedOrders = {}
             };
 
             Ship ship{
@@ -633,6 +746,11 @@ void Simulation::simulateFleetMovement(std::vector<SimEvent>& emitted) {
                 .fleetId = fleet.id,
                 .destinationBodyId = destination
             });
+
+            // Starting the next queued order on the same tick keeps the queue
+            // actionable: a completed current order immediately promotes the
+            // next queued move and records the promotion in the event log.
+            static_cast<void>(startNextQueuedFleetOrder(fleet, &emitted));
         }
     }
 }

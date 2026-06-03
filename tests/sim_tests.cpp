@@ -497,6 +497,105 @@ void test_cancel_fleet_order() {
             "cancelled fleet does not arrive after the old duration elapses");
 }
 
+void test_fleet_order_queue_starts_next_order_after_arrival() {
+    // Verifies the v1 queue lifecycle: the first queued move starts immediately
+    // for an idle fleet, future orders remain visible, and arrival promotes the
+    // next queued order with a fleet-order-assigned event.
+    deep::Simulation sim{deep::createHomeSystemScenario()};
+
+    const deep::ColonyId colonyId = sim.state().colonies.front().id;
+    const deep::ShipClassId shipClassId = sim.state().shipClasses.front().id;
+    const deep::BodyId terraId = sim.state().bodies.front().id;
+    const deep::BodyId marsId = sim.state().bodies.at(1).id;
+
+    require(sim.execute(deep::AssignShipyardBuildCommand{
+        .colonyId = colonyId,
+        .shipClassId = shipClassId,
+        .quantity = 1
+    }).ok, "build order accepted before queue test");
+    sim.advanceDays(5);
+
+    const deep::FleetId fleetId = sim.state().fleets.front().id;
+    require(sim.execute(deep::QueueFleetMoveOrderCommand{
+        .fleetId = fleetId,
+        .destinationBodyId = marsId
+    }).ok, "idle fleet starts first queued move immediately");
+    require(sim.state().fleets.front().activeOrder.type == deep::FleetOrderType::MoveToBody,
+            "first queued move becomes current order");
+    require(sim.state().fleets.front().queuedOrders.empty(),
+            "started queued order is removed from queue");
+
+    require(sim.execute(deep::QueueFleetMoveOrderCommand{
+        .fleetId = fleetId,
+        .destinationBodyId = terraId
+    }).ok, "active fleet accepts a follow-up queued move");
+    require(sim.state().fleets.front().queuedOrders.size() == 1,
+            "follow-up move remains queued while current order is active");
+
+    const std::size_t eventCountBeforeArrival = sim.state().eventLog.size();
+    sim.advanceDays(5);
+
+    require(sim.state().fleets.front().currentBodyId == marsId,
+            "fleet reaches the first queued destination");
+    require(sim.state().fleets.front().activeOrder.type == deep::FleetOrderType::MoveToBody,
+            "follow-up queued order starts after first order completes");
+    require(sim.state().fleets.front().activeOrder.targetBodyId == terraId,
+            "follow-up queued order targets Terra");
+    require(sim.state().fleets.front().queuedOrders.empty(),
+            "promoted queued order is removed from queue");
+    require(sim.state().eventLog.size() == eventCountBeforeArrival + 2,
+            "arrival and queued-order-start events are both logged");
+    require(std::holds_alternative<deep::FleetOrderAssignedEvent>(sim.state().eventLog.back().payload),
+            "queued order start is recorded as a fleet-order assignment event");
+
+    sim.advanceDays(5);
+    require(sim.state().fleets.front().currentBodyId == terraId,
+            "fleet completes the follow-up queued move");
+    require(sim.state().fleets.front().activeOrder.type == deep::FleetOrderType::None,
+            "fleet is idle after queued moves are exhausted");
+}
+
+void test_clear_fleet_order_queue_preserves_current_order() {
+    // Verifies that clearing queued intent does not cancel the current order.
+    // This keeps the Fleet Orders panel's Clear Queue button separate from the
+    // Cancel Order button.
+    deep::Simulation sim{deep::createHomeSystemScenario()};
+
+    const deep::ColonyId colonyId = sim.state().colonies.front().id;
+    const deep::ShipClassId shipClassId = sim.state().shipClasses.front().id;
+    const deep::BodyId terraId = sim.state().bodies.front().id;
+    const deep::BodyId marsId = sim.state().bodies.at(1).id;
+
+    require(sim.execute(deep::AssignShipyardBuildCommand{
+        .colonyId = colonyId,
+        .shipClassId = shipClassId,
+        .quantity = 1
+    }).ok, "build order accepted before clear-queue test");
+    sim.advanceDays(5);
+
+    const deep::FleetId fleetId = sim.state().fleets.front().id;
+    require(sim.execute(deep::QueueFleetMoveOrderCommand{
+        .fleetId = fleetId,
+        .destinationBodyId = marsId
+    }).ok, "first queued move starts before clear-queue test");
+    require(sim.execute(deep::QueueFleetMoveOrderCommand{
+        .fleetId = fleetId,
+        .destinationBodyId = terraId
+    }).ok, "follow-up move queues before clear-queue test");
+
+    const auto clearResult = sim.execute(deep::ClearFleetOrderQueueCommand{.fleetId = fleetId});
+    require(clearResult.ok, "fleet queue can be cleared");
+    require(sim.state().fleets.front().queuedOrders.empty(), "future queued orders are cleared");
+    require(sim.state().fleets.front().activeOrder.type == deep::FleetOrderType::MoveToBody,
+            "current order survives queue clearing");
+
+    sim.advanceDays(5);
+    require(sim.state().fleets.front().currentBodyId == marsId,
+            "current order still completes after queue is cleared");
+    require(sim.state().fleets.front().activeOrder.type == deep::FleetOrderType::None,
+            "no follow-up order starts after queue is cleared");
+}
+
 void test_rejected_invalid_command() {
     // Verifies that invalid commands fail through CommandResult and are recorded
     // in the audit log. Prevents silent validation failures in future UI code.
@@ -534,6 +633,8 @@ int main() {
         test_shipyard_temporary_processed_material_shortage_recovers();
         test_fleet_movement();
         test_cancel_fleet_order();
+        test_fleet_order_queue_starts_next_order_after_arrival();
+        test_clear_fleet_order_queue_preserves_current_order();
         test_rejected_invalid_command();
     } catch (const std::exception& ex) {
         std::cerr << "Test failure: " << ex.what() << '\n';

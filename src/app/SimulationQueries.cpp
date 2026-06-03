@@ -14,6 +14,7 @@
 #include <optional>
 #include <sstream>
 #include <type_traits>
+#include <utility>
 
 namespace deep {
 namespace {
@@ -459,6 +460,21 @@ std::vector<FleetSummary> SimulationQueries::fleets() const {
     summaries.reserve(state.fleets.size());
 
     for (const Fleet& fleet : state.fleets) {
+        std::vector<FleetQueuedOrderSummary> queuedOrders;
+        queuedOrders.reserve(fleet.queuedOrders.size());
+        for (std::size_t i = 0; i < fleet.queuedOrders.size(); ++i) {
+            const QueuedFleetOrder& order = fleet.queuedOrders.at(i);
+            queuedOrders.push_back(FleetQueuedOrderSummary{
+                .queuePosition = i + 1U,
+                .orderType = order.type,
+                .orderName = fleetOrderName(order.type),
+                .destinationBodyId = order.targetBodyId,
+                .destinationBodyName = order.targetBodyId.has_value()
+                    ? bodyName(state, *order.targetBodyId)
+                    : std::string{}
+            });
+        }
+
         summaries.push_back(FleetSummary{
             .id = fleet.id,
             .name = fleet.name,
@@ -472,7 +488,8 @@ std::vector<FleetSummary> SimulationQueries::fleets() const {
             .activeOrderType = fleet.activeOrder.type,
             .activeOrderName = fleetOrderName(fleet.activeOrder.type),
             .hasActiveOrder = fleet.activeOrder.type != FleetOrderType::None,
-            .daysRemaining = fleet.activeOrder.daysRemaining
+            .daysRemaining = fleet.activeOrder.daysRemaining,
+            .queuedOrders = std::move(queuedOrders)
         });
     }
 

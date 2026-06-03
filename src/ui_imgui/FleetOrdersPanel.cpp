@@ -1,13 +1,14 @@
 #include "ui_imgui/FleetOrdersPanel.h"
 
 // Implements a dedicated fleet command surface for the ImGui workstation.
-// The panel deliberately reuses the existing single-step fleet commands and does
-// not introduce route planning, range validation, fuel rules, or order queues.
+// The panel exposes the current order and a small queued-order list while
+// keeping all mutation behind SimulationService commands.
 
 #include "sim/Commands.h"
 
 #include <imgui.h>
 
+#include <cstddef>
 #include <optional>
 #include <string>
 #include <vector>
@@ -33,9 +34,45 @@ void drawFleetSummary(const FleetSummary& fleet) {
     ImGui::Text("Fleet: %s (#%lld)", fleet.name.c_str(), static_cast<long long>(fleet.id.value));
     ImGui::Text("Current body: %s", fleet.currentBodyName.c_str());
     ImGui::Text("Ships: %zu", fleet.shipCount);
+}
+
+void drawCurrentOrder(const FleetSummary& fleet) {
+    ImGui::SeparatorText("Current Order");
+    if (!fleet.hasActiveOrder) {
+        ImGui::TextUnformatted("None");
+        return;
+    }
+
     ImGui::Text("Order: %s", fleet.activeOrderName.c_str());
     ImGui::Text("Destination: %s", fleet.destinationBodyName.empty() ? "-" : fleet.destinationBodyName.c_str());
     ImGui::Text("Days remaining: %d", fleet.daysRemaining);
+}
+
+void drawQueuedOrders(const FleetSummary& fleet) {
+    ImGui::SeparatorText("Queued Orders");
+    if (fleet.queuedOrders.empty()) {
+        ImGui::TextUnformatted("No queued orders.");
+        return;
+    }
+
+    if (ImGui::BeginTable("fleet_order_queue", 3, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
+        ImGui::TableSetupColumn("#");
+        ImGui::TableSetupColumn("Order");
+        ImGui::TableSetupColumn("Destination");
+        ImGui::TableHeadersRow();
+
+        for (const FleetQueuedOrderSummary& queuedOrder : fleet.queuedOrders) {
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            ImGui::Text("%zu", queuedOrder.queuePosition);
+            ImGui::TableSetColumnIndex(1);
+            ImGui::TextUnformatted(queuedOrder.orderName.c_str());
+            ImGui::TableSetColumnIndex(2);
+            ImGui::TextUnformatted(queuedOrder.destinationBodyName.empty() ? "-" : queuedOrder.destinationBodyName.c_str());
+        }
+
+        ImGui::EndTable();
+    }
 }
 
 void drawCommandStatus(const bool succeeded, const std::string& status) {
@@ -67,29 +104,35 @@ void FleetOrdersPanel::render(const SimulationQueries& queries,
 
     if (fleet.has_value()) {
         drawFleetSummary(*fleet);
+        drawCurrentOrder(*fleet);
+        drawQueuedOrders(*fleet);
     } else {
         ImGui::TextUnformatted("Select a fleet from the map or Fleets table.");
     }
 
-    ImGui::Separator();
+    ImGui::SeparatorText("Add Order");
     drawDestinationSelector(queries);
 
-    // Keep button enablement focused on UI-obvious prerequisites. The simulation
-    // remains the authority for final command validation and error messages.
+    // A queued return-to-origin order can be valid while the fleet is already
+    // moving away from that origin. Only reject same-body moves for idle fleets
+    // where the queued order would start immediately as a no-op.
     const bool destinationSelected = destinationBodyId_.has_value();
-    const bool destinationIsCurrent = fleet.has_value() && destinationSelected && *destinationBodyId_ == fleet->currentBodyId;
-    const bool canMove = fleet.has_value() && destinationSelected && !fleet->hasActiveOrder && !destinationIsCurrent;
+    const bool idleDestinationIsCurrent = fleet.has_value() &&
+                                          !fleet->hasActiveOrder &&
+                                          destinationSelected &&
+                                          *destinationBodyId_ == fleet->currentBodyId;
+    const bool canQueueMove = fleet.has_value() && destinationSelected && !idleDestinationIsCurrent;
 
-    if (!canMove) {
+    if (!canQueueMove) {
         ImGui::BeginDisabled();
     }
-    const bool moveClicked = ImGui::Button("Move Fleet");
-    if (!canMove) {
+    const bool addMoveClicked = ImGui::Button("Add Move Order to Queue");
+    if (!canQueueMove) {
         ImGui::EndDisabled();
     }
 
-    if (moveClicked && fleet.has_value() && destinationBodyId_.has_value()) {
-        const CommandResult result = service.execute(MoveFleetCommand{
+    if (addMoveClicked && fleet.has_value() && destinationBodyId_.has_value()) {
+        const CommandResult result = service.execute(QueueFleetMoveOrderCommand{
             .fleetId = fleet->id,
             .destinationBodyId = *destinationBodyId_
         });
@@ -97,10 +140,7 @@ void FleetOrdersPanel::render(const SimulationQueries& queries,
         commandStatus_ = result.message;
     }
 
-    if (fleet.has_value() && fleet->hasActiveOrder) {
-        ImGui::SameLine();
-        ImGui::TextUnformatted("Fleet already has an active order.");
-    } else if (destinationIsCurrent) {
+    if (idleDestinationIsCurrent) {
         ImGui::SameLine();
         ImGui::TextUnformatted("Destination is current body.");
     }
@@ -116,6 +156,22 @@ void FleetOrdersPanel::render(const SimulationQueries& queries,
 
     if (cancelClicked && fleet.has_value()) {
         const CommandResult result = service.execute(CancelFleetOrderCommand{.fleetId = fleet->id});
+        commandSucceeded_ = result.ok;
+        commandStatus_ = result.message;
+    }
+
+    ImGui::SameLine();
+    const bool canClearQueue = fleet.has_value() && !fleet->queuedOrders.empty();
+    if (!canClearQueue) {
+        ImGui::BeginDisabled();
+    }
+    const bool clearQueueClicked = ImGui::Button("Clear Queue");
+    if (!canClearQueue) {
+        ImGui::EndDisabled();
+    }
+
+    if (clearQueueClicked && fleet.has_value()) {
+        const CommandResult result = service.execute(ClearFleetOrderQueueCommand{.fleetId = fleet->id});
         commandSucceeded_ = result.ok;
         commandStatus_ = result.message;
     }

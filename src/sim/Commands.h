@@ -32,6 +32,19 @@ struct MoveFleetCommand {
     BodyId destinationBodyId;
 };
 
+// Requests a move order be appended to a fleet's visible order queue. If the
+// fleet is idle, the simulation immediately starts the queued order.
+struct QueueFleetMoveOrderCommand {
+    FleetId fleetId;
+    BodyId destinationBodyId;
+};
+
+// Requests removal of all queued orders for a fleet without touching the current
+// active order. This lets UI cancel future intent separately from current motion.
+struct ClearFleetOrderQueueCommand {
+    FleetId fleetId;
+};
+
 // Requests cancellation of the fleet's current active order. The prototype keeps
 // movement all-or-nothing, so cancellation leaves the fleet at its current body.
 struct CancelFleetOrderCommand {
@@ -53,6 +66,8 @@ using SimCommand = std::variant<
     AdvanceDaysCommand,
     AssignShipyardBuildCommand,
     MoveFleetCommand,
+    QueueFleetMoveOrderCommand,
+    ClearFleetOrderQueueCommand,
     CancelFleetOrderCommand,
     SetColonyProcessingPolicyCommand
 >;

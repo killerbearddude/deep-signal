@@ -1,6 +1,6 @@
 #include "save/SaveGameRepository.h"
 
-// Implements schema v3 save/load mapping for the headless simulation state.
+// Implements schema v4 save/load mapping for the headless simulation state.
 // The repository uses prepared statements and transactions throughout; raw SQL
 // execution is limited to static schema/table maintenance statements with no data.
 
@@ -42,7 +42,7 @@ template <typename EnumT>
     return static_cast<std::int64_t>(value);
 }
 
-// Returns true when a persisted enum ordinal is part of the current schema v2
+// Returns true when a persisted enum ordinal is part of the current schema v4
 // contract. Keep this explicit instead of raw-casting database values; SQLite
 // files are inspectable and may be hand-edited or corrupted.
 template <typename EnumT>
@@ -147,12 +147,13 @@ void reuse(Statement& stmt) {
 }
 
 void clearExistingSave(Database& db) {
-    // Delete child tables first because schema v2 intentionally uses explicit
+    // Delete child tables first because schema v4 intentionally uses explicit
     // foreign keys rather than ON DELETE CASCADE. This makes destructive save
     // behavior visible and easy to audit.
     db.execute(R"sql(
         DELETE FROM event_log;
         DELETE FROM ships;
+        DELETE FROM fleet_order_queue;
         DELETE FROM fleets;
         DELETE FROM shipyard_orders;
         DELETE FROM ship_class_material_costs;
@@ -342,23 +343,37 @@ void saveShipyardOrders(Database& db, const GameState& state) {
 }
 
 void saveFleets(Database& db, const GameState& state) {
-    Statement stmt{db, R"sql(
+    Statement fleetStmt{db, R"sql(
         INSERT INTO fleets(
             id, name, current_body_id, destination_body_id, order_type,
             order_target_body_id, order_days_remaining
         ) VALUES (?, ?, ?, ?, ?, ?, ?);
     )sql"};
+    Statement queueStmt{db, R"sql(
+        INSERT INTO fleet_order_queue(fleet_id, ordinal, order_type, target_body_id)
+        VALUES (?, ?, ?, ?);
+    )sql"};
 
     for (const Fleet& fleet : state.fleets) {
-        stmt.bindInt64(1, idValue(fleet.id));
-        stmt.bindText(2, fleet.name);
-        stmt.bindInt64(3, idValue(fleet.currentBodyId));
-        bindOptionalId(stmt, 4, fleet.destinationBodyId);
-        stmt.bindInt64(5, enumValue(fleet.activeOrder.type));
-        bindOptionalId(stmt, 6, fleet.activeOrder.targetBodyId);
-        stmt.bindInt64(7, fleet.activeOrder.daysRemaining);
-        stmt.execute();
-        reuse(stmt);
+        fleetStmt.bindInt64(1, idValue(fleet.id));
+        fleetStmt.bindText(2, fleet.name);
+        fleetStmt.bindInt64(3, idValue(fleet.currentBodyId));
+        bindOptionalId(fleetStmt, 4, fleet.destinationBodyId);
+        fleetStmt.bindInt64(5, enumValue(fleet.activeOrder.type));
+        bindOptionalId(fleetStmt, 6, fleet.activeOrder.targetBodyId);
+        fleetStmt.bindInt64(7, fleet.activeOrder.daysRemaining);
+        fleetStmt.execute();
+        reuse(fleetStmt);
+
+        for (std::size_t i = 0; i < fleet.queuedOrders.size(); ++i) {
+            const QueuedFleetOrder& queuedOrder = fleet.queuedOrders.at(i);
+            queueStmt.bindInt64(1, idValue(fleet.id));
+            queueStmt.bindInt64(2, static_cast<std::int64_t>(i));
+            queueStmt.bindInt64(3, enumValue(queuedOrder.type));
+            bindOptionalId(queueStmt, 4, queuedOrder.targetBodyId);
+            queueStmt.execute();
+            reuse(queueStmt);
+        }
     }
 }
 
@@ -599,7 +614,25 @@ void loadFleets(Database& db, GameState& state) {
                 .type = enumFromValue<FleetOrderType>(stmt.columnInt64(4)),
                 .targetBodyId = optionalIdFromColumn<BodyId>(stmt, 5),
                 .daysRemaining = checkedIntFromSql(stmt.columnInt64(6), "fleets.order_days_remaining")
-            }
+            },
+            .queuedOrders = {}
+        });
+    }
+
+    Statement queue{db, R"sql(
+        SELECT fleet_id, order_type, target_body_id
+        FROM fleet_order_queue
+        ORDER BY fleet_id, ordinal;
+    )sql"};
+    while (queue.step()) {
+        const FleetId fleetId{queue.columnInt64(0)};
+        Fleet* fleet = findById(state.fleets, fleetId);
+        if (fleet == nullptr) {
+            throw std::runtime_error{"fleet_order_queue references a missing fleet"};
+        }
+        fleet->queuedOrders.push_back(QueuedFleetOrder{
+            .type = enumFromValue<FleetOrderType>(queue.columnInt64(1)),
+            .targetBodyId = optionalIdFromColumn<BodyId>(queue, 2)
         });
     }
 }
@@ -693,7 +726,7 @@ GameState SaveGameRepository::load(const std::filesystem::path& path) {
     loadEvents(db, state);
 
     // There is intentionally no load step for dailyEconomySnapshots. Economy
-    // telemetry is transient runtime data in schema v2 and remains empty until
+    // telemetry is transient runtime data in schema v4 and remains empty until
     // the loaded simulation advances new days.
 
     // SQLite constraints are first-line protection only. The authoritative pass

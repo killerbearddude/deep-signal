@@ -184,17 +184,24 @@ void validateFleetOrder(const GameState& state, const Fleet& fleet) {
         requireState(!fleet.destinationBodyId.has_value(), "idle fleet must not have a destination body");
         requireState(!fleet.activeOrder.targetBodyId.has_value(), "idle fleet must not have an order target");
         requireState(fleet.activeOrder.daysRemaining == 0, "idle fleet must have zero order days remaining");
-        return;
+    } else {
+        requireState(fleet.destinationBodyId.has_value(), "moving fleet must have a destination body");
+        requireState(fleet.activeOrder.targetBodyId.has_value(), "moving fleet must have an order target body");
+        requireState(*fleet.destinationBodyId == *fleet.activeOrder.targetBodyId,
+                     "moving fleet destination and target body must match");
+        requireState(fleet.activeOrder.daysRemaining > 0, "moving fleet must have positive days remaining");
+        requireState(*fleet.destinationBodyId != fleet.currentBodyId, "moving fleet destination must differ from current body");
+        requireValidReference(containsId(state.bodies, *fleet.destinationBodyId), *fleet.destinationBodyId,
+                              "fleet destination body");
     }
 
-    requireState(fleet.destinationBodyId.has_value(), "moving fleet must have a destination body");
-    requireState(fleet.activeOrder.targetBodyId.has_value(), "moving fleet must have an order target body");
-    requireState(*fleet.destinationBodyId == *fleet.activeOrder.targetBodyId,
-                 "moving fleet destination and target body must match");
-    requireState(fleet.activeOrder.daysRemaining > 0, "moving fleet must have positive days remaining");
-    requireState(*fleet.destinationBodyId != fleet.currentBodyId, "moving fleet destination must differ from current body");
-    requireValidReference(containsId(state.bodies, *fleet.destinationBodyId), *fleet.destinationBodyId,
-                          "fleet destination body");
+    for (const QueuedFleetOrder& queuedOrder : fleet.queuedOrders) {
+        requireState(isValidFleetOrderType(queuedOrder.type), "queued fleet order type must be valid");
+        requireState(queuedOrder.type != FleetOrderType::None, "queued fleet order must be actionable");
+        requireState(queuedOrder.targetBodyId.has_value(), "queued fleet order must have a target body");
+        requireValidReference(containsId(state.bodies, *queuedOrder.targetBodyId), *queuedOrder.targetBodyId,
+                              "queued fleet order target body");
+    }
 }
 
 void validateEventPayload(const GameState& state, const SimEventPayload& payload) {

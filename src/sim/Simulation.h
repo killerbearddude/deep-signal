@@ -47,8 +47,15 @@ private:
 
     CommandResult assignShipyardBuild(const AssignShipyardBuildCommand& command);
     CommandResult moveFleet(const MoveFleetCommand& command);
+    CommandResult queueFleetMoveOrder(const QueueFleetMoveOrderCommand& command);
+    CommandResult clearFleetOrderQueue(const ClearFleetOrderQueueCommand& command);
     CommandResult cancelFleetOrder(const CancelFleetOrderCommand& command);
     CommandResult setColonyProcessingPolicy(const SetColonyProcessingPolicyCommand& command);
+
+    // Starts the first queued order, if one exists and can be started from the
+    // fleet's current body. emitted is null for command-time starts where events
+    // are appended to GameState only; daily ticks pass their emitted-event list.
+    bool startNextQueuedFleetOrder(Fleet& fleet, std::vector<SimEvent>* emitted);
 
     void simulateOneDay(std::vector<SimEvent>& emitted);
     void simulateMining(std::vector<SimEvent>& emitted);

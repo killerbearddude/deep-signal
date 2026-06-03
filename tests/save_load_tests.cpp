@@ -221,6 +221,13 @@ void requireSameState(const deep::GameState& expected, const deep::GameState& ac
         require(left.activeOrder.type == right.activeOrder.type, "fleet order type round-trips");
         require(sameOptionalId(left.activeOrder.targetBodyId, right.activeOrder.targetBodyId), "fleet order target round-trips");
         require(left.activeOrder.daysRemaining == right.activeOrder.daysRemaining, "fleet order days remaining round-trips");
+        require(left.queuedOrders.size() == right.queuedOrders.size(), "fleet queued-order count round-trips");
+        for (std::size_t j = 0; j < left.queuedOrders.size(); ++j) {
+            require(left.queuedOrders.at(j).type == right.queuedOrders.at(j).type,
+                    "fleet queued-order type round-trips");
+            require(sameOptionalId(left.queuedOrders.at(j).targetBodyId, right.queuedOrders.at(j).targetBodyId),
+                    "fleet queued-order target round-trips");
+        }
     }
 
     require(expected.ships.size() == actual.ships.size(), "ship row count round-trips");
@@ -351,10 +358,15 @@ void test_sqlite_save_load_round_trip() {
     }).ok, "build order accepted before save");
 
     service.advanceDays(5);
+    const deep::FleetId fleetId = service.state().fleets.front().id;
     require(service.execute(deep::MoveFleetCommand{
-        .fleetId = service.state().fleets.front().id,
+        .fleetId = fleetId,
         .destinationBodyId = marsId
     }).ok, "movement order accepted before save");
+    require(service.execute(deep::QueueFleetMoveOrderCommand{
+        .fleetId = fleetId,
+        .destinationBodyId = service.state().bodies.front().id
+    }).ok, "queued follow-up order accepted before save");
 
     service.advanceDays(2);
     require(service.execute(deep::AssignShipyardBuildCommand{
@@ -387,8 +399,16 @@ void test_sqlite_save_load_round_trip() {
     // state is not merely present but still valid for rule execution.
     loadedService.advanceDays(3);
     require(loadedService.state().fleets.front().currentBodyId == marsId, "loaded fleet arrives after remaining movement days");
+    require(loadedService.state().fleets.front().activeOrder.type == deep::FleetOrderType::MoveToBody,
+            "loaded fleet starts persisted queued order after arrival");
+    require(loadedService.state().fleets.front().activeOrder.targetBodyId == service.state().bodies.front().id,
+            "persisted queued order keeps its destination after promotion");
+
+    loadedService.advanceDays(5);
+    require(loadedService.state().fleets.front().currentBodyId == service.state().bodies.front().id,
+            "loaded fleet completes promoted queued order");
     require(loadedService.state().fleets.front().activeOrder.type == deep::FleetOrderType::None,
-            "loaded fleet clears movement order after arrival");
+            "loaded fleet clears movement order after queued route finishes");
 
     std::filesystem::remove(path);
 }
@@ -559,6 +579,15 @@ void test_malformed_save_impossible_idle_fleet_order_is_rejected() {
                                 true);
 }
 
+void test_malformed_save_bad_queued_fleet_order_is_rejected() {
+    // Queued orders are durable player commands. Broken queue rows should fail
+    // load before the simulation can promote them into active movement.
+    expectMalformedSaveRejected("bad_queued_fleet_order",
+                                "INSERT INTO fleet_order_queue(fleet_id, ordinal, order_type, target_body_id) "
+                                "VALUES (1, 0, 0, 1);",
+                                true);
+}
+
 void test_malformed_save_completed_order_with_build_progress_is_rejected() {
     // Completed production orders are terminal snapshots. Keeping build progress
     // on a completed order would make a future production tick ambiguous.
@@ -626,6 +655,7 @@ int main() {
         test_malformed_save_broken_ship_fleet_reference_is_rejected();
         test_malformed_save_broken_fleet_target_reference_is_rejected();
         test_malformed_save_impossible_idle_fleet_order_is_rejected();
+        test_malformed_save_bad_queued_fleet_order_is_rejected();
         test_malformed_save_completed_order_with_build_progress_is_rejected();
         test_malformed_save_active_order_already_complete_is_rejected();
         test_malformed_save_unknown_order_status_is_rejected();

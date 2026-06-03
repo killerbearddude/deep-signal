@@ -149,8 +149,16 @@ struct FleetOrder {
     int daysRemaining = 0;
 };
 
-// A group of ships sharing a location and one active order. shipIds reference
-// GameState::ships records; the fleet does not own ship memory.
+// Queued fleet order state for the small v1 command queue. Queued orders do not
+// store remaining days because duration is assigned only when the order starts.
+struct QueuedFleetOrder {
+    FleetOrderType type = FleetOrderType::MoveToBody;
+    std::optional<BodyId> targetBodyId;
+};
+
+// A group of ships sharing a location, one active order, and a small visible
+// order queue. shipIds reference GameState::ships records; the fleet does not
+// own ship memory.
 struct Fleet {
     FleetId id;
     std::string name;
@@ -158,6 +166,7 @@ struct Fleet {
     std::optional<BodyId> destinationBodyId;
     std::vector<ShipId> shipIds;
     FleetOrder activeOrder;
+    std::vector<QueuedFleetOrder> queuedOrders;
 };
 
 } // namespace deep

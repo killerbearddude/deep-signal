@@ -102,6 +102,16 @@ struct ShipClassSummary {
     double buildPoints = 0.0;
 };
 
+// Display-ready queued fleet order row. The queue position is one-based so UI
+// tables can present the same ordering players expect from command queues.
+struct FleetQueuedOrderSummary {
+    std::size_t queuePosition = 0;
+    FleetOrderType orderType = FleetOrderType::MoveToBody;
+    std::string orderName;
+    std::optional<BodyId> destinationBodyId;
+    std::string destinationBodyName;
+};
+
 // Display-ready fleet row with resolved body names and order state. Destination
 // remains optional because idle fleets intentionally have no target body.
 struct FleetSummary {
@@ -116,6 +126,7 @@ struct FleetSummary {
     std::string activeOrderName;
     bool hasActiveOrder = false;
     int daysRemaining = 0;
+    std::vector<FleetQueuedOrderSummary> queuedOrders;
 };
 
 // Display-ready body/system overview row. Counts are resolved in the app layer
