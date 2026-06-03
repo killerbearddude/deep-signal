@@ -39,7 +39,10 @@ void test_colony_summaries_resolve_body_context() {
     require(colonies.front().name == "Terra Directorate", "colony summary includes colony name");
     require(colonies.front().bodyName == "Terra", "colony summary resolves body name");
     require(colonies.front().mines == 10.0, "colony summary includes mine count");
+    require(colonies.front().processorCapacity == 50.0, "colony summary includes processor capacity");
     require(colonies.front().shipyardCapacity == 100.0, "colony summary includes shipyard capacity");
+    require(colonies.front().totalRawStockpile > 0.0, "colony summary includes raw stockpile total");
+    require(colonies.front().totalProcessedStockpile > 0.0, "colony summary includes processed stockpile total");
 }
 
 void test_shipyard_order_summaries_resolve_names() {
@@ -98,7 +101,7 @@ void test_production_backlog_summaries_expose_queue_eta() {
     require(backlog.at(1).etaDays.has_value(), "second backlog row has ETA");
     require(*backlog.front().etaDays == 5, "first backlog ETA uses direct capacity");
     require(*backlog.at(1).etaDays == 10, "second backlog ETA includes first order capacity use");
-    require(backlog.front().blockingMineralName.empty(), "well-stocked order has no blocking mineral name");
+    require(backlog.front().blockingMaterialName.empty(), "well-stocked order has no blocking material name");
     require(backlog.front().statusName == "Active", "well-stocked order remains active");
 }
 

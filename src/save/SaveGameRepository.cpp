@@ -1,6 +1,6 @@
 #include "save/SaveGameRepository.h"
 
-// Implements schema v1 save/load mapping for the headless simulation state.
+// Implements schema v2 save/load mapping for the headless simulation state.
 // The repository uses prepared statements and transactions throughout; raw SQL
 // execution is limited to static schema/table maintenance statements with no data.
 
@@ -42,13 +42,15 @@ template <typename EnumT>
     return static_cast<std::int64_t>(value);
 }
 
-// Returns true when a persisted enum ordinal is part of the current schema v1
+// Returns true when a persisted enum ordinal is part of the current schema v2
 // contract. Keep this explicit instead of raw-casting database values; SQLite
 // files are inspectable and may be hand-edited or corrupted.
 template <typename EnumT>
 [[nodiscard]] bool isValidEnumValue(const std::int64_t value) noexcept {
     if constexpr (std::is_same_v<EnumT, Mineral>) {
         return value >= 0 && value < static_cast<std::int64_t>(mineralCount());
+    } else if constexpr (std::is_same_v<EnumT, ProcessedMaterial>) {
+        return value >= 0 && value < static_cast<std::int64_t>(processedMaterialCount());
     } else if constexpr (std::is_same_v<EnumT, BodyType>) {
         return value >= 0 && value <= static_cast<std::int64_t>(BodyType::Asteroid);
     } else if constexpr (std::is_same_v<EnumT, ShipRole>) {
@@ -143,7 +145,7 @@ void reuse(Statement& stmt) {
 }
 
 void clearExistingSave(Database& db) {
-    // Delete child tables first because schema v1 intentionally uses explicit
+    // Delete child tables first because schema v2 intentionally uses explicit
     // foreign keys rather than ON DELETE CASCADE. This makes destructive save
     // behavior visible and easy to audit.
     db.execute(R"sql(
@@ -151,8 +153,9 @@ void clearExistingSave(Database& db) {
         DELETE FROM ships;
         DELETE FROM fleets;
         DELETE FROM shipyard_orders;
-        DELETE FROM ship_class_costs;
+        DELETE FROM ship_class_material_costs;
         DELETE FROM ship_classes;
+        DELETE FROM colony_materials;
         DELETE FROM colony_minerals;
         DELETE FROM mineral_deposits;
         DELETE FROM colonies;
@@ -225,15 +228,20 @@ void saveBodies(Database& db, const GameState& state) {
 }
 
 void saveColonies(Database& db, const GameState& state) {
-    Statement colonyStmt{db, "INSERT INTO colonies(id, body_id, name, mines, shipyard_capacity) VALUES (?, ?, ?, ?, ?);"};
+    Statement colonyStmt{db, R"sql(
+        INSERT INTO colonies(id, body_id, name, mines, processor_capacity, shipyard_capacity)
+        VALUES (?, ?, ?, ?, ?, ?);
+    )sql"};
     Statement mineralStmt{db, "INSERT INTO colony_minerals(colony_id, mineral, amount) VALUES (?, ?, ?);"};
+    Statement materialStmt{db, "INSERT INTO colony_materials(colony_id, material, amount) VALUES (?, ?, ?);"};
 
     for (const Colony& colony : state.colonies) {
         colonyStmt.bindInt64(1, idValue(colony.id));
         colonyStmt.bindInt64(2, idValue(colony.bodyId));
         colonyStmt.bindText(3, colony.name);
         colonyStmt.bindDouble(4, colony.mines);
-        colonyStmt.bindDouble(5, colony.shipyardCapacity);
+        colonyStmt.bindDouble(5, colony.processorCapacity);
+        colonyStmt.bindDouble(6, colony.shipyardCapacity);
         colonyStmt.execute();
         reuse(colonyStmt);
 
@@ -243,6 +251,14 @@ void saveColonies(Database& db, const GameState& state) {
             mineralStmt.bindDouble(3, colony.stockpile.amount.at(mineral));
             mineralStmt.execute();
             reuse(mineralStmt);
+        }
+
+        for (std::size_t material = 0; material < processedMaterialCount(); ++material) {
+            materialStmt.bindInt64(1, idValue(colony.id));
+            materialStmt.bindInt64(2, static_cast<std::int64_t>(material));
+            materialStmt.bindDouble(3, colony.processedStockpile.amount.at(material));
+            materialStmt.execute();
+            reuse(materialStmt);
         }
     }
 }
@@ -264,7 +280,7 @@ void saveShipClasses(Database& db, const GameState& state) {
         INSERT INTO ship_classes(id, name, role, build_points, speed_km_per_day, fuel_capacity)
         VALUES (?, ?, ?, ?, ?, ?);
     )sql"};
-    Statement costStmt{db, "INSERT INTO ship_class_costs(ship_class_id, mineral, amount) VALUES (?, ?, ?);"};
+    Statement costStmt{db, "INSERT INTO ship_class_material_costs(ship_class_id, material, amount) VALUES (?, ?, ?);"};
 
     for (const ShipClass& shipClass : state.shipClasses) {
         classStmt.bindInt64(1, idValue(shipClass.id));
@@ -276,10 +292,10 @@ void saveShipClasses(Database& db, const GameState& state) {
         classStmt.execute();
         reuse(classStmt);
 
-        for (std::size_t mineral = 0; mineral < mineralCount(); ++mineral) {
+        for (std::size_t material = 0; material < processedMaterialCount(); ++material) {
             costStmt.bindInt64(1, idValue(shipClass.id));
-            costStmt.bindInt64(2, static_cast<std::int64_t>(mineral));
-            costStmt.bindDouble(3, shipClass.buildCost.amount.at(mineral));
+            costStmt.bindInt64(2, static_cast<std::int64_t>(material));
+            costStmt.bindDouble(3, shipClass.buildCost.amount.at(material));
             costStmt.execute();
             reuse(costStmt);
         }
@@ -428,15 +444,17 @@ void loadBodies(Database& db, GameState& state) {
 }
 
 void loadColonies(Database& db, GameState& state) {
-    Statement colonies{db, "SELECT id, body_id, name, mines, shipyard_capacity FROM colonies ORDER BY id;"};
+    Statement colonies{db, "SELECT id, body_id, name, mines, processor_capacity, shipyard_capacity FROM colonies ORDER BY id;"};
     while (colonies.step()) {
         state.colonies.push_back(Colony{
             .id = ColonyId{colonies.columnInt64(0)},
             .bodyId = BodyId{colonies.columnInt64(1)},
             .name = colonies.columnText(2),
             .stockpile = MineralSet{},
+            .processedStockpile = ProcessedMaterialSet{},
             .mines = colonies.columnDouble(3),
-            .shipyardCapacity = colonies.columnDouble(4)
+            .processorCapacity = colonies.columnDouble(4),
+            .shipyardCapacity = colonies.columnDouble(5)
         });
     }
 
@@ -448,6 +466,16 @@ void loadColonies(Database& db, GameState& state) {
             throw std::runtime_error{"colony_minerals references a missing colony"};
         }
         colony->stockpile.set(enumFromValue<Mineral>(minerals.columnInt64(1)), minerals.columnDouble(2));
+    }
+
+    Statement materials{db, "SELECT colony_id, material, amount FROM colony_materials ORDER BY colony_id, material;"};
+    while (materials.step()) {
+        const ColonyId colonyId{materials.columnInt64(0)};
+        Colony* colony = findById(state.colonies, colonyId);
+        if (colony == nullptr) {
+            throw std::runtime_error{"colony_materials references a missing colony"};
+        }
+        colony->processedStockpile.set(enumFromValue<ProcessedMaterial>(materials.columnInt64(1)), materials.columnDouble(2));
     }
 }
 
@@ -474,21 +502,21 @@ void loadShipClasses(Database& db, GameState& state) {
             .id = ShipClassId{classes.columnInt64(0)},
             .name = classes.columnText(1),
             .role = enumFromValue<ShipRole>(classes.columnInt64(2)),
-            .buildCost = MineralSet{},
+            .buildCost = ProcessedMaterialSet{},
             .buildPoints = classes.columnDouble(3),
             .speedKmPerDay = classes.columnDouble(4),
             .fuelCapacity = classes.columnDouble(5)
         });
     }
 
-    Statement costs{db, "SELECT ship_class_id, mineral, amount FROM ship_class_costs ORDER BY ship_class_id, mineral;"};
+    Statement costs{db, "SELECT ship_class_id, material, amount FROM ship_class_material_costs ORDER BY ship_class_id, material;"};
     while (costs.step()) {
         const ShipClassId shipClassId{costs.columnInt64(0)};
         ShipClass* shipClass = findById(state.shipClasses, shipClassId);
         if (shipClass == nullptr) {
-            throw std::runtime_error{"ship_class_costs references a missing ship class"};
+            throw std::runtime_error{"ship_class_material_costs references a missing ship class"};
         }
-        shipClass->buildCost.set(enumFromValue<Mineral>(costs.columnInt64(1)), costs.columnDouble(2));
+        shipClass->buildCost.set(enumFromValue<ProcessedMaterial>(costs.columnInt64(1)), costs.columnDouble(2));
     }
 }
 
@@ -624,7 +652,7 @@ GameState SaveGameRepository::load(const std::filesystem::path& path) {
     loadEvents(db, state);
 
     // There is intentionally no load step for dailyEconomySnapshots. Economy
-    // telemetry is transient runtime data in schema v1 and remains empty until
+    // telemetry is transient runtime data in schema v2 and remains empty until
     // the loaded simulation advances new days.
 
     // SQLite constraints are first-line protection only. The authoritative pass

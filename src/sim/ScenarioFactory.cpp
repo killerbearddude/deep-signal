@@ -57,17 +57,27 @@ GameState createHomeSystemScenario() {
     startingStockpile.set(Mineral::CarbonCompounds, 10'000.0);
     startingStockpile.set(Mineral::Volatiles, 20'000.0);
 
+    ProcessedMaterialSet startingProcessedStockpile;
+    startingProcessedStockpile.set(ProcessedMaterial::StructuralAlloys, 1'500.0);
+    startingProcessedStockpile.set(ProcessedMaterial::Electronics, 500.0);
+    startingProcessedStockpile.set(ProcessedMaterial::Propellant, 2'000.0);
+    startingProcessedStockpile.set(ProcessedMaterial::ReactorFuel, 200.0);
+    startingProcessedStockpile.set(ProcessedMaterial::IndustrialComposites, 700.0);
+    startingProcessedStockpile.set(ProcessedMaterial::OrdnanceMaterials, 300.0);
+
     state.colonies.push_back(Colony{
         .id = terraColonyId,
         .bodyId = terraId,
         .name = "Terra Directorate",
         .stockpile = startingStockpile,
+        .processedStockpile = startingProcessedStockpile,
         .mines = 10.0,
+        .processorCapacity = 50.0,
         .shipyardCapacity = 100.0
     });
 
-    // Starter deposits are intentionally raw resources only. Processing chains
-    // will later convert these into alloys, electronics, propellant, and fuel.
+    // Starter deposits are raw resources only. Colony processors convert them
+    // into industrial materials consumed by shipyard construction.
     state.mineralDeposits.push_back(MineralDeposit{
         .bodyId = terraId,
         .mineral = Mineral::Iron,
@@ -145,14 +155,12 @@ GameState createHomeSystemScenario() {
         .accessibility = 0.5
     });
 
-    MineralSet surveyCutterCost;
-    // TEMP: Prototype shipyard orders consume raw minerals directly. A later
-    // processing-chain patch will convert raw minerals into intermediate
-    // industrial materials before ship construction.
-    surveyCutterCost.set(Mineral::Iron, 500.0);
-    surveyCutterCost.set(Mineral::Titanium, 120.0);
-    surveyCutterCost.set(Mineral::Copper, 80.0);
-    surveyCutterCost.set(Mineral::Silicon, 40.0);
+    ProcessedMaterialSet surveyCutterCost;
+    surveyCutterCost.set(ProcessedMaterial::StructuralAlloys, 250.0);
+    surveyCutterCost.set(ProcessedMaterial::Electronics, 80.0);
+    surveyCutterCost.set(ProcessedMaterial::Propellant, 150.0);
+    surveyCutterCost.set(ProcessedMaterial::ReactorFuel, 20.0);
+    surveyCutterCost.set(ProcessedMaterial::IndustrialComposites, 50.0);
 
     state.shipClasses.push_back(ShipClass{
         .id = surveyCutterId,

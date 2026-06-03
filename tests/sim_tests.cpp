@@ -93,9 +93,11 @@ void test_time_advancement() {
 }
 
 void test_mining() {
-    // Verifies the basic colony-mines-to-stockpile loop. This protects the core
-    // economic foundation for future industry and forecast systems.
-    deep::Simulation sim{deep::createHomeSystemScenario()};
+    // Verifies the basic colony-mines-to-stockpile loop. Processor capacity is
+    // disabled here so the test isolates extraction from downstream conversion.
+    deep::GameState state = deep::createHomeSystemScenario();
+    state.colonies.front().processorCapacity = 0.0;
+    deep::Simulation sim{std::move(state)};
 
     const double startingIron = sim.state().colonies.front().stockpile.get(deep::Mineral::Iron);
     const double startingDeposit = sim.state().mineralDeposits.front().remaining;
@@ -105,7 +107,7 @@ void test_mining() {
     const double endingIron = sim.state().colonies.front().stockpile.get(deep::Mineral::Iron);
     const double endingDeposit = sim.state().mineralDeposits.front().remaining;
 
-    require(endingIron > startingIron, "mining increases iron stockpile");
+    require(endingIron > startingIron, "mining increases iron stockpile when processors are disabled");
     require(endingDeposit < startingDeposit, "mining decreases deposit");
     require(sim.state().dailyEconomySnapshots.size() == 7, "one mining day creates telemetry for all Terra deposits");
 
@@ -116,6 +118,23 @@ void test_mining() {
     require(ironTelemetry.mineral == deep::Mineral::Iron, "mining telemetry records mineral type");
     require(ironTelemetry.amount > 0.0, "mining telemetry records extracted amount");
     require(ironTelemetry.remainingDeposit == endingDeposit, "mining telemetry records remaining deposit");
+}
+
+void test_processing_converts_raw_minerals_to_processed_materials() {
+    // Verifies the first raw-resource to processed-material link. Shipyard costs
+    // rely on these processed stockpiles rather than consuming raw minerals.
+    deep::Simulation sim{deep::createHomeSystemScenario()};
+
+    const double startingIron = sim.state().colonies.front().stockpile.get(deep::Mineral::Iron);
+    const double startingAlloys = sim.state().colonies.front().processedStockpile.get(deep::ProcessedMaterial::StructuralAlloys);
+
+    sim.advanceDays(1);
+
+    const double endingIron = sim.state().colonies.front().stockpile.get(deep::Mineral::Iron);
+    const double endingAlloys = sim.state().colonies.front().processedStockpile.get(deep::ProcessedMaterial::StructuralAlloys);
+
+    require(endingAlloys > startingAlloys, "daily processors create structural alloys");
+    require(endingIron < startingIron, "processing consumes more iron than mining adds in the starter scenario");
 }
 
 void test_shipyard_completion() {
@@ -187,14 +206,13 @@ void test_shipyard_capacity_is_shared_by_fifo_orders() {
 }
 
 
-void test_shipyard_temporary_mineral_shortage_recovers() {
-    // Verifies that mineral shortages pause production without permanently
-    // blocking the order. This prevents a deadlock where future mining produces
-    // enough minerals but the order is skipped forever because its status changed.
+void test_shipyard_temporary_processed_material_shortage_recovers() {
+    // Verifies that processed-material shortages pause production without
+    // permanently blocking the order. Processors keep running, so the order can
+    // complete once enough materials accumulate.
     deep::GameState state = deep::createHomeSystemScenario();
-    state.colonies.front().stockpile.set(deep::Mineral::Iron, 0.0);
-    state.colonies.front().stockpile.set(deep::Mineral::Titanium, 1'000.0);
-    state.colonies.front().stockpile.set(deep::Mineral::Copper, 1'000.0);
+    state.colonies.front().processedStockpile.set(deep::ProcessedMaterial::StructuralAlloys, 0.0);
+    state.colonies.front().processorCapacity = 10.0;
 
     deep::Simulation sim{std::move(state)};
     const deep::ColonyId colonyId = sim.state().colonies.front().id;
@@ -207,12 +225,12 @@ void test_shipyard_temporary_mineral_shortage_recovers() {
     }).ok, "build order accepted before shortage test");
 
     sim.advanceDays(5);
-    require(sim.state().ships.empty(), "ship does not complete before minerals are affordable");
+    require(sim.state().ships.empty(), "ship does not complete before processed materials are affordable");
     require(sim.state().shipyardOrders.front().status == deep::ShipyardOrderStatus::Active,
-            "temporary mineral shortage leaves order active");
+            "temporary processed-material shortage leaves order active");
 
-    sim.advanceDays(45);
-    require(sim.state().ships.size() == 1, "ship completes after mining supplies missing minerals");
+    sim.advanceDays(20);
+    require(sim.state().ships.size() == 1, "ship completes after processors supply missing materials");
     require(sim.state().shipyardOrders.front().status == deep::ShipyardOrderStatus::Completed,
             "recovered order completes instead of remaining paused");
 }
@@ -324,9 +342,10 @@ int main() {
         test_mineral_can_pay_rejects_meaningful_shortage();
         test_time_advancement();
         test_mining();
+        test_processing_converts_raw_minerals_to_processed_materials();
         test_shipyard_completion();
         test_shipyard_capacity_is_shared_by_fifo_orders();
-        test_shipyard_temporary_mineral_shortage_recovers();
+        test_shipyard_temporary_processed_material_shortage_recovers();
         test_fleet_movement();
         test_cancel_fleet_order();
         test_rejected_invalid_command();

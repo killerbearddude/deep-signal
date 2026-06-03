@@ -131,6 +131,13 @@ void validateMineralSet(const MineralSet& set, const std::string_view label) {
     }
 }
 
+void validateProcessedMaterialSet(const ProcessedMaterialSet& set, const std::string_view label) {
+    for (const double amount : set.amount) {
+        requireState(isFinite(amount), std::string{label} + " amount must be finite");
+        requireState(amount >= 0.0, std::string{label} + " amount must be non-negative");
+    }
+}
+
 void validateFleetOrder(const GameState& state, const Fleet& fleet) {
     requireState(isValidFleetOrderType(fleet.activeOrder.type), "fleet order type must be valid");
     requireState(fleet.activeOrder.daysRemaining >= 0, "fleet order days must be non-negative");
@@ -221,8 +228,11 @@ void validateGameState(const GameState& state) {
     for (const Colony& colony : state.colonies) {
         requireValidReference(containsId(state.bodies, colony.bodyId), colony.bodyId, "colony body");
         requireState(!colony.name.empty(), "colony name must be non-empty");
-        validateMineralSet(colony.stockpile, "colony stockpile");
+        validateMineralSet(colony.stockpile, "colony raw stockpile");
+        validateProcessedMaterialSet(colony.processedStockpile, "colony processed stockpile");
         requireState(isFinite(colony.mines) && colony.mines >= 0.0, "colony mines must be finite and non-negative");
+        requireState(isFinite(colony.processorCapacity) && colony.processorCapacity >= 0.0,
+                     "processor capacity must be finite and non-negative");
         requireState(isFinite(colony.shipyardCapacity) && colony.shipyardCapacity >= 0.0,
                      "shipyard capacity must be finite and non-negative");
     }
@@ -243,7 +253,7 @@ void validateGameState(const GameState& state) {
     for (const ShipClass& shipClass : state.shipClasses) {
         requireState(!shipClass.name.empty(), "ship class name must be non-empty");
         requireState(isValidShipRole(shipClass.role), "ship role must be valid");
-        validateMineralSet(shipClass.buildCost, "ship class build cost");
+        validateProcessedMaterialSet(shipClass.buildCost, "ship class build cost");
         requireState(isFinite(shipClass.buildPoints) && shipClass.buildPoints > 0.0,
                      "ship class build points must be positive and finite");
         requireState(isFinite(shipClass.speedKmPerDay) && shipClass.speedKmPerDay >= 0.0,

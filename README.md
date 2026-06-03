@@ -13,7 +13,7 @@ First buildable headless simulation slice for **Deep Signal Prototype 0.1 - Home
 - Shipyard build order progression
 - Ship and fleet creation
 - Fixed-duration fleet movement
-- SQLite schema v1 save/load layer
+- SQLite schema v2 save/load layer
 - Full-save/full-load transactions
 - Prepared statements for value-bearing SQL
 - CLI smoke runner
@@ -29,7 +29,7 @@ The project has three active CMake libraries by default:
 
 ```text
 deep_signal_sim   # pure deterministic simulation; no SQLite/UI/platform deps
-deep_signal_save  # SQLite C API repository and schema v1 mapping
+deep_signal_save  # SQLite C API repository and schema v2 mapping
 deep_signal_app   # application service wrapping simulation plus save/load
 ```
 
@@ -74,7 +74,7 @@ The source also follows the current project C++ direction:
 - no raw owning pointers,
 - warning-clean CMake targets with `-Wall -Wextra -Wpedantic -Wconversion` on GCC/Clang.
 
-## SQLite schema v1 coverage
+## SQLite schema v2 coverage
 
 The save file persists:
 

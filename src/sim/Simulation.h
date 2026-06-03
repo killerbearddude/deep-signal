@@ -51,6 +51,7 @@ private:
 
     void simulateOneDay(std::vector<SimEvent>& emitted);
     void simulateMining(std::vector<SimEvent>& emitted);
+    void simulateProcessing();
     void simulateShipyards(std::vector<SimEvent>& emitted);
     void simulateFleetMovement(std::vector<SimEvent>& emitted);
 

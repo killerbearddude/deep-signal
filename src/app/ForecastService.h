@@ -37,15 +37,28 @@ struct MineralForecastCauseRow {
     std::string explanation;
 };
 
-// Empire-level mineral forecast with simple cause rows for UI explanation.
-// This v1 forecast uses current mining income and amortized active shipyard
-// commitments; it does not introduce new economy systems or future automation.
+// Empire-level raw mineral forecast with simple cause rows for UI explanation.
+// This v1 forecast uses current mining income and fixed processing recipe demand;
+// it does not introduce new economy systems or future automation.
 struct MineralForecastCauseChain {
     Mineral mineral = Mineral::Iron;
     std::string mineralName;
     double stockpile = 0.0;
     double miningIncomePerDay = 0.0;
-    double activeShipyardDemandPerDay = 0.0;
+    double committedDemandPerDay = 0.0;
+    double netPerDay = 0.0;
+    std::optional<int> stockpileRunoutDays;
+    std::vector<MineralForecastCauseRow> causes;
+};
+
+// Empire-level processed-material forecast. Processing income comes from fixed
+// recipe capacity, while demand is active shipyard commitments amortized over ETA.
+struct ProcessedMaterialForecastCauseChain {
+    ProcessedMaterial material = ProcessedMaterial::StructuralAlloys;
+    std::string materialName;
+    double stockpile = 0.0;
+    double processingIncomePerDay = 0.0;
+    double committedDemandPerDay = 0.0;
     double netPerDay = 0.0;
     std::optional<int> stockpileRunoutDays;
     std::vector<MineralForecastCauseRow> causes;
@@ -95,10 +108,10 @@ struct ProductionBacklogForecast {
     double colonyShipyardCapacity = 0.0;
     double accumulatedBuildPoints = 0.0;
     double buildPointsRemaining = 0.0;
-    MineralSet requiredMineralsRemaining;
-    bool blockedByMineral = false;
-    std::optional<Mineral> blockingMineral;
-    std::string blockingMineralName;
+    ProcessedMaterialSet requiredMaterialsRemaining;
+    bool blockedByMaterial = false;
+    std::optional<ProcessedMaterial> blockingMaterial;
+    std::string blockingMaterialName;
     std::optional<int> etaDays;
     std::string statusName;
     std::string explanation;
@@ -129,9 +142,13 @@ public:
     // share deposit remaining in deterministic colony/deposit order.
     [[nodiscard]] std::vector<MineralIncomeForecast> mineralIncomePerDay() const;
 
-    // Returns empire-level mineral cause chains showing mining income, active
-    // shipyard commitments, net flow, and stockpile runout where applicable.
+    // Returns empire-level raw mineral cause chains showing mining income,
+    // processing demand, net flow, and stockpile runout where applicable.
     [[nodiscard]] std::vector<MineralForecastCauseChain> mineralForecastCauseChains() const;
+
+    // Returns empire-level processed-material cause chains showing processor
+    // output, active shipyard demand, net flow, and runout where applicable.
+    [[nodiscard]] std::vector<ProcessedMaterialForecastCauseChain> processedMaterialForecastCauseChains() const;
 
     // Returns deposit lifetime estimates using current daily extraction rates.
     [[nodiscard]] std::vector<DepositExhaustionForecast> depositExhaustionEstimates() const;

@@ -50,6 +50,18 @@ const deep::MineralForecastCauseChain& requireCauseChain(const std::vector<deep:
     return *it;
 }
 
+const deep::ProcessedMaterialForecastCauseChain& requireMaterialCauseChain(
+    const std::vector<deep::ProcessedMaterialForecastCauseChain>& chains,
+    const deep::ProcessedMaterial material) {
+    const auto it = std::find_if(chains.begin(), chains.end(), [material](const deep::ProcessedMaterialForecastCauseChain& chain) {
+        return chain.material == material;
+    });
+    if (it == chains.end()) {
+        throw TestFailure{"expected processed-material forecast cause chain was not returned"};
+    }
+    return *it;
+}
+
 void test_mineral_income_per_day_uses_current_mining_formula() {
     // Verifies the app forecast mirrors the prototype mining rule without UI
     // code reimplementing colony/deposit joins.
@@ -87,7 +99,9 @@ void test_mineral_income_per_day_shares_deposits_between_colonies() {
         .bodyId = terraId,
         .name = "Second Mining Office",
         .stockpile = deep::MineralSet{},
+        .processedStockpile = deep::ProcessedMaterialSet{},
         .mines = 10.0,
+        .processorCapacity = 0.0,
         .shipyardCapacity = 0.0
     });
 
@@ -118,9 +132,31 @@ void test_mineral_income_per_day_shares_deposits_between_colonies() {
     requireNear(*secondColonyIronIncome, 0.0, "later colony receives no income after deposit exhaustion");
 }
 
-void test_mineral_forecast_cause_chains_report_shipyard_demand() {
-    // Verifies the v1 cause-chain DTO explains why a mineral forecast is moving
-    // negative: current mining is offset by active shipyard commitments.
+void test_mineral_forecast_cause_chains_report_processing_demand() {
+    // Verifies raw mineral cause chains explain the new extraction-to-processing
+    // bridge: mining income is offset by raw inputs consumed by recipes.
+    const deep::SimulationService service;
+    const deep::ForecastService forecasts{service};
+    const auto chains = forecasts.mineralForecastCauseChains();
+    const deep::MineralForecastCauseChain& iron = requireCauseChain(chains, deep::Mineral::Iron);
+
+    require(chains.size() == deep::mineralCount(), "one cause chain is returned for every mineral");
+    require(iron.mineralName == "Iron", "cause chain exposes mineral name");
+    requireNear(iron.stockpile, 10000.0, "cause chain sums colony raw stockpiles");
+    requireNear(iron.miningIncomePerDay, 10.0, "cause chain includes mining income per day");
+    requireNear(iron.committedDemandPerDay, 50.0, "cause chain includes processing raw demand");
+    requireNear(iron.netPerDay, -40.0, "cause chain computes net raw mineral flow");
+    require(iron.stockpileRunoutDays.has_value(), "negative net flow yields stockpile runout");
+    require(*iron.stockpileRunoutDays == 250, "runout rounds stockpile divided by deficit up to days");
+    require(iron.causes.size() == 2, "cause chain contains the v1 explanation rows");
+    require(iron.causes.front().label == "Mining", "first cause row explains mining");
+    require(iron.causes.at(1).label == "Processing recipes", "second cause row explains processing demand");
+    requireNear(iron.causes.at(1).amountPerDay, -50.0, "processing cause row reports demand as a negative contribution");
+}
+
+void test_processed_material_forecast_cause_chains_report_shipyard_demand() {
+    // Verifies processed materials are now the shipyard-facing resource layer.
+    // Active orders create processed-material demand instead of raw mineral demand.
     deep::SimulationService service;
     const deep::ColonyId colonyId = service.state().colonies.front().id;
     const deep::ShipClassId shipClassId = service.state().shipClasses.front().id;
@@ -129,38 +165,36 @@ void test_mineral_forecast_cause_chains_report_shipyard_demand() {
         .colonyId = colonyId,
         .shipClassId = shipClassId,
         .quantity = 1
-    }).ok, "build order is accepted before cause-chain forecast");
+    }).ok, "build order is accepted before processed-material forecast");
 
     const deep::ForecastService forecasts{service};
-    const auto chains = forecasts.mineralForecastCauseChains();
-    const deep::MineralForecastCauseChain& iron = requireCauseChain(chains, deep::Mineral::Iron);
+    const auto chains = forecasts.processedMaterialForecastCauseChains();
+    const deep::ProcessedMaterialForecastCauseChain& electronics =
+        requireMaterialCauseChain(chains, deep::ProcessedMaterial::Electronics);
 
-    require(chains.size() == deep::mineralCount(), "one cause chain is returned for every mineral");
-    require(iron.mineralName == "Iron", "cause chain exposes mineral name");
-    requireNear(iron.stockpile, 10000.0, "cause chain sums colony stockpiles");
-    requireNear(iron.miningIncomePerDay, 10.0, "cause chain includes mining income per day");
-    requireNear(iron.activeShipyardDemandPerDay, 100.0, "cause chain amortizes active shipyard demand");
-    requireNear(iron.netPerDay, -90.0, "cause chain computes net mineral flow");
-    require(iron.stockpileRunoutDays.has_value(), "negative net flow yields stockpile runout");
-    require(*iron.stockpileRunoutDays == 112, "runout rounds stockpile divided by deficit up to days");
-    require(iron.causes.size() == 2, "cause chain contains the v1 explanation rows");
-    require(iron.causes.front().label == "Mining", "first cause row explains mining");
-    require(iron.causes.at(1).label == "Active shipyard orders", "second cause row explains shipyard demand");
-    requireNear(iron.causes.at(1).amountPerDay, -100.0, "shipyard cause row reports demand as a negative contribution");
+    require(chains.size() == deep::processedMaterialCount(), "one cause chain is returned for every processed material");
+    require(electronics.materialName == "Electronics", "processed cause chain exposes material name");
+    requireNear(electronics.stockpile, 500.0, "cause chain sums colony processed stockpiles");
+    requireNear(electronics.processingIncomePerDay, 0.0, "starter capacity is consumed by structural alloys first");
+    requireNear(electronics.committedDemandPerDay, 16.0, "shipyard demand is amortized over ETA");
+    requireNear(electronics.netPerDay, -16.0, "processed material net flow includes shipyard demand");
+    require(electronics.stockpileRunoutDays.has_value(), "negative material net flow yields runout");
+    require(*electronics.stockpileRunoutDays == 32, "processed material runout rounds up by days");
+    require(electronics.causes.at(1).label == "Active shipyard orders", "processed demand names shipyard orders");
 }
 
-void test_mineral_forecast_cause_chains_omit_runout_for_surplus() {
-    // Verifies a mineral with non-negative net flow does not report a false
-    // shortage timer when no active shipyard order is consuming it.
+void test_mineral_forecast_cause_chains_include_processing_demand() {
+    // Verifies raw minerals include processing demand even without active
+    // shipyard orders, because processors now consume raw inputs daily.
     const deep::SimulationService service;
     const deep::ForecastService forecasts{service};
     const auto chains = forecasts.mineralForecastCauseChains();
     const deep::MineralForecastCauseChain& iron = requireCauseChain(chains, deep::Mineral::Iron);
 
     requireNear(iron.miningIncomePerDay, 10.0, "surplus forecast includes current mining income");
-    requireNear(iron.activeShipyardDemandPerDay, 0.0, "surplus forecast has no active shipyard demand");
-    requireNear(iron.netPerDay, 10.0, "surplus forecast computes positive net flow");
-    require(!iron.stockpileRunoutDays.has_value(), "non-negative net flow has no runout day");
+    requireNear(iron.committedDemandPerDay, 50.0, "surplus forecast includes processing demand");
+    requireNear(iron.netPerDay, -40.0, "raw forecast includes processing demand");
+    require(iron.stockpileRunoutDays.has_value(), "negative raw flow has a runout day");
 }
 
 void test_deposit_exhaustion_estimate_uses_current_income_rate() {
@@ -204,7 +238,7 @@ void test_shipyard_order_eta_uses_capacity_and_accumulated_progress() {
     requireNear(orders.front().buildPointsRemaining, 800.0, "ETA accounts for accumulated build points");
     require(orders.front().etaDays.has_value(), "positive capacity yields shipyard ETA");
     require(*orders.front().etaDays == 8, "shipyard ETA rounds remaining build points over capacity");
-    require(orders.front().explanation.find("mineral shortages") != std::string::npos,
+    require(orders.front().explanation.find("processed material shortages") != std::string::npos,
             "shipyard ETA explains capacity-only limitation");
 }
 
@@ -243,12 +277,12 @@ void test_production_backlog_uses_fifo_colony_capacity() {
             "backlog explanation exposes queue capacity math");
 }
 
-void test_production_backlog_reports_blocking_mineral() {
-    // Verifies the backlog forecast identifies the first mineral preventing an
-    // order from completing with current stockpiles. This is an app-layer
-    // explanation only; it does not change simulation production rules.
+void test_production_backlog_reports_blocking_material() {
+    // Verifies the backlog forecast identifies the first processed material
+    // preventing an order from completing with current stockpiles. This is an
+    // app-layer explanation only; it does not change simulation production rules.
     deep::GameState state = deep::createHomeSystemScenario();
-    state.colonies.front().stockpile.set(deep::Mineral::Iron, 100.0);
+    state.colonies.front().processedStockpile.set(deep::ProcessedMaterial::StructuralAlloys, 100.0);
 
     deep::SimulationService service{std::move(state)};
     const deep::ColonyId colonyId = service.state().colonies.front().id;
@@ -264,13 +298,14 @@ void test_production_backlog_reports_blocking_mineral() {
     const auto backlog = forecasts.productionBacklog();
 
     require(backlog.size() == 1, "one blocked backlog row is returned");
-    require(backlog.front().blockedByMineral, "backlog row marks mineral blocker");
-    require(backlog.front().blockingMineral.has_value(), "blocking mineral enum is set");
-    require(*backlog.front().blockingMineral == deep::Mineral::Iron, "iron is the blocking mineral");
-    require(backlog.front().blockingMineralName == "Iron", "blocking mineral name is display-ready");
-    requireNear(backlog.front().requiredMineralsRemaining.get(deep::Mineral::Iron), 500.0,
-                "required remaining minerals include one Survey Cutter iron cost");
-    require(backlog.front().statusName == "Blocked: Iron", "status names the blocking mineral");
+    require(backlog.front().blockedByMaterial, "backlog row marks processed-material blocker");
+    require(backlog.front().blockingMaterial.has_value(), "blocking material enum is set");
+    require(*backlog.front().blockingMaterial == deep::ProcessedMaterial::StructuralAlloys,
+            "structural alloys are the blocking material");
+    require(backlog.front().blockingMaterialName == "Structural Alloys", "blocking material name is display-ready");
+    requireNear(backlog.front().requiredMaterialsRemaining.get(deep::ProcessedMaterial::StructuralAlloys), 250.0,
+                "required remaining materials include one Survey Cutter structural alloy cost");
+    require(backlog.front().statusName == "Blocked: Structural Alloys", "status names the blocking material");
 }
 
 void test_fleet_arrival_eta_reports_active_move_order() {
@@ -314,12 +349,13 @@ int main() {
     try {
         test_mineral_income_per_day_uses_current_mining_formula();
         test_mineral_income_per_day_shares_deposits_between_colonies();
-        test_mineral_forecast_cause_chains_report_shipyard_demand();
-        test_mineral_forecast_cause_chains_omit_runout_for_surplus();
+        test_mineral_forecast_cause_chains_report_processing_demand();
+        test_processed_material_forecast_cause_chains_report_shipyard_demand();
+        test_mineral_forecast_cause_chains_include_processing_demand();
         test_deposit_exhaustion_estimate_uses_current_income_rate();
         test_shipyard_order_eta_uses_capacity_and_accumulated_progress();
         test_production_backlog_uses_fifo_colony_capacity();
-        test_production_backlog_reports_blocking_mineral();
+        test_production_backlog_reports_blocking_material();
         test_fleet_arrival_eta_reports_active_move_order();
     } catch (const std::exception& ex) {
         std::cerr << "Test failure: " << ex.what() << '\n';

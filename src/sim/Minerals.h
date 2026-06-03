@@ -13,7 +13,7 @@ namespace deep {
 
 // Raw extractable resources used by the v1 economy foundation. Processing chains
 // will later convert these into industrial intermediates, but mining, stockpiles,
-// and schema-v1 saves currently use these stable ordinals directly.
+// and schema-v2 saves persist these stable ordinals directly.
 enum class Mineral : std::size_t {
     Iron = 0,
     Nickel = 1,
@@ -134,6 +134,102 @@ struct MineralSet {
 
     // Adds another set slot-by-slot. Used for future bulk economy operations.
     void addSet(const MineralSet& other) noexcept {
+        for (std::size_t i = 0; i < amount.size(); ++i) {
+            amount[i] += other.amount[i];
+        }
+    }
+};
+
+
+// Processed industrial materials produced from raw minerals by colony processors.
+// These are the first shipyard-facing resources; save files persist their stable
+// ordinals separately from raw Mineral ordinals.
+enum class ProcessedMaterial : std::size_t {
+    StructuralAlloys = 0,
+    Electronics = 1,
+    Propellant = 2,
+    ReactorFuel = 3,
+    IndustrialComposites = 4,
+    OrdnanceMaterials = 5,
+    Count = 6
+};
+
+[[nodiscard]] inline constexpr std::size_t processedMaterialCount() noexcept {
+    return static_cast<std::size_t>(ProcessedMaterial::Count);
+}
+
+inline constexpr double kProcessedMaterialComparisonEpsilon = 1.0e-9;
+
+inline constexpr std::array<std::string_view, processedMaterialCount()> processedMaterialNames{
+    "Structural Alloys",
+    "Electronics",
+    "Propellant",
+    "Reactor Fuel",
+    "Industrial Composites",
+    "Ordnance Materials"
+};
+
+[[nodiscard]] inline constexpr std::size_t processedMaterialIndex(const ProcessedMaterial material) noexcept {
+    return static_cast<std::size_t>(material);
+}
+
+[[nodiscard]] inline constexpr std::string_view toString(const ProcessedMaterial material) noexcept {
+    const std::size_t index = processedMaterialIndex(material);
+    return index < processedMaterialNames.size() ? processedMaterialNames[index] : std::string_view{"Unknown"};
+}
+
+// Holds one amount for every processed industrial material. The behavior mirrors
+// MineralSet so simulation code can pay shipyard costs without duplicating
+// floating-point safety rules at each call site.
+struct ProcessedMaterialSet {
+    std::array<double, processedMaterialCount()> amount{};
+
+    [[nodiscard]] double get(ProcessedMaterial material) const {
+        return amount.at(processedMaterialIndex(material));
+    }
+
+    void set(ProcessedMaterial material, double value) {
+        if (value < 0.0) {
+            throw std::invalid_argument{"Processed material values cannot be negative"};
+        }
+        amount.at(processedMaterialIndex(material)) = value;
+    }
+
+    void add(ProcessedMaterial material, double value) {
+        if (value < 0.0) {
+            throw std::invalid_argument{"Processed material addition cannot be negative"};
+        }
+        amount.at(processedMaterialIndex(material)) += value;
+    }
+
+    [[nodiscard]] bool canPay(const ProcessedMaterialSet& cost) const noexcept {
+        for (std::size_t i = 0; i < amount.size(); ++i) {
+            if (amount[i] + kProcessedMaterialComparisonEpsilon < cost.amount[i]) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    void subtract(const ProcessedMaterialSet& cost) {
+        if (!canPay(cost)) {
+            throw std::runtime_error{"Insufficient processed materials"};
+        }
+
+        for (std::size_t i = 0; i < amount.size(); ++i) {
+            amount[i] -= cost.amount[i];
+
+            if (amount[i] < 0.0 && amount[i] > -kProcessedMaterialComparisonEpsilon) {
+                amount[i] = 0.0;
+            }
+
+            if (amount[i] < 0.0) {
+                throw std::runtime_error{"Processed material subtraction produced negative stockpile."};
+            }
+        }
+    }
+
+    void addSet(const ProcessedMaterialSet& other) noexcept {
         for (std::size_t i = 0; i < amount.size(); ++i) {
             amount[i] += other.amount[i];
         }

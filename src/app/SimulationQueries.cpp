@@ -120,6 +120,23 @@ template <typename T, typename IdT>
     return std::to_string(value);
 }
 
+
+[[nodiscard]] double totalMinerals(const MineralSet& minerals) noexcept {
+    double total = 0.0;
+    for (const double amount : minerals.amount) {
+        total += amount;
+    }
+    return total;
+}
+
+[[nodiscard]] double totalProcessedMaterials(const ProcessedMaterialSet& materials) noexcept {
+    double total = 0.0;
+    for (const double amount : materials.amount) {
+        total += amount;
+    }
+    return total;
+}
+
 [[nodiscard]] std::string eventTypeName(const SimEventPayload& payload) {
     return std::visit([](const auto& event) -> std::string {
         using Event = std::decay_t<decltype(event)>;
@@ -196,7 +213,10 @@ std::vector<ColonySummary> SimulationQueries::colonies() const {
             .name = colony.name,
             .bodyName = bodyName(state, colony.bodyId),
             .mines = colony.mines,
-            .shipyardCapacity = colony.shipyardCapacity
+            .processorCapacity = colony.processorCapacity,
+            .shipyardCapacity = colony.shipyardCapacity,
+            .totalRawStockpile = totalMinerals(colony.stockpile),
+            .totalProcessedStockpile = totalProcessedMaterials(colony.processedStockpile)
         });
     }
 
@@ -246,7 +266,7 @@ std::vector<ProductionBacklogSummary> SimulationQueries::productionBacklog() con
             .accumulatedBuildPoints = row.accumulatedBuildPoints,
             .buildPointsRemaining = row.buildPointsRemaining,
             .etaDays = row.etaDays,
-            .blockingMineralName = row.blockingMineralName,
+            .blockingMaterialName = row.blockingMaterialName,
             .statusName = row.statusName
         });
     }

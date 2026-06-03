@@ -1,6 +1,6 @@
 #pragma once
 
-// Declares the SQLite repository that maps GameState to schema v1 save files.
+// Declares the SQLite repository that maps GameState to schema v2 save files.
 // This boundary is the only layer that knows both simulation records and SQLite;
 // sim/ remains database-independent and app/ calls this repository for save/load.
 
@@ -19,7 +19,7 @@ public:
     static void save(const std::filesystem::path& path, const GameState& state);
 
     // Loads a complete GameState snapshot from path. The operation uses a read
-    // transaction so all rows are read from one consistent schema v1 snapshot.
+    // transaction so all rows are read from one consistent schema v2 snapshot.
     [[nodiscard]] static GameState load(const std::filesystem::path& path);
 };
 

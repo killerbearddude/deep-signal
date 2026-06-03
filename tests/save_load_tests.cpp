@@ -5,7 +5,7 @@
 #include "sim/Minerals.h"
 
 // Regression tests for SQLite save/load round-tripping.
-// These tests verify that schema v1 persists durable Prototype 0.1 state,
+// These tests verify that schema v2 persists durable Prototype 0.1 state,
 // including ID counters, economy rows, production, active fleet orders, and events.
 // Runtime-only economy telemetry is tested separately as intentionally transient.
 
@@ -50,6 +50,15 @@ bool sameOptionalId(const std::optional<IdT> lhs, const std::optional<IdT> rhs) 
 
 bool sameMineralSet(const deep::MineralSet& lhs, const deep::MineralSet& rhs) noexcept {
     for (std::size_t i = 0; i < deep::mineralCount(); ++i) {
+        if (!almostEqual(lhs.amount.at(i), rhs.amount.at(i))) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool sameProcessedMaterialSet(const deep::ProcessedMaterialSet& lhs, const deep::ProcessedMaterialSet& rhs) noexcept {
+    for (std::size_t i = 0; i < deep::processedMaterialCount(); ++i) {
         if (!almostEqual(lhs.amount.at(i), rhs.amount.at(i))) {
             return false;
         }
@@ -138,8 +147,11 @@ void requireSameState(const deep::GameState& expected, const deep::GameState& ac
         require(left.id == right.id, "colony ID round-trips");
         require(left.bodyId == right.bodyId, "colony body ID round-trips");
         require(left.name == right.name, "colony name round-trips");
-        require(sameMineralSet(left.stockpile, right.stockpile), "colony stockpile round-trips");
+        require(sameMineralSet(left.stockpile, right.stockpile), "colony raw stockpile round-trips");
+        require(sameProcessedMaterialSet(left.processedStockpile, right.processedStockpile),
+                "colony processed stockpile round-trips");
         require(almostEqual(left.mines, right.mines), "colony mines round-trip");
+        require(almostEqual(left.processorCapacity, right.processorCapacity), "processor capacity round-trips");
         require(almostEqual(left.shipyardCapacity, right.shipyardCapacity), "shipyard capacity round-trips");
     }
 
@@ -160,7 +172,7 @@ void requireSameState(const deep::GameState& expected, const deep::GameState& ac
         require(left.id == right.id, "ship-class ID round-trips");
         require(left.name == right.name, "ship-class name round-trips");
         require(left.role == right.role, "ship-class role round-trips");
-        require(sameMineralSet(left.buildCost, right.buildCost), "ship-class cost round-trips");
+        require(sameProcessedMaterialSet(left.buildCost, right.buildCost), "ship-class processed cost round-trips");
         require(almostEqual(left.buildPoints, right.buildPoints), "ship-class build points round-trip");
         require(almostEqual(left.speedKmPerDay, right.speedKmPerDay), "ship-class speed round-trips");
         require(almostEqual(left.fuelCapacity, right.fuelCapacity), "ship-class fuel capacity round-trips");
@@ -305,7 +317,7 @@ void expectMalformedSaveRejected(const std::string_view suffix, const std::strin
 void test_sqlite_save_load_round_trip() {
     // Saves a non-trivial mid-operation state and reloads it. This catches schema
     // omissions such as active fleet orders, ID counters, event payloads, and
-    // stockpile/cost mineral rows.
+    // raw and processed stockpile/cost rows.
     const std::filesystem::path path = testSavePath();
     std::filesystem::remove(path);
 
@@ -356,7 +368,7 @@ void test_sqlite_save_load_round_trip() {
 }
 
 void test_daily_economy_snapshots_are_runtime_only() {
-    // Confirms the schema v1 contract for high-volume economy telemetry. The
+    // Confirms the schema v2 contract for high-volume economy telemetry. The
     // stockpile/deposit state is durable, but per-day mining samples are a
     // current-session UI/forecast/debug aid and intentionally reload empty.
     const std::filesystem::path path = std::filesystem::temp_directory_path() / "deep_signal_transient_telemetry.sqlite";

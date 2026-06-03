@@ -1,6 +1,6 @@
 #include "save/Schema.h"
 
-// Implements schema v1 for Prototype 0.1 saves.
+// Implements schema v2 for Prototype 0.1 saves.
 // The schema mirrors GameState-owned records and keeps event payloads as typed
 // JSON text for inspectable, forward-migratable audit history. CHECK constraints
 // intentionally duplicate core invariants so hand-edited save files fail early.
@@ -36,7 +36,7 @@ void initializeSchema(Database& db) {
 
         CREATE TABLE IF NOT EXISTS schema_version (
             id INTEGER PRIMARY KEY CHECK(id = 1),
-            version INTEGER NOT NULL CHECK(version = 1)
+            version INTEGER NOT NULL CHECK(version = 2)
         );
 
         CREATE TABLE IF NOT EXISTS game_meta (
@@ -69,6 +69,7 @@ void initializeSchema(Database& db) {
             body_id INTEGER NOT NULL CHECK(body_id > 0),
             name TEXT NOT NULL CHECK(length(name) > 0),
             mines REAL NOT NULL CHECK(mines >= 0.0),
+            processor_capacity REAL NOT NULL CHECK(processor_capacity >= 0.0),
             shipyard_capacity REAL NOT NULL CHECK(shipyard_capacity >= 0.0),
             FOREIGN KEY(body_id) REFERENCES bodies(id)
         );
@@ -78,6 +79,14 @@ void initializeSchema(Database& db) {
             mineral INTEGER NOT NULL CHECK(mineral BETWEEN 0 AND 13),
             amount REAL NOT NULL CHECK(amount >= 0.0),
             PRIMARY KEY(colony_id, mineral),
+            FOREIGN KEY(colony_id) REFERENCES colonies(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS colony_materials (
+            colony_id INTEGER NOT NULL CHECK(colony_id > 0),
+            material INTEGER NOT NULL CHECK(material BETWEEN 0 AND 5),
+            amount REAL NOT NULL CHECK(amount >= 0.0),
+            PRIMARY KEY(colony_id, material),
             FOREIGN KEY(colony_id) REFERENCES colonies(id)
         );
 
@@ -99,11 +108,11 @@ void initializeSchema(Database& db) {
             fuel_capacity REAL NOT NULL CHECK(fuel_capacity >= 0.0)
         );
 
-        CREATE TABLE IF NOT EXISTS ship_class_costs (
+        CREATE TABLE IF NOT EXISTS ship_class_material_costs (
             ship_class_id INTEGER NOT NULL CHECK(ship_class_id > 0),
-            mineral INTEGER NOT NULL CHECK(mineral BETWEEN 0 AND 13),
+            material INTEGER NOT NULL CHECK(material BETWEEN 0 AND 5),
             amount REAL NOT NULL CHECK(amount >= 0.0),
-            PRIMARY KEY(ship_class_id, mineral),
+            PRIMARY KEY(ship_class_id, material),
             FOREIGN KEY(ship_class_id) REFERENCES ship_classes(id)
         );
 

@@ -66,7 +66,7 @@ void ShipyardPanel::render(const SimulationQueries& queries, SimulationService& 
         ImGui::TableSetupColumn("Done");
         ImGui::TableSetupColumn("BP Remaining");
         ImGui::TableSetupColumn("ETA");
-        ImGui::TableSetupColumn("Blocking Mineral");
+        ImGui::TableSetupColumn("Blocking Material");
         ImGui::TableSetupColumn("Status");
         ImGui::TableHeadersRow();
 
@@ -97,7 +97,7 @@ void ShipyardPanel::render(const SimulationQueries& queries, SimulationService& 
                 ImGui::TextUnformatted("--");
             }
             ImGui::TableSetColumnIndex(7);
-            ImGui::TextUnformatted(order.blockingMineralName.empty() ? "--" : order.blockingMineralName.c_str());
+            ImGui::TextUnformatted(order.blockingMaterialName.empty() ? "--" : order.blockingMaterialName.c_str());
             ImGui::TableSetColumnIndex(8);
             ImGui::TextUnformatted(order.statusName.c_str());
         }

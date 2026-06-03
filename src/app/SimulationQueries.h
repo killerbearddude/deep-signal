@@ -25,7 +25,10 @@ struct ColonySummary {
     std::string name;
     std::string bodyName;
     double mines = 0.0;
+    double processorCapacity = 0.0;
     double shipyardCapacity = 0.0;
+    double totalRawStockpile = 0.0;
+    double totalProcessedStockpile = 0.0;
 };
 
 // Display-ready shipyard order row with resolved names for common UI tables.
@@ -58,7 +61,7 @@ struct ProductionBacklogSummary {
     double accumulatedBuildPoints = 0.0;
     double buildPointsRemaining = 0.0;
     std::optional<int> etaDays;
-    std::string blockingMineralName;
+    std::string blockingMaterialName;
     std::string statusName;
 };
 

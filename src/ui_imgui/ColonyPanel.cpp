@@ -31,14 +31,17 @@ void ColonyPanel::render(const SimulationQueries& queries, SelectionState& selec
     const std::vector<ColonySummary> colonies = queries.colonies();
     ImGui::Text("Colonies: %zu", colonies.size());
 
-    if (ImGui::BeginTable("ColonySummaryTable", 5, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable |
+    if (ImGui::BeginTable("ColonySummaryTable", 8, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable |
                            ImGuiTableFlags_Reorderable | ImGuiTableFlags_Hideable |
                            ImGuiTableFlags_SizingStretchProp)) {
         ImGui::TableSetupColumn("ID");
         ImGui::TableSetupColumn("Name");
         ImGui::TableSetupColumn("Body");
         ImGui::TableSetupColumn("Mines");
+        ImGui::TableSetupColumn("Processors/day");
         ImGui::TableSetupColumn("Shipyard BP/day");
+        ImGui::TableSetupColumn("Raw Stockpile");
+        ImGui::TableSetupColumn("Processed Stockpile");
         ImGui::TableHeadersRow();
 
         for (const ColonySummary& colony : colonies) {
@@ -61,7 +64,13 @@ void ColonyPanel::render(const SimulationQueries& queries, SelectionState& selec
             ImGui::TableSetColumnIndex(3);
             ImGui::Text("%.2f", colony.mines);
             ImGui::TableSetColumnIndex(4);
+            ImGui::Text("%.2f", colony.processorCapacity);
+            ImGui::TableSetColumnIndex(5);
             ImGui::Text("%.2f", colony.shipyardCapacity);
+            ImGui::TableSetColumnIndex(6);
+            ImGui::Text("%.1f", colony.totalRawStockpile);
+            ImGui::TableSetColumnIndex(7);
+            ImGui::Text("%.1f", colony.totalProcessedStockpile);
         }
 
         ImGui::EndTable();

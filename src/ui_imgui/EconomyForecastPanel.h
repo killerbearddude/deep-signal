@@ -11,15 +11,17 @@
 
 namespace deep::ui_imgui {
 
-// Shows empire-level mineral forecasts and the cause rows for the selected
-// mineral. This is read-only; gameplay actions remain in service command panels.
+// Shows empire-level raw-resource and processed-material forecasts plus cause
+// rows for the selected entry. This is read-only; gameplay actions remain in
+// service command panels.
 class EconomyForecastPanel {
 public:
-    // Draws forecast summary rows and cause drivers for the selected mineral.
+    // Draws forecast summary rows and cause drivers for selected resources.
     void render(const ForecastService& forecasts, bool& visible);
 
 private:
     std::optional<Mineral> selectedMineral_;
+    std::optional<ProcessedMaterial> selectedMaterial_;
 };
 
 } // namespace deep::ui_imgui

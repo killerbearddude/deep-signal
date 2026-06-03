@@ -6,6 +6,9 @@
 // include UI, database, threading, or platform-specific headers.
 
 #include <algorithm>
+#include <cmath>
+#include <initializer_list>
+#include <limits>
 #include <sstream>
 #include <string_view>
 #include <type_traits>
@@ -40,6 +43,64 @@ template <typename T, typename IdT>
     std::ostringstream out;
     out << prefix << ' ' << value;
     return out.str();
+}
+
+
+struct ProcessingRecipe {
+    ProcessedMaterial output;
+    MineralSet rawCostPerUnit;
+};
+
+[[nodiscard]] MineralSet makeRawCost(const std::initializer_list<std::pair<Mineral, double>> inputs) {
+    MineralSet cost;
+    for (const auto& [mineral, amount] : inputs) {
+        cost.set(mineral, amount);
+    }
+    return cost;
+}
+
+[[nodiscard]] std::vector<ProcessingRecipe> processingRecipes() {
+    // Fixed v1 processing chains. Each recipe produces one processed-material
+    // unit per processor-capacity point and consumes the listed raw resources.
+    // The order is deterministic and intentionally mirrors ProcessedMaterial
+    // order so forecasts and simulation agree without a separate queue type.
+    return {
+        ProcessingRecipe{ProcessedMaterial::StructuralAlloys,
+                         makeRawCost({{Mineral::Iron, 1.0}, {Mineral::Nickel, 0.5}, {Mineral::Titanium, 0.25}})},
+        ProcessingRecipe{ProcessedMaterial::Electronics,
+                         makeRawCost({{Mineral::Copper, 0.5}, {Mineral::Silicon, 0.5}, {Mineral::RareEarthElements, 0.1}})},
+        ProcessingRecipe{ProcessedMaterial::Propellant,
+                         makeRawCost({{Mineral::WaterIce, 1.0}, {Mineral::Volatiles, 0.5}})},
+        ProcessingRecipe{ProcessedMaterial::ReactorFuel,
+                         makeRawCost({{Mineral::Uranium, 0.2}})},
+        ProcessingRecipe{ProcessedMaterial::IndustrialComposites,
+                         makeRawCost({{Mineral::CarbonCompounds, 0.5}, {Mineral::Aluminum, 0.5}})},
+        ProcessingRecipe{ProcessedMaterial::OrdnanceMaterials,
+                         makeRawCost({{Mineral::PlatinumGroupMetals, 0.1}, {Mineral::CarbonCompounds, 0.5}})}
+    };
+}
+
+[[nodiscard]] double maxRecipeOutput(const MineralSet& stockpile, const MineralSet& rawCostPerUnit) noexcept {
+    double maxOutput = std::numeric_limits<double>::infinity();
+    for (std::size_t i = 0; i < rawCostPerUnit.amount.size(); ++i) {
+        const double cost = rawCostPerUnit.amount[i];
+        if (cost <= 0.0) {
+            continue;
+        }
+        maxOutput = std::min(maxOutput, stockpile.amount[i] / cost);
+    }
+    return std::isinf(maxOutput) ? 0.0 : std::max(0.0, maxOutput);
+}
+
+[[nodiscard]] MineralSet scaledMineralCost(const MineralSet& cost, const double scale) noexcept {
+    MineralSet result;
+    if (scale <= 0.0) {
+        return result;
+    }
+    for (std::size_t i = 0; i < result.amount.size(); ++i) {
+        result.amount[i] = cost.amount[i] * scale;
+    }
+    return result;
 }
 
 } // namespace
@@ -208,6 +269,7 @@ void Simulation::simulateOneDay(std::vector<SimEvent>& emitted) {
     // shipyard completion, and completed fleets can begin moving only on a later
     // command. This keeps tests and future save replays deterministic.
     simulateMining(emitted);
+    simulateProcessing();
     simulateShipyards(emitted);
     simulateFleetMovement(emitted);
 }
@@ -241,6 +303,36 @@ void Simulation::simulateMining(std::vector<SimEvent>&) {
                 .amount = extracted,
                 .remainingDeposit = deposit.remaining
             });
+        }
+    }
+}
+
+void Simulation::simulateProcessing() {
+    const std::vector<ProcessingRecipe> recipes = processingRecipes();
+
+    for (Colony& colony : state_.colonies) {
+        double remainingCapacity = std::max(0.0, colony.processorCapacity);
+        if (remainingCapacity <= 0.0) {
+            continue;
+        }
+
+        for (const ProcessingRecipe& recipe : recipes) {
+            if (remainingCapacity <= kMineralComparisonEpsilon) {
+                break;
+            }
+
+            // Processors are a simple daily capacity pool in v1. A later factory
+            // model can split this into per-recipe buildings, efficiency, and
+            // queueing, but the first rule is that shipyards no longer consume
+            // raw mined resources directly.
+            const double producible = std::min(remainingCapacity, maxRecipeOutput(colony.stockpile, recipe.rawCostPerUnit));
+            if (producible <= kMineralComparisonEpsilon) {
+                continue;
+            }
+
+            colony.stockpile.subtract(scaledMineralCost(recipe.rawCostPerUnit, producible));
+            colony.processedStockpile.add(recipe.output, producible);
+            remainingCapacity -= producible;
         }
     }
 }
@@ -308,21 +400,18 @@ void Simulation::simulateShipyards(std::vector<SimEvent>& emitted) {
                 }
             }
 
-            if (!colony->stockpile.canPay(shipClass->buildCost)) {
+            if (!colony->processedStockpile.canPay(shipClass->buildCost)) {
                 // Mineral shortages are temporary production pauses, not a
                 // terminal order state. Keep the order Active so future mining
                 // can satisfy the cost and complete the ship automatically. The
                 // blocked FIFO order also holds the queue for this colony today;
                 // later orders should not leapfrog a material-starved order.
                 poolIt->remainingBuildPoints = 0.0;
-                emitEvent(emitted, EventSeverity::Warning, CommandRejectedEvent{"Shipyard order waiting for sufficient minerals"});
+                emitEvent(emitted, EventSeverity::Warning, CommandRejectedEvent{"Shipyard order waiting for sufficient processed materials"});
                 break;
             }
 
-            // TEMP: Ship construction consumes raw minerals directly in the
-            // prototype economy. A later processing-chain patch should charge
-            // intermediate industrial materials instead.
-            colony->stockpile.subtract(shipClass->buildCost);
+            colony->processedStockpile.subtract(shipClass->buildCost);
             order.accumulatedBuildPoints -= shipClass->buildPoints;
             ++order.quantityCompleted;
 
