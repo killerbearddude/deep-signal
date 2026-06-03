@@ -95,7 +95,7 @@ void ImGuiApp::renderPanels() {
     shipyardPanel_.render(queries, service_, visibility_.shipyard);
     strategicMapPanel_.render(queries, selection_, visibility_.strategicMap);
     bodiesPanel_.render(queries, selection_, visibility_.bodies);
-    colonyPanel_.render(queries, selection_, visibility_.colonies);
+    colonyPanel_.render(queries, service_, selection_, visibility_.colonies);
     fleetPanel_.render(queries, selection_, visibility_.fleets);
     economyForecastPanel_.render(forecasts, visibility_.economyForecast);
     eventLogPanel_.render(queries, visibility_.eventLog);

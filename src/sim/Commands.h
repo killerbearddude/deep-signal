@@ -4,9 +4,11 @@
 // UI, CLI, tests, and future automation must use commands rather than editing
 // GameState records directly.
 
+#include "sim/Domain.h"
 #include "sim/IdTypes.h"
 
 #include <variant>
+#include <vector>
 
 namespace deep {
 
@@ -36,13 +38,23 @@ struct CancelFleetOrderCommand {
     FleetId fleetId;
 };
 
+// Requests a processing policy change for one colony. Manual allocations are
+// relative weights; the simulation normalizes them during the daily processing
+// pass rather than storing percentages that can drift due to rounding.
+struct SetColonyProcessingPolicyCommand {
+    ColonyId colonyId;
+    ProcessingPolicy policy = ProcessingPolicy::Balanced;
+    std::vector<ProcessingAllocation> manualAllocations;
+};
+
 // Command envelope used by Simulation::execute. Each variant alternative must
 // have a validation branch in Simulation.cpp.
 using SimCommand = std::variant<
     AdvanceDaysCommand,
     AssignShipyardBuildCommand,
     MoveFleetCommand,
-    CancelFleetOrderCommand
+    CancelFleetOrderCommand,
+    SetColonyProcessingPolicyCommand
 >;
 
 } // namespace deep

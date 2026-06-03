@@ -103,6 +103,44 @@ template <typename T, typename IdT>
     return "Unknown";
 }
 
+[[nodiscard]] std::string processingPolicyName(const ProcessingPolicy policy) {
+    switch (policy) {
+    case ProcessingPolicy::Balanced:
+        return "Balanced";
+    case ProcessingPolicy::ShipbuildingFocus:
+        return "Shipbuilding Focus";
+    case ProcessingPolicy::FuelFocus:
+        return "Fuel Focus";
+    case ProcessingPolicy::ElectronicsFocus:
+        return "Electronics Focus";
+    case ProcessingPolicy::StockpileRecovery:
+        return "Stockpile Recovery";
+    case ProcessingPolicy::Manual:
+        return "Manual";
+    }
+
+    return "Unknown";
+}
+
+[[nodiscard]] std::string processedMaterialName(const ProcessedMaterial material) {
+    return std::string{toString(material)};
+}
+
+[[nodiscard]] std::vector<ProcessingAllocationSummary> summarizeProcessingAllocations(const Colony& colony) {
+    std::vector<ProcessingAllocationSummary> summaries;
+    summaries.reserve(colony.manualProcessingAllocations.size());
+
+    for (const ProcessingAllocation& allocation : colony.manualProcessingAllocations) {
+        summaries.push_back(ProcessingAllocationSummary{
+            .material = allocation.material,
+            .materialName = processedMaterialName(allocation.material),
+            .weight = allocation.weight
+        });
+    }
+
+    return summaries;
+}
+
 [[nodiscard]] std::string severityName(const EventSeverity severity) {
     switch (severity) {
     case EventSeverity::Info:
@@ -214,6 +252,9 @@ std::vector<ColonySummary> SimulationQueries::colonies() const {
             .bodyName = bodyName(state, colony.bodyId),
             .mines = colony.mines,
             .processorCapacity = colony.processorCapacity,
+            .processingPolicy = colony.processingPolicy,
+            .processingPolicyName = processingPolicyName(colony.processingPolicy),
+            .manualProcessingAllocations = summarizeProcessingAllocations(colony),
             .shipyardCapacity = colony.shipyardCapacity,
             .totalRawStockpile = totalMinerals(colony.stockpile),
             .totalProcessedStockpile = totalProcessedMaterials(colony.processedStockpile)

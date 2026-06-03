@@ -51,8 +51,9 @@ struct MineralForecastCauseChain {
     std::vector<MineralForecastCauseRow> causes;
 };
 
-// Empire-level processed-material forecast. Processing income comes from fixed
-// recipe capacity, while demand is active shipyard commitments amortized over ETA.
+// Empire-level processed-material forecast. Processing income comes from current
+// colony processing policies and raw-resource availability, while demand is
+// active shipyard commitments amortized over ETA.
 struct ProcessedMaterialForecastCauseChain {
     ProcessedMaterial material = ProcessedMaterial::StructuralAlloys;
     std::string materialName;

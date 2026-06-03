@@ -454,7 +454,9 @@ void loadColonies(Database& db, GameState& state) {
             .processedStockpile = ProcessedMaterialSet{},
             .mines = colonies.columnDouble(3),
             .processorCapacity = colonies.columnDouble(4),
-            .shipyardCapacity = colonies.columnDouble(5)
+            .shipyardCapacity = colonies.columnDouble(5),
+            .processingPolicy = ProcessingPolicy::Balanced,
+            .manualProcessingAllocations = {}
         });
     }
 

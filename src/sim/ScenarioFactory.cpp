@@ -73,7 +73,9 @@ GameState createHomeSystemScenario() {
         .processedStockpile = startingProcessedStockpile,
         .mines = 10.0,
         .processorCapacity = 50.0,
-        .shipyardCapacity = 100.0
+        .shipyardCapacity = 100.0,
+        .processingPolicy = ProcessingPolicy::Balanced,
+        .manualProcessingAllocations = {}
     });
 
     // Starter deposits are raw resources only. Colony processors convert them

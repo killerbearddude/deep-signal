@@ -48,6 +48,27 @@ struct MineralDeposit {
     double accessibility = 1.0;
 };
 
+
+// High-level policy used to distribute one colony's daily processing capacity
+// across processed materials. Manual uses explicit user-provided weights, while
+// the other policies are deterministic presets for early gameplay control.
+enum class ProcessingPolicy {
+    Balanced,
+    ShipbuildingFocus,
+    FuelFocus,
+    ElectronicsFocus,
+    StockpileRecovery,
+    Manual
+};
+
+// Weight assigned to one processed material when a colony uses Manual policy.
+// Weights are relative, not percentages; simulation normalizes positive weights
+// against the colony's current processor capacity each day.
+struct ProcessingAllocation {
+    ProcessedMaterial material = ProcessedMaterial::StructuralAlloys;
+    double weight = 0.0;
+};
+
 // A settled body with raw and processed stockpiles plus industrial capacity.
 // mines controls extraction, processorCapacity converts raw resources into
 // processed materials, and shipyardCapacity applies build points per day.
@@ -60,6 +81,8 @@ struct Colony {
     double mines = 0.0;
     double processorCapacity = 0.0;
     double shipyardCapacity = 0.0;
+    ProcessingPolicy processingPolicy = ProcessingPolicy::Balanced;
+    std::vector<ProcessingAllocation> manualProcessingAllocations;
 };
 
 // Prototype ship roles used for filtering and future UI grouping.

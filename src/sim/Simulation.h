@@ -48,6 +48,7 @@ private:
     CommandResult assignShipyardBuild(const AssignShipyardBuildCommand& command);
     CommandResult moveFleet(const MoveFleetCommand& command);
     CommandResult cancelFleetOrder(const CancelFleetOrderCommand& command);
+    CommandResult setColonyProcessingPolicy(const SetColonyProcessingPolicyCommand& command);
 
     void simulateOneDay(std::vector<SimEvent>& emitted);
     void simulateMining(std::vector<SimEvent>& emitted);

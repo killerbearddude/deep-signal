@@ -102,7 +102,9 @@ void test_mineral_income_per_day_shares_deposits_between_colonies() {
         .processedStockpile = deep::ProcessedMaterialSet{},
         .mines = 10.0,
         .processorCapacity = 0.0,
-        .shipyardCapacity = 0.0
+        .shipyardCapacity = 0.0,
+        .processingPolicy = deep::ProcessingPolicy::Balanced,
+        .manualProcessingAllocations = {}
     });
 
     const deep::SimulationService service{std::move(state)};
@@ -144,14 +146,14 @@ void test_mineral_forecast_cause_chains_report_processing_demand() {
     require(iron.mineralName == "Iron", "cause chain exposes mineral name");
     requireNear(iron.stockpile, 10000.0, "cause chain sums colony raw stockpiles");
     requireNear(iron.miningIncomePerDay, 10.0, "cause chain includes mining income per day");
-    requireNear(iron.committedDemandPerDay, 50.0, "cause chain includes processing raw demand");
-    requireNear(iron.netPerDay, -40.0, "cause chain computes net raw mineral flow");
-    require(iron.stockpileRunoutDays.has_value(), "negative net flow yields stockpile runout");
-    require(*iron.stockpileRunoutDays == 250, "runout rounds stockpile divided by deficit up to days");
+    const double balancedAlloyOutput = 50.0 / static_cast<double>(deep::processedMaterialCount());
+    requireNear(iron.committedDemandPerDay, balancedAlloyOutput, "cause chain includes policy-weighted processing raw demand");
+    requireNear(iron.netPerDay, 10.0 - balancedAlloyOutput, "cause chain computes net raw mineral flow");
+    require(!iron.stockpileRunoutDays.has_value(), "positive net flow has no stockpile runout");
     require(iron.causes.size() == 2, "cause chain contains the v1 explanation rows");
     require(iron.causes.front().label == "Mining", "first cause row explains mining");
     require(iron.causes.at(1).label == "Processing recipes", "second cause row explains processing demand");
-    requireNear(iron.causes.at(1).amountPerDay, -50.0, "processing cause row reports demand as a negative contribution");
+    requireNear(iron.causes.at(1).amountPerDay, -balancedAlloyOutput, "processing cause row reports demand as a negative contribution");
 }
 
 void test_processed_material_forecast_cause_chains_report_shipyard_demand() {
@@ -175,12 +177,38 @@ void test_processed_material_forecast_cause_chains_report_shipyard_demand() {
     require(chains.size() == deep::processedMaterialCount(), "one cause chain is returned for every processed material");
     require(electronics.materialName == "Electronics", "processed cause chain exposes material name");
     requireNear(electronics.stockpile, 500.0, "cause chain sums colony processed stockpiles");
-    requireNear(electronics.processingIncomePerDay, 0.0, "starter capacity is consumed by structural alloys first");
+    const double balancedElectronicsOutput = 50.0 / static_cast<double>(deep::processedMaterialCount());
+    requireNear(electronics.processingIncomePerDay, balancedElectronicsOutput, "balanced policy assigns capacity to electronics");
     requireNear(electronics.committedDemandPerDay, 16.0, "shipyard demand is amortized over ETA");
-    requireNear(electronics.netPerDay, -16.0, "processed material net flow includes shipyard demand");
+    requireNear(electronics.netPerDay, balancedElectronicsOutput - 16.0, "processed material net flow includes shipyard demand");
     require(electronics.stockpileRunoutDays.has_value(), "negative material net flow yields runout");
-    require(*electronics.stockpileRunoutDays == 32, "processed material runout rounds up by days");
+    require(*electronics.stockpileRunoutDays == 66, "processed material runout rounds up by days");
     require(electronics.causes.at(1).label == "Active shipyard orders", "processed demand names shipyard orders");
+}
+
+
+void test_processed_material_forecast_respects_processing_policy() {
+    // Verifies forecasts use the same processing policy allocation as the
+    // simulation. Manual electronics focus should forecast electronics output
+    // without also assigning capacity to structural alloys.
+    deep::SimulationService service;
+    const deep::ColonyId colonyId = service.state().colonies.front().id;
+
+    require(service.execute(deep::SetColonyProcessingPolicyCommand{
+        .colonyId = colonyId,
+        .policy = deep::ProcessingPolicy::Manual,
+        .manualAllocations = {
+            deep::ProcessingAllocation{.material = deep::ProcessedMaterial::Electronics, .weight = 100.0}
+        }
+    }).ok, "manual electronics processing policy is accepted before forecast");
+
+    const deep::ForecastService forecasts{service};
+    const auto chains = forecasts.processedMaterialForecastCauseChains();
+    const auto& electronics = requireMaterialCauseChain(chains, deep::ProcessedMaterial::Electronics);
+    const auto& alloys = requireMaterialCauseChain(chains, deep::ProcessedMaterial::StructuralAlloys);
+
+    require(electronics.processingIncomePerDay > 0.0, "manual electronics policy forecasts electronics output");
+    requireNear(alloys.processingIncomePerDay, 0.0, "manual electronics policy forecasts no structural alloy output");
 }
 
 void test_mineral_forecast_cause_chains_include_processing_demand() {
@@ -191,10 +219,11 @@ void test_mineral_forecast_cause_chains_include_processing_demand() {
     const auto chains = forecasts.mineralForecastCauseChains();
     const deep::MineralForecastCauseChain& iron = requireCauseChain(chains, deep::Mineral::Iron);
 
+    const double balancedAlloyOutput = 50.0 / static_cast<double>(deep::processedMaterialCount());
     requireNear(iron.miningIncomePerDay, 10.0, "surplus forecast includes current mining income");
-    requireNear(iron.committedDemandPerDay, 50.0, "surplus forecast includes processing demand");
-    requireNear(iron.netPerDay, -40.0, "raw forecast includes processing demand");
-    require(iron.stockpileRunoutDays.has_value(), "negative raw flow has a runout day");
+    requireNear(iron.committedDemandPerDay, balancedAlloyOutput, "surplus forecast includes policy-weighted processing demand");
+    requireNear(iron.netPerDay, 10.0 - balancedAlloyOutput, "raw forecast includes processing demand");
+    require(!iron.stockpileRunoutDays.has_value(), "positive raw flow has no runout day");
 }
 
 void test_deposit_exhaustion_estimate_uses_current_income_rate() {
@@ -351,6 +380,7 @@ int main() {
         test_mineral_income_per_day_shares_deposits_between_colonies();
         test_mineral_forecast_cause_chains_report_processing_demand();
         test_processed_material_forecast_cause_chains_report_shipyard_demand();
+        test_processed_material_forecast_respects_processing_policy();
         test_mineral_forecast_cause_chains_include_processing_demand();
         test_deposit_exhaustion_estimate_uses_current_income_rate();
         test_shipyard_order_eta_uses_capacity_and_accumulated_progress();

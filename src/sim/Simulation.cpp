@@ -6,6 +6,7 @@
 // include UI, database, threading, or platform-specific headers.
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <initializer_list>
 #include <limits>
@@ -103,6 +104,93 @@ struct ProcessingRecipe {
     return result;
 }
 
+using ProcessingShares = std::array<double, processedMaterialCount()>;
+
+[[nodiscard]] bool isValidProcessedMaterial(const ProcessedMaterial material) noexcept {
+    return processedMaterialIndex(material) < processedMaterialCount();
+}
+
+void addProcessingWeight(ProcessingShares& weights, const ProcessedMaterial material, const double weight) noexcept {
+    if (weight <= 0.0 || !isValidProcessedMaterial(material)) {
+        return;
+    }
+
+    weights[processedMaterialIndex(material)] += weight;
+}
+
+[[nodiscard]] ProcessingShares balancedProcessingWeights() noexcept {
+    ProcessingShares weights{};
+    for (std::size_t i = 0; i < weights.size(); ++i) {
+        weights[i] = 1.0;
+    }
+    return weights;
+}
+
+[[nodiscard]] ProcessingShares policyProcessingWeights(const Colony& colony) noexcept {
+    ProcessingShares weights{};
+
+    switch (colony.processingPolicy) {
+    case ProcessingPolicy::Balanced:
+        return balancedProcessingWeights();
+
+    case ProcessingPolicy::ShipbuildingFocus:
+        addProcessingWeight(weights, ProcessedMaterial::StructuralAlloys, 4.0);
+        addProcessingWeight(weights, ProcessedMaterial::Electronics, 2.0);
+        addProcessingWeight(weights, ProcessedMaterial::IndustrialComposites, 2.0);
+        addProcessingWeight(weights, ProcessedMaterial::Propellant, 1.0);
+        addProcessingWeight(weights, ProcessedMaterial::ReactorFuel, 1.0);
+        addProcessingWeight(weights, ProcessedMaterial::OrdnanceMaterials, 0.5);
+        break;
+
+    case ProcessingPolicy::FuelFocus:
+        addProcessingWeight(weights, ProcessedMaterial::Propellant, 5.0);
+        addProcessingWeight(weights, ProcessedMaterial::ReactorFuel, 2.0);
+        addProcessingWeight(weights, ProcessedMaterial::StructuralAlloys, 0.5);
+        addProcessingWeight(weights, ProcessedMaterial::Electronics, 0.5);
+        break;
+
+    case ProcessingPolicy::ElectronicsFocus:
+        addProcessingWeight(weights, ProcessedMaterial::Electronics, 5.0);
+        addProcessingWeight(weights, ProcessedMaterial::StructuralAlloys, 1.0);
+        addProcessingWeight(weights, ProcessedMaterial::IndustrialComposites, 1.0);
+        break;
+
+    case ProcessingPolicy::StockpileRecovery:
+        for (std::size_t i = 0; i < weights.size(); ++i) {
+            // Lower stockpiles receive more capacity while every material keeps a
+            // non-zero share. This is intentionally simple until automation has
+            // explicit shortage targets and logistics context.
+            weights[i] = 1.0 / (1.0 + std::max(0.0, colony.processedStockpile.amount[i]));
+        }
+        break;
+
+    case ProcessingPolicy::Manual:
+        for (const ProcessingAllocation& allocation : colony.manualProcessingAllocations) {
+            addProcessingWeight(weights, allocation.material, allocation.weight);
+        }
+        break;
+    }
+
+    return weights;
+}
+
+[[nodiscard]] ProcessingShares normalizedProcessingShares(const Colony& colony) noexcept {
+    ProcessingShares weights = policyProcessingWeights(colony);
+    double totalWeight = 0.0;
+    for (const double weight : weights) {
+        totalWeight += weight;
+    }
+
+    if (totalWeight <= kProcessedMaterialComparisonEpsilon) {
+        return {};
+    }
+
+    for (double& weight : weights) {
+        weight /= totalWeight;
+    }
+    return weights;
+}
+
 } // namespace
 
 Simulation::Simulation(GameState initialState)
@@ -135,6 +223,8 @@ CommandResult Simulation::execute(const SimCommand& command) {
             return moveFleet(concreteCommand);
         } else if constexpr (std::is_same_v<Command, CancelFleetOrderCommand>) {
             return cancelFleetOrder(concreteCommand);
+        } else if constexpr (std::is_same_v<Command, SetColonyProcessingPolicyCommand>) {
+            return setColonyProcessingPolicy(concreteCommand);
         }
     }, command);
 }
@@ -262,6 +352,39 @@ CommandResult Simulation::cancelFleetOrder(const CancelFleetOrderCommand& comman
     return CommandResult::success("Fleet order cancelled");
 }
 
+CommandResult Simulation::setColonyProcessingPolicy(const SetColonyProcessingPolicyCommand& command) {
+    Colony* colony = findColony(command.colonyId);
+    if (colony == nullptr) {
+        appendEvent(EventSeverity::Warning, CommandRejectedEvent{"Colony does not exist"});
+        return CommandResult::failure("Colony does not exist");
+    }
+
+    double manualWeightTotal = 0.0;
+    for (const ProcessingAllocation& allocation : command.manualAllocations) {
+        if (!isValidProcessedMaterial(allocation.material)) {
+            appendEvent(EventSeverity::Warning, CommandRejectedEvent{"Manual processing allocation has invalid material"});
+            return CommandResult::failure("Manual processing allocation has invalid material");
+        }
+
+        if (allocation.weight < 0.0) {
+            appendEvent(EventSeverity::Warning, CommandRejectedEvent{"Manual processing allocation weight cannot be negative"});
+            return CommandResult::failure("Manual processing allocation weight cannot be negative");
+        }
+
+        manualWeightTotal += allocation.weight;
+    }
+
+    if (command.policy == ProcessingPolicy::Manual && manualWeightTotal <= kProcessedMaterialComparisonEpsilon) {
+        appendEvent(EventSeverity::Warning, CommandRejectedEvent{"Manual processing policy requires positive allocation weight"});
+        return CommandResult::failure("Manual processing policy requires positive allocation weight");
+    }
+
+    colony->processingPolicy = command.policy;
+    colony->manualProcessingAllocations = command.manualAllocations;
+
+    return CommandResult::success("Colony processing policy updated");
+}
+
 void Simulation::simulateOneDay(std::vector<SimEvent>& emitted) {
     ++state_.date.day;
 
@@ -311,28 +434,30 @@ void Simulation::simulateProcessing() {
     const std::vector<ProcessingRecipe> recipes = processingRecipes();
 
     for (Colony& colony : state_.colonies) {
-        double remainingCapacity = std::max(0.0, colony.processorCapacity);
-        if (remainingCapacity <= 0.0) {
+        const double dailyCapacity = std::max(0.0, colony.processorCapacity);
+        if (dailyCapacity <= 0.0) {
             continue;
         }
 
+        const ProcessingShares shares = normalizedProcessingShares(colony);
         for (const ProcessingRecipe& recipe : recipes) {
-            if (remainingCapacity <= kMineralComparisonEpsilon) {
-                break;
+            const double targetOutput = dailyCapacity * shares[processedMaterialIndex(recipe.output)];
+            if (targetOutput <= kProcessedMaterialComparisonEpsilon) {
+                continue;
             }
 
-            // Processors are a simple daily capacity pool in v1. A later factory
-            // model can split this into per-recipe buildings, efficiency, and
-            // queueing, but the first rule is that shipyards no longer consume
-            // raw mined resources directly.
-            const double producible = std::min(remainingCapacity, maxRecipeOutput(colony.stockpile, recipe.rawCostPerUnit));
+            // TODO: Research will eventually modify recipe efficiency and unlock
+            // advanced processed materials.
+            // TODO: Colony buildings will eventually increase processor capacity.
+            // TODO: Inter-body logistics will eventually determine whether remote
+            // raw resources are available to this colony's processing chain.
+            const double producible = std::min(targetOutput, maxRecipeOutput(colony.stockpile, recipe.rawCostPerUnit));
             if (producible <= kMineralComparisonEpsilon) {
                 continue;
             }
 
             colony.stockpile.subtract(scaledMineralCost(recipe.rawCostPerUnit, producible));
             colony.processedStockpile.add(recipe.output, producible);
-            remainingCapacity -= producible;
         }
     }
 }

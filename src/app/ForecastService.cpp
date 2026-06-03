@@ -142,6 +142,81 @@ struct ProcessingForecastTotals {
     return result;
 }
 
+using ProcessingShares = std::array<double, processedMaterialCount()>;
+
+void addProcessingWeight(ProcessingShares& weights, const ProcessedMaterial material, const double weight) noexcept {
+    if (weight <= 0.0 || processedMaterialIndex(material) >= processedMaterialCount()) {
+        return;
+    }
+
+    weights[processedMaterialIndex(material)] += weight;
+}
+
+[[nodiscard]] ProcessingShares balancedProcessingWeights() noexcept {
+    ProcessingShares weights{};
+    for (double& weight : weights) {
+        weight = 1.0;
+    }
+    return weights;
+}
+
+[[nodiscard]] ProcessingShares policyProcessingWeights(const Colony& colony) noexcept {
+    ProcessingShares weights{};
+
+    switch (colony.processingPolicy) {
+    case ProcessingPolicy::Balanced:
+        return balancedProcessingWeights();
+    case ProcessingPolicy::ShipbuildingFocus:
+        addProcessingWeight(weights, ProcessedMaterial::StructuralAlloys, 4.0);
+        addProcessingWeight(weights, ProcessedMaterial::Electronics, 2.0);
+        addProcessingWeight(weights, ProcessedMaterial::IndustrialComposites, 2.0);
+        addProcessingWeight(weights, ProcessedMaterial::Propellant, 1.0);
+        addProcessingWeight(weights, ProcessedMaterial::ReactorFuel, 1.0);
+        addProcessingWeight(weights, ProcessedMaterial::OrdnanceMaterials, 0.5);
+        break;
+    case ProcessingPolicy::FuelFocus:
+        addProcessingWeight(weights, ProcessedMaterial::Propellant, 5.0);
+        addProcessingWeight(weights, ProcessedMaterial::ReactorFuel, 2.0);
+        addProcessingWeight(weights, ProcessedMaterial::StructuralAlloys, 0.5);
+        addProcessingWeight(weights, ProcessedMaterial::Electronics, 0.5);
+        break;
+    case ProcessingPolicy::ElectronicsFocus:
+        addProcessingWeight(weights, ProcessedMaterial::Electronics, 5.0);
+        addProcessingWeight(weights, ProcessedMaterial::StructuralAlloys, 1.0);
+        addProcessingWeight(weights, ProcessedMaterial::IndustrialComposites, 1.0);
+        break;
+    case ProcessingPolicy::StockpileRecovery:
+        for (std::size_t i = 0; i < weights.size(); ++i) {
+            weights[i] = 1.0 / (1.0 + std::max(0.0, colony.processedStockpile.amount[i]));
+        }
+        break;
+    case ProcessingPolicy::Manual:
+        for (const ProcessingAllocation& allocation : colony.manualProcessingAllocations) {
+            addProcessingWeight(weights, allocation.material, allocation.weight);
+        }
+        break;
+    }
+
+    return weights;
+}
+
+[[nodiscard]] ProcessingShares normalizedProcessingShares(const Colony& colony) noexcept {
+    ProcessingShares weights = policyProcessingWeights(colony);
+    double totalWeight = 0.0;
+    for (const double weight : weights) {
+        totalWeight += weight;
+    }
+
+    if (totalWeight <= kProcessedMaterialComparisonEpsilon) {
+        return {};
+    }
+
+    for (double& weight : weights) {
+        weight /= totalWeight;
+    }
+    return weights;
+}
+
 void addMineralSet(MineralAmountTotals& totals, const MineralSet& minerals, const double scale = 1.0) noexcept {
     for (std::size_t i = 0; i < totals.size(); ++i) {
         totals[i] += minerals.amount[i] * scale;
@@ -229,13 +304,16 @@ void addProcessedMaterialSet(ProcessedMaterialAmountTotals& totals, const Proces
 
     for (const Colony& colony : state.colonies) {
         MineralSet availableRaw = colony.stockpile;
-        double remainingCapacity = std::max(0.0, colony.processorCapacity);
+        const double dailyCapacity = std::max(0.0, colony.processorCapacity);
+        const ProcessingShares shares = normalizedProcessingShares(colony);
+
         for (const ProcessingRecipe& recipe : recipes) {
-            if (remainingCapacity <= kMineralComparisonEpsilon) {
-                break;
+            const double targetOutput = dailyCapacity * shares[processedMaterialIndex(recipe.output)];
+            if (targetOutput <= kProcessedMaterialComparisonEpsilon) {
+                continue;
             }
 
-            const double output = std::min(remainingCapacity, maxRecipeOutput(availableRaw, recipe.rawCostPerUnit));
+            const double output = std::min(targetOutput, maxRecipeOutput(availableRaw, recipe.rawCostPerUnit));
             if (output <= kMineralComparisonEpsilon) {
                 continue;
             }
@@ -244,7 +322,6 @@ void addProcessedMaterialSet(ProcessedMaterialAmountTotals& totals, const Proces
             availableRaw.subtract(consumed);
             addMineralSet(totals.rawDemand, consumed);
             totals.materialIncome[processedMaterialIndex(recipe.output)] += output;
-            remainingCapacity -= output;
         }
     }
 

@@ -45,6 +45,35 @@ void test_colony_summaries_resolve_body_context() {
     require(colonies.front().totalProcessedStockpile > 0.0, "colony summary includes processed stockpile total");
 }
 
+
+void test_colony_summaries_include_processing_policy() {
+    // Verifies colony queries expose processing allocation state through DTOs so
+    // the Colony panel can render controls without reading raw GameState.
+    deep::SimulationService service;
+    const deep::ColonyId colonyId = service.state().colonies.front().id;
+
+    require(service.execute(deep::SetColonyProcessingPolicyCommand{
+        .colonyId = colonyId,
+        .policy = deep::ProcessingPolicy::Manual,
+        .manualAllocations = {
+            deep::ProcessingAllocation{.material = deep::ProcessedMaterial::Propellant, .weight = 75.0},
+            deep::ProcessingAllocation{.material = deep::ProcessedMaterial::ReactorFuel, .weight = 25.0}
+        }
+    }).ok, "manual processing policy is accepted before colony query");
+
+    const deep::SimulationQueries queries{service};
+    const auto colonies = queries.colonies();
+
+    require(colonies.size() == 1, "home scenario still exposes one colony summary");
+    require(colonies.front().processingPolicy == deep::ProcessingPolicy::Manual,
+            "colony summary exposes processing policy enum");
+    require(colonies.front().processingPolicyName == "Manual", "colony summary exposes processing policy display name");
+    require(colonies.front().manualProcessingAllocations.size() == 2,
+            "colony summary exposes manual processing allocation rows");
+    require(colonies.front().manualProcessingAllocations.front().materialName == "Propellant",
+            "manual allocation summary resolves processed material display name");
+}
+
 void test_shipyard_order_summaries_resolve_names() {
     // Verifies that accepted build orders can be shown without joining colony
     // and ship-class vectors in UI code.
@@ -285,6 +314,7 @@ void test_recent_events_returns_limited_chronological_tail() {
 int main() {
     try {
         test_colony_summaries_resolve_body_context();
+        test_colony_summaries_include_processing_policy();
         test_shipyard_order_summaries_resolve_names();
         test_production_backlog_summaries_expose_queue_eta();
         test_ship_class_summaries_expose_build_targets();

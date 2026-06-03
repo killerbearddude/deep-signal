@@ -159,6 +159,7 @@ void EconomyForecastPanel::render(const ForecastService& forecasts, bool& visibl
     }
 
     ImGui::TextUnformatted("Processed industrial materials");
+    ImGui::TextWrapped("Processing income reflects each colony's current processor policy and raw-resource availability.");
     if (ImGui::BeginTable("EconomyForecastProcessedMaterialTable", 7, kForecastTableFlags)) {
         ImGui::TableSetupColumn("Material");
         ImGui::TableSetupColumn("Stockpile");

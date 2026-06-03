@@ -17,6 +17,14 @@
 
 namespace deep {
 
+// Display-ready processing allocation row. Weights are relative and are
+// normalized by the simulation when daily processor capacity is spent.
+struct ProcessingAllocationSummary {
+    ProcessedMaterial material = ProcessedMaterial::StructuralAlloys;
+    std::string materialName;
+    double weight = 0.0;
+};
+
 // Display-ready colony row for overview panels. Values are copied out of the
 // simulation snapshot so UI code cannot mutate GameState accidentally.
 struct ColonySummary {
@@ -26,6 +34,9 @@ struct ColonySummary {
     std::string bodyName;
     double mines = 0.0;
     double processorCapacity = 0.0;
+    ProcessingPolicy processingPolicy = ProcessingPolicy::Balanced;
+    std::string processingPolicyName;
+    std::vector<ProcessingAllocationSummary> manualProcessingAllocations;
     double shipyardCapacity = 0.0;
     double totalRawStockpile = 0.0;
     double totalProcessedStockpile = 0.0;

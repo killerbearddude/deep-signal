@@ -123,7 +123,9 @@ void test_mining() {
 void test_processing_converts_raw_minerals_to_processed_materials() {
     // Verifies the first raw-resource to processed-material link. Shipyard costs
     // rely on these processed stockpiles rather than consuming raw minerals.
-    deep::Simulation sim{deep::createHomeSystemScenario()};
+    deep::GameState state = deep::createHomeSystemScenario();
+    state.colonies.front().mines = 0.0;
+    deep::Simulation sim{std::move(state)};
 
     const double startingIron = sim.state().colonies.front().stockpile.get(deep::Mineral::Iron);
     const double startingAlloys = sim.state().colonies.front().processedStockpile.get(deep::ProcessedMaterial::StructuralAlloys);
@@ -135,6 +137,54 @@ void test_processing_converts_raw_minerals_to_processed_materials() {
 
     require(endingAlloys > startingAlloys, "daily processors create structural alloys");
     require(endingIron < startingIron, "processing consumes more iron than mining adds in the starter scenario");
+}
+
+
+void test_manual_processing_policy_directs_processor_capacity() {
+    // Verifies that player-selected Manual policy changes actual daily
+    // processing output. This prevents the allocation UI from becoming a
+    // display-only control disconnected from simulation rules.
+    deep::Simulation sim{deep::createHomeSystemScenario()};
+    const deep::ColonyId colonyId = sim.state().colonies.front().id;
+
+    const double startingAlloys = sim.state().colonies.front().processedStockpile.get(deep::ProcessedMaterial::StructuralAlloys);
+    const double startingElectronics = sim.state().colonies.front().processedStockpile.get(deep::ProcessedMaterial::Electronics);
+
+    const auto policyResult = sim.execute(deep::SetColonyProcessingPolicyCommand{
+        .colonyId = colonyId,
+        .policy = deep::ProcessingPolicy::Manual,
+        .manualAllocations = {
+            deep::ProcessingAllocation{.material = deep::ProcessedMaterial::Electronics, .weight = 100.0}
+        }
+    });
+
+    require(policyResult.ok, "manual processing policy command is accepted");
+
+    sim.advanceDays(1);
+
+    require(sim.state().colonies.front().processingPolicy == deep::ProcessingPolicy::Manual,
+            "manual processing policy is stored on the colony");
+    require(sim.state().colonies.front().processedStockpile.get(deep::ProcessedMaterial::Electronics) > startingElectronics,
+            "manual policy allocates processor output to electronics");
+    require(sim.state().colonies.front().processedStockpile.get(deep::ProcessedMaterial::StructuralAlloys) == startingAlloys,
+            "manual policy does not also allocate capacity to structural alloys");
+}
+
+void test_manual_processing_policy_requires_positive_weight() {
+    // Verifies command validation for Manual policy. A manual policy without any
+    // positive weights would otherwise silently spend no processor capacity.
+    deep::Simulation sim{deep::createHomeSystemScenario()};
+    const deep::ColonyId colonyId = sim.state().colonies.front().id;
+
+    const auto result = sim.execute(deep::SetColonyProcessingPolicyCommand{
+        .colonyId = colonyId,
+        .policy = deep::ProcessingPolicy::Manual,
+        .manualAllocations = {}
+    });
+
+    require(!result.ok, "manual processing policy with no positive weights is rejected");
+    require(sim.state().colonies.front().processingPolicy == deep::ProcessingPolicy::Balanced,
+            "rejected manual policy leaves the existing processing policy unchanged");
 }
 
 void test_shipyard_completion() {
@@ -212,7 +262,11 @@ void test_shipyard_temporary_processed_material_shortage_recovers() {
     // complete once enough materials accumulate.
     deep::GameState state = deep::createHomeSystemScenario();
     state.colonies.front().processedStockpile.set(deep::ProcessedMaterial::StructuralAlloys, 0.0);
-    state.colonies.front().processorCapacity = 10.0;
+    state.colonies.front().processorCapacity = 20.0;
+    state.colonies.front().processingPolicy = deep::ProcessingPolicy::Manual;
+    state.colonies.front().manualProcessingAllocations = {
+        deep::ProcessingAllocation{.material = deep::ProcessedMaterial::StructuralAlloys, .weight = 100.0}
+    };
 
     deep::Simulation sim{std::move(state)};
     const deep::ColonyId colonyId = sim.state().colonies.front().id;
@@ -343,6 +397,8 @@ int main() {
         test_time_advancement();
         test_mining();
         test_processing_converts_raw_minerals_to_processed_materials();
+        test_manual_processing_policy_directs_processor_capacity();
+        test_manual_processing_policy_requires_positive_weight();
         test_shipyard_completion();
         test_shipyard_capacity_is_shared_by_fifo_orders();
         test_shipyard_temporary_processed_material_shortage_recovers();
