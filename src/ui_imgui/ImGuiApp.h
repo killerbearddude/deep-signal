@@ -13,6 +13,7 @@
 #include "ui_imgui/EconomyForecastPanel.h"
 #include "ui_imgui/EventLogPanel.h"
 #include "ui_imgui/FleetPanel.h"
+#include "ui_imgui/FleetOrdersPanel.h"
 #include "ui_imgui/InspectorPanel.h"
 #include "ui_imgui/MainMenuBar.h"
 #include "ui_imgui/SaveLoadPanel.h"
@@ -61,6 +62,7 @@ private:
     EconomyForecastPanel economyForecastPanel_;
     ColonyPanel colonyPanel_;
     FleetPanel fleetPanel_;
+    FleetOrdersPanel fleetOrdersPanel_;
     EventLogPanel eventLogPanel_;
     InspectorPanel inspectorPanel_;
     StrategicMapPanel strategicMapPanel_;

@@ -21,6 +21,7 @@ struct PanelVisibility {
     bool inspector = true;
     bool colonies = true;
     bool fleets = true;
+    bool fleetOrders = true;
     bool shipyard = true;
     bool economyForecast = true;
     bool eventLog = true;

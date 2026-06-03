@@ -39,6 +39,7 @@ void MainMenuBar::render(SimulationService& service, SaveLoadPanel& saveLoadPane
         ImGui::MenuItem("Inspector", nullptr, &visibility.inspector);
         ImGui::MenuItem("Colonies", nullptr, &visibility.colonies);
         ImGui::MenuItem("Fleets", nullptr, &visibility.fleets);
+        ImGui::MenuItem("Fleet Orders", nullptr, &visibility.fleetOrders);
         ImGui::MenuItem("Shipyard / Production", nullptr, &visibility.shipyard);
         ImGui::MenuItem("Economy Forecast", nullptr, &visibility.economyForecast);
         ImGui::MenuItem("Event Log", nullptr, &visibility.eventLog);

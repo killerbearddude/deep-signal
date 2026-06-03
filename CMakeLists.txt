@@ -104,6 +104,7 @@ if(DEEP_SIGNAL_BUILD_UI)
         src/ui_imgui/EconomyForecastPanel.cpp
         src/ui_imgui/EventLogPanel.cpp
         src/ui_imgui/FleetPanel.cpp
+        src/ui_imgui/FleetOrdersPanel.cpp
         src/ui_imgui/ImGuiApp.cpp
         src/ui_imgui/InspectorPanel.cpp
         src/ui_imgui/MainMenuBar.cpp
