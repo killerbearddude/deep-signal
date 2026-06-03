@@ -544,6 +544,41 @@ void addProcessedMaterialSet(ProcessedMaterialAmountTotals& totals, const Proces
     return out.str();
 }
 
+
+[[nodiscard]] double fleetCurrentFuel(const GameState& state, const Fleet& fleet) noexcept {
+    double total = 0.0;
+    for (const ShipId shipId : fleet.shipIds) {
+        const Ship* ship = findById(state.ships, shipId);
+        if (ship != nullptr) {
+            total += ship->fuel;
+        }
+    }
+    return total;
+}
+
+[[nodiscard]] double fleetFuelCapacity(const GameState& state, const Fleet& fleet) noexcept {
+    double total = 0.0;
+    for (const ShipId shipId : fleet.shipIds) {
+        const Ship* ship = findById(state.ships, shipId);
+        if (ship == nullptr) {
+            continue;
+        }
+        const ShipClass* shipClass = findById(state.shipClasses, ship->shipClassId);
+        if (shipClass != nullptr) {
+            total += shipClass->fuelCapacity;
+        }
+    }
+    return total;
+}
+
+[[nodiscard]] std::string fleetFuelExplanation(const double currentFuel, const double fuelCapacity) {
+    std::ostringstream out;
+    out << currentFuel << " / " << fuelCapacity
+        << " propellant; v1 range is current fuel / " << kPrototypeFuelPerMapUnit
+        << " fuel per map unit";
+    return out.str();
+}
+
 } // namespace
 
 ForecastService::ForecastService(const SimulationService& service) noexcept
@@ -838,6 +873,29 @@ std::vector<FleetArrivalEtaForecast> ForecastService::fleetArrivalEtas() const {
                 : std::string{},
             .etaDays = eta,
             .explanation = fleetEtaExplanation(fleet, eta)
+        });
+    }
+
+    return forecasts;
+}
+
+
+std::vector<FleetFuelForecast> ForecastService::fleetFuelForecasts() const {
+    const GameState& state = service_.state();
+    std::vector<FleetFuelForecast> forecasts;
+    forecasts.reserve(state.fleets.size());
+
+    for (const Fleet& fleet : state.fleets) {
+        const double currentFuel = fleetCurrentFuel(state, fleet);
+        const double capacity = fleetFuelCapacity(state, fleet);
+        forecasts.push_back(FleetFuelForecast{
+            .fleetId = fleet.id,
+            .fleetName = fleet.name,
+            .currentFuel = currentFuel,
+            .fuelCapacity = capacity,
+            .fuelPercent = capacity <= kFuelComparisonEpsilon ? 0.0 : (currentFuel * 100.0 / capacity),
+            .currentRange = currentFuel / kPrototypeFuelPerMapUnit,
+            .explanation = fleetFuelExplanation(currentFuel, capacity)
         });
     }
 

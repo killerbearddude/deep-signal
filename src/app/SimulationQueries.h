@@ -117,6 +117,9 @@ struct FleetQueuedOrderSummary {
     // prototype duration used by the query layer.
     std::int64_t projectedStartDay = 0;
     std::int64_t projectedArrivalDay = 0;
+    double fuelCost = 0.0;
+    double projectedFuelRemaining = 0.0;
+    bool fuelAffordable = true;
 };
 
 // Display-ready fleet row with resolved body names and order state. Destination
@@ -133,6 +136,10 @@ struct FleetSummary {
     std::string activeOrderName;
     bool hasActiveOrder = false;
     int daysRemaining = 0;
+    double currentFuel = 0.0;
+    double fuelCapacity = 0.0;
+    double fuelPercent = 0.0;
+    double currentRange = 0.0;
 
     // ETA fields summarize the active order plus queued moves from the current
     // simulation day. They are zero when the fleet has no active/queued orders.
@@ -140,6 +147,22 @@ struct FleetSummary {
     int totalRouteDurationDays = 0;
     std::int64_t activeOrderProjectedArrivalDay = 0;
     std::vector<FleetQueuedOrderSummary> queuedOrders;
+};
+
+
+// Preview for ordering one additional fleet move from the current queue state.
+// The preview is advisory UI data; Simulation still performs authoritative
+// command validation before accepting movement.
+struct FleetMovePreview {
+    FleetId fleetId;
+    BodyId destinationBodyId;
+    std::string destinationBodyName;
+    double fuelAvailable = 0.0;
+    double queuedFuelRequired = 0.0;
+    double newMoveFuelCost = 0.0;
+    double projectedFuelRemaining = 0.0;
+    bool canAfford = false;
+    std::string warningText;
 };
 
 // Display-ready body/system overview row. Counts are resolved in the app layer
@@ -216,6 +239,9 @@ public:
 
     // Returns a single fleet summary when the ID exists in the active snapshot.
     [[nodiscard]] std::optional<FleetSummary> fleet(FleetId id) const;
+
+    // Returns fuel affordability for appending one move to the current fleet queue.
+    [[nodiscard]] std::optional<FleetMovePreview> fleetMovePreview(FleetId fleetId, BodyId destinationBodyId) const;
 
     // Returns one overview row per body with colony, deposit, and fleet counts.
     [[nodiscard]] std::vector<BodySystemSummary> bodySystemOverview() const;

@@ -31,7 +31,7 @@ void FleetPanel::render(const SimulationQueries& queries, SelectionState& select
     const std::vector<FleetSummary> fleets = queries.fleets();
     ImGui::Text("Fleets: %zu", fleets.size());
 
-    if (ImGui::BeginTable("FleetSummaryTable", 9, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable |
+    if (ImGui::BeginTable("FleetSummaryTable", 11, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable |
                            ImGuiTableFlags_Reorderable | ImGuiTableFlags_Hideable |
                            ImGuiTableFlags_SizingStretchProp)) {
         ImGui::TableSetupColumn("ID");
@@ -39,6 +39,8 @@ void FleetPanel::render(const SimulationQueries& queries, SelectionState& select
         ImGui::TableSetupColumn("Origin");
         ImGui::TableSetupColumn("Destination");
         ImGui::TableSetupColumn("Ships");
+        ImGui::TableSetupColumn("Fuel");
+        ImGui::TableSetupColumn("Range");
         ImGui::TableSetupColumn("Order");
         ImGui::TableSetupColumn("Active ETA");
         ImGui::TableSetupColumn("Queued");
@@ -65,16 +67,20 @@ void FleetPanel::render(const SimulationQueries& queries, SelectionState& select
             ImGui::TableSetColumnIndex(4);
             ImGui::Text("%zu", fleet.shipCount);
             ImGui::TableSetColumnIndex(5);
-            ImGui::TextUnformatted(fleet.activeOrderName.c_str());
+            ImGui::Text("%.1f / %.1f", fleet.currentFuel, fleet.fuelCapacity);
             ImGui::TableSetColumnIndex(6);
+            ImGui::Text("%.1f", fleet.currentRange);
+            ImGui::TableSetColumnIndex(7);
+            ImGui::TextUnformatted(fleet.activeOrderName.c_str());
+            ImGui::TableSetColumnIndex(8);
             if (fleet.activeOrderEtaDays.has_value()) {
                 ImGui::Text("%d", *fleet.activeOrderEtaDays);
             } else {
                 ImGui::TextUnformatted("-");
             }
-            ImGui::TableSetColumnIndex(7);
+            ImGui::TableSetColumnIndex(9);
             ImGui::Text("%zu", fleet.queuedOrders.size());
-            ImGui::TableSetColumnIndex(8);
+            ImGui::TableSetColumnIndex(10);
             ImGui::Text("%d", fleet.totalRouteDurationDays);
         }
 

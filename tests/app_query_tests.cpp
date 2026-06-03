@@ -200,6 +200,9 @@ void test_fleet_summaries_resolve_location_and_order() {
     require(fleets.front().currentBodyName == "Terra", "fleet summary resolves current body");
     require(fleets.front().destinationBodyName == "Mars", "fleet summary resolves destination body");
     require(fleets.front().shipCount == 1, "fleet summary includes ship count");
+    requireNear(fleets.front().fuelCapacity, 1000.0, "fleet summary includes total fuel capacity");
+    requireNear(fleets.front().currentFuel, 760.0, "fleet summary includes fuel after starting movement");
+    requireNear(fleets.front().currentRange, 760.0, "fleet summary exposes current fuel range");
     require(fleets.front().activeOrderName == "MoveToBody", "fleet summary includes active order type");
     require(fleets.front().hasActiveOrder, "fleet summary marks active movement orders");
     require(fleets.front().daysRemaining == 5, "fleet summary includes remaining movement days");
@@ -254,7 +257,22 @@ void test_fleet_summaries_include_queued_orders() {
             "queued order summary exposes projected start after active order arrival");
     require(fleet->queuedOrders.front().projectedArrivalDay == service.state().date.day + 10,
             "queued order summary exposes projected arrival after queued move duration");
+    requireNear(fleet->queuedOrders.front().fuelCost, 240.0,
+                "queued order summary includes fuel cost from projected origin");
+    requireNear(fleet->queuedOrders.front().projectedFuelRemaining, 520.0,
+                "queued order summary includes projected fuel after queued move");
+    require(fleet->queuedOrders.front().fuelAffordable,
+            "queued order summary marks affordable queued movement");
     require(fleet->totalRouteDurationDays == 10, "fleet summary exposes total route duration through the queue");
+
+    const auto preview = queries.fleetMovePreview(fleetId, marsId);
+    require(preview.has_value(), "fleet move preview is available for valid fleet and destination");
+    requireNear(preview->fuelAvailable, 760.0, "move preview uses current remaining fleet fuel");
+    requireNear(preview->queuedFuelRequired, 480.0,
+                "move preview accounts for existing queued moves plus the new move");
+    requireNear(preview->projectedFuelRemaining, 280.0,
+                "move preview exposes remaining fuel after queued route");
+    require(preview->canAfford, "move preview marks affordable route as queueable");
 }
 
 
@@ -277,6 +295,8 @@ void test_fleet_summaries_report_empty_timeline_for_idle_fleet() {
     const auto fleet = queries.fleet(service.state().fleets.front().id);
 
     require(fleet.has_value(), "completed starter ship creates a fleet summary");
+    requireNear(fleet->currentFuel, 1000.0, "newly completed fleet starts with full fuel");
+    requireNear(fleet->fuelCapacity, 1000.0, "idle fleet summary includes fuel capacity");
     require(!fleet->hasActiveOrder, "new fleet starts idle");
     require(!fleet->activeOrderEtaDays.has_value(), "idle fleet has no active-order ETA");
     require(fleet->totalRouteDurationDays == 0, "idle fleet has zero route duration");

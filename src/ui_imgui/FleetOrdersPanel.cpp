@@ -34,6 +34,8 @@ void drawFleetSummary(const FleetSummary& fleet) {
     ImGui::Text("Fleet: %s (#%lld)", fleet.name.c_str(), static_cast<long long>(fleet.id.value));
     ImGui::Text("Current body: %s", fleet.currentBodyName.c_str());
     ImGui::Text("Ships: %zu", fleet.shipCount);
+    ImGui::Text("Fuel: %.1f / %.1f (%.1f%%)", fleet.currentFuel, fleet.fuelCapacity, fleet.fuelPercent);
+    ImGui::Text("Current range: %.1f map unit(s)", fleet.currentRange);
 }
 
 void drawCurrentOrder(const FleetSummary& fleet) {
@@ -63,7 +65,7 @@ void drawTimelinePreview(const FleetSummary& fleet) {
 
     ImGui::Text("Total route duration: %d day(s)", fleet.totalRouteDurationDays);
 
-    if (ImGui::BeginTable("fleet_order_timeline", 6, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
+    if (ImGui::BeginTable("fleet_order_timeline", 8, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
                            ImGuiTableFlags_Resizable | ImGuiTableFlags_SizingStretchProp)) {
         ImGui::TableSetupColumn("Step");
         ImGui::TableSetupColumn("Order");
@@ -71,6 +73,8 @@ void drawTimelinePreview(const FleetSummary& fleet) {
         ImGui::TableSetupColumn("Start Day");
         ImGui::TableSetupColumn("Arrival Day");
         ImGui::TableSetupColumn("ETA");
+        ImGui::TableSetupColumn("Fuel Cost");
+        ImGui::TableSetupColumn("Fuel After");
         ImGui::TableHeadersRow();
 
         if (fleet.hasActiveOrder) {
@@ -87,6 +91,10 @@ void drawTimelinePreview(const FleetSummary& fleet) {
             ImGui::Text("%lld", static_cast<long long>(fleet.activeOrderProjectedArrivalDay));
             ImGui::TableSetColumnIndex(5);
             ImGui::Text("%d day(s)", fleet.activeOrderEtaDays.value_or(fleet.daysRemaining));
+            ImGui::TableSetColumnIndex(6);
+            ImGui::TextUnformatted("spent");
+            ImGui::TableSetColumnIndex(7);
+            ImGui::Text("%.1f", fleet.currentFuel);
         }
 
         for (const FleetQueuedOrderSummary& queuedOrder : fleet.queuedOrders) {
@@ -103,6 +111,10 @@ void drawTimelinePreview(const FleetSummary& fleet) {
             ImGui::Text("%lld", static_cast<long long>(queuedOrder.projectedArrivalDay));
             ImGui::TableSetColumnIndex(5);
             ImGui::Text("%d day(s)", queuedOrder.etaDays);
+            ImGui::TableSetColumnIndex(6);
+            ImGui::Text("%.1f", queuedOrder.fuelCost);
+            ImGui::TableSetColumnIndex(7);
+            ImGui::Text("%.1f%s", queuedOrder.projectedFuelRemaining, queuedOrder.fuelAffordable ? "" : " !");
         }
 
         ImGui::EndTable();
@@ -151,11 +163,24 @@ void FleetOrdersPanel::render(const SimulationQueries& queries,
     // moving away from that origin. Only reject same-body moves for idle fleets
     // where the queued order would start immediately as a no-op.
     const bool destinationSelected = destinationBodyId_.has_value();
+    const std::optional<FleetMovePreview> movePreview = fleet.has_value() && destinationSelected
+        ? queries.fleetMovePreview(fleet->id, *destinationBodyId_)
+        : std::optional<FleetMovePreview>{};
     const bool idleDestinationIsCurrent = fleet.has_value() &&
                                           !fleet->hasActiveOrder &&
                                           destinationSelected &&
                                           *destinationBodyId_ == fleet->currentBodyId;
-    const bool canQueueMove = fleet.has_value() && destinationSelected && !idleDestinationIsCurrent;
+    const bool hasFuelForMove = !movePreview.has_value() || movePreview->canAfford;
+    const bool canQueueMove = fleet.has_value() && destinationSelected && !idleDestinationIsCurrent && hasFuelForMove;
+
+    if (movePreview.has_value()) {
+        ImGui::Text("Move fuel cost: %.1f", movePreview->newMoveFuelCost);
+        ImGui::Text("Queued route fuel required: %.1f / available %.1f",
+                    movePreview->queuedFuelRequired, movePreview->fuelAvailable);
+        if (!movePreview->canAfford) {
+            ImGui::TextUnformatted("Warning: insufficient fuel for this queued route.");
+        }
+    }
 
     if (!canQueueMove) {
         ImGui::BeginDisabled();
@@ -177,6 +202,9 @@ void FleetOrdersPanel::render(const SimulationQueries& queries,
     if (idleDestinationIsCurrent) {
         ImGui::SameLine();
         ImGui::TextUnformatted("Destination is current body.");
+    } else if (!hasFuelForMove) {
+        ImGui::SameLine();
+        ImGui::TextUnformatted("Insufficient fuel.");
     }
 
     const bool canCancel = fleet.has_value() && fleet->hasActiveOrder;

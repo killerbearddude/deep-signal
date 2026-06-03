@@ -13,6 +13,13 @@
 
 namespace deep {
 
+// Prototype v1 fuel cost. Map coordinates remain abstract, so one unit of
+// body-to-body distance consumes one unit of ship propellant capacity.
+inline constexpr double kPrototypeFuelPerMapUnit = 1.0;
+
+// Shared tolerance for fleet fuel affordability and post-consumption clamping.
+inline constexpr double kFuelComparisonEpsilon = 1.0e-6;
+
 // A star system container. Prototype 0.1 starts with a single Sol system.
 struct StarSystem {
     StarSystemId id;
@@ -102,6 +109,8 @@ struct ShipClass {
     ProcessedMaterialSet buildCost;
     double buildPoints = 0.0;
     double speedKmPerDay = 0.0;
+    // Maximum propellant capacity contributed by one ship of this class.
+    // Starter ships are initialized full; v1 movement consumes this directly.
     double fuelCapacity = 0.0;
 };
 
@@ -132,6 +141,8 @@ struct Ship {
     ShipClassId shipClassId;
     std::string name;
     FleetId fleetId;
+    // Current propellant amount for this hull. Fuel is consumed when fleet
+    // movement starts and must not exceed the owning ship class capacity.
     double fuel = 0.0;
 };
 

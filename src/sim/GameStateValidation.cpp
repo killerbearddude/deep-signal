@@ -114,6 +114,16 @@ template <typename T, typename IdT>
     });
 }
 
+// Finds a read-only record by typed ID for cross-record invariants that need
+// more than existence, such as validating per-ship fuel against class capacity.
+template <typename T, typename IdT>
+[[nodiscard]] const T* findById(const std::vector<T>& items, const IdT id) noexcept {
+    const auto it = std::find_if(items.begin(), items.end(), [id](const T& item) {
+        return item.id == id;
+    });
+    return it == items.end() ? nullptr : &(*it);
+}
+
 
 // Validates that IDs are positive, unique, and below their monotonic allocator.
 // This prevents stale counters from producing duplicate IDs after a loaded game
@@ -353,10 +363,13 @@ void validateGameState(const GameState& state) {
     }
 
     for (const Ship& ship : state.ships) {
-        requireValidReference(containsId(state.shipClasses, ship.shipClassId), ship.shipClassId, "ship class");
+        const ShipClass* shipClass = findById(state.shipClasses, ship.shipClassId);
+        requireValidReference(shipClass != nullptr, ship.shipClassId, "ship class");
         requireValidReference(containsId(state.fleets, ship.fleetId), ship.fleetId, "ship fleet");
         requireState(!ship.name.empty(), "ship name must be non-empty");
         requireState(isFinite(ship.fuel) && ship.fuel >= 0.0, "ship fuel must be finite and non-negative");
+        requireState(shipClass == nullptr || ship.fuel <= shipClass->fuelCapacity + kFuelComparisonEpsilon,
+                     "ship fuel must not exceed class fuel capacity");
 
         const auto listedFleetIt = listedShipFleetIds.find(ship.id.value);
         requireState(listedFleetIt != listedShipFleetIds.end(), "ship/fleet references must be bidirectional");

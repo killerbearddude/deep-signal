@@ -92,6 +92,7 @@ void drawFleetDetails(const SimulationQueries& queries, const FleetId fleetId) {
     ImGui::Text("Name: %s", fleet->name.c_str());
     ImGui::Text("Origin/current body: %s", fleet->currentBodyName.c_str());
     ImGui::Text("Ships: %zu", fleet->shipCount);
+    ImGui::Text("Fuel: %.1f / %.1f (range %.1f)", fleet->currentFuel, fleet->fuelCapacity, fleet->currentRange);
     ImGui::Text("Order: %s", fleet->activeOrderName.c_str());
     ImGui::Text("Destination: %s", fleet->destinationBodyName.empty() ? "-" : fleet->destinationBodyName.c_str());
     ImGui::Text("Days remaining: %d", fleet->daysRemaining);
@@ -178,7 +179,22 @@ void InspectorPanel::render(const SimulationQueries& queries,
         ImGui::TextUnformatted("Destination body: select a body marker on the map.");
     }
 
-    const bool canMove = sourceFleet.has_value() && destinationBody.has_value();
+    const std::optional<FleetMovePreview> movePreview = sourceFleet.has_value() && destinationBody.has_value()
+        ? queries.fleetMovePreview(sourceFleet->id, destinationBody->id)
+        : std::optional<FleetMovePreview>{};
+    const bool destinationIsCurrent = sourceFleet.has_value() && destinationBody.has_value()
+        && sourceFleet->currentBodyId == destinationBody->id;
+    const bool hasFuelForMove = !movePreview.has_value() || movePreview->canAfford;
+    const bool canMove = sourceFleet.has_value() && destinationBody.has_value() && !destinationIsCurrent && hasFuelForMove;
+
+    if (movePreview.has_value()) {
+        ImGui::Text("Move fuel cost: %.1f; fuel after queued route: %.1f",
+                    movePreview->newMoveFuelCost, movePreview->projectedFuelRemaining);
+        if (!movePreview->canAfford) {
+            ImGui::TextUnformatted("Warning: insufficient fuel for this move.");
+        }
+    }
+
     if (!canMove) {
         ImGui::BeginDisabled();
     }
@@ -194,6 +210,12 @@ void InspectorPanel::render(const SimulationQueries& queries,
 
     if (!canMove) {
         ImGui::EndDisabled();
+    }
+
+    if (destinationIsCurrent) {
+        ImGui::TextUnformatted("Destination is current body.");
+    } else if (!hasFuelForMove) {
+        ImGui::TextUnformatted("Insufficient fuel.");
     }
 
     drawCommandStatus("Move command", lastMoveSucceeded_, lastMoveStatus_);

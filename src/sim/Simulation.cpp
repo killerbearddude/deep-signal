@@ -204,6 +204,99 @@ void addProcessingWeight(ProcessingShares& weights, const ProcessedMaterial mate
     return weights;
 }
 
+
+[[nodiscard]] double bodyDistance(const Body& origin, const Body& destination) noexcept {
+    return std::hypot(destination.x - origin.x, destination.y - origin.y);
+}
+
+[[nodiscard]] double moveFuelCost(const GameState& state, const BodyId originBodyId, const BodyId destinationBodyId) noexcept {
+    if (originBodyId == destinationBodyId) {
+        return 0.0;
+    }
+
+    const Body* origin = findById(state.bodies, originBodyId);
+    const Body* destination = findById(state.bodies, destinationBodyId);
+    if (origin == nullptr || destination == nullptr) {
+        return std::numeric_limits<double>::infinity();
+    }
+
+    // Coordinates are still abstract map coordinates, so v1 fuel is a direct
+    // distance cost with a small non-zero minimum for any real body-to-body hop.
+    return std::max(1.0, bodyDistance(*origin, *destination) * kPrototypeFuelPerMapUnit);
+}
+
+[[nodiscard]] double fleetCurrentFuel(const GameState& state, const Fleet& fleet) noexcept {
+    double total = 0.0;
+    for (const ShipId shipId : fleet.shipIds) {
+        const Ship* ship = findById(state.ships, shipId);
+        if (ship != nullptr) {
+            total += ship->fuel;
+        }
+    }
+    return total;
+}
+
+[[nodiscard]] double queuedRouteFuelRequirement(const GameState& state,
+                                                const Fleet& fleet,
+                                                const BodyId newDestinationBodyId) noexcept {
+    BodyId projectedOrigin = fleet.currentBodyId;
+    if (fleet.activeOrder.type == FleetOrderType::MoveToBody && fleet.activeOrder.targetBodyId.has_value()) {
+        projectedOrigin = *fleet.activeOrder.targetBodyId;
+    }
+
+    double requiredFuel = 0.0;
+    const auto addProjectedMove = [&](const BodyId destinationBodyId) {
+        const double cost = moveFuelCost(state, projectedOrigin, destinationBodyId);
+        requiredFuel += cost;
+        projectedOrigin = destinationBodyId;
+    };
+
+    for (const QueuedFleetOrder& queuedOrder : fleet.queuedOrders) {
+        if (queuedOrder.type != FleetOrderType::MoveToBody || !queuedOrder.targetBodyId.has_value()) {
+            return std::numeric_limits<double>::infinity();
+        }
+        addProjectedMove(*queuedOrder.targetBodyId);
+    }
+
+    addProjectedMove(newDestinationBodyId);
+    return requiredFuel;
+}
+
+[[nodiscard]] bool fleetHasFuelFor(const GameState& state, const Fleet& fleet, const double fuelCost) noexcept {
+    return fleetCurrentFuel(state, fleet) + kFuelComparisonEpsilon >= fuelCost;
+}
+
+bool consumeFleetFuel(GameState& state, const Fleet& fleet, const double fuelCost) noexcept {
+    if (fuelCost <= kFuelComparisonEpsilon) {
+        return true;
+    }
+
+    if (!fleetHasFuelFor(state, fleet, fuelCost)) {
+        return false;
+    }
+
+    double remainingCost = fuelCost;
+    for (const ShipId shipId : fleet.shipIds) {
+        Ship* ship = findById(state.ships, shipId);
+        if (ship == nullptr || ship->fuel <= 0.0) {
+            continue;
+        }
+
+        const double consumed = std::min(ship->fuel, remainingCost);
+        ship->fuel -= consumed;
+        remainingCost -= consumed;
+
+        if (ship->fuel < kFuelComparisonEpsilon) {
+            ship->fuel = 0.0;
+        }
+        if (remainingCost <= kFuelComparisonEpsilon) {
+            return true;
+        }
+    }
+
+    return remainingCost <= kFuelComparisonEpsilon;
+}
+
 } // namespace
 
 Simulation::Simulation(GameState initialState)
@@ -330,7 +423,14 @@ CommandResult Simulation::moveFleet(const MoveFleetCommand& command) {
         return CommandResult::failure("Fleet already has an active order");
     }
 
+    const double fuelCost = moveFuelCost(state_, fleet->currentBodyId, command.destinationBodyId);
+    if (!fleetHasFuelFor(state_, *fleet, fuelCost)) {
+        appendEvent(EventSeverity::Warning, CommandRejectedEvent{"Fleet has insufficient fuel for move"});
+        return CommandResult::failure("Fleet has insufficient fuel for move");
+    }
+
     const BodyId originBodyId = fleet->currentBodyId;
+    static_cast<void>(consumeFleetFuel(state_, *fleet, fuelCost));
     fleet->destinationBodyId = command.destinationBodyId;
     fleet->activeOrder = FleetOrder{
         .type = FleetOrderType::MoveToBody,
@@ -363,6 +463,12 @@ CommandResult Simulation::queueFleetMoveOrder(const QueueFleetMoveOrderCommand& 
     if (fleet->activeOrder.type == FleetOrderType::None && fleet->currentBodyId == command.destinationBodyId) {
         appendEvent(EventSeverity::Warning, CommandRejectedEvent{"Fleet is already at destination body"});
         return CommandResult::failure("Fleet is already at destination body");
+    }
+
+    const double projectedFuelRequired = queuedRouteFuelRequirement(state_, *fleet, command.destinationBodyId);
+    if (!fleetHasFuelFor(state_, *fleet, projectedFuelRequired)) {
+        appendEvent(EventSeverity::Warning, CommandRejectedEvent{"Fleet has insufficient fuel for queued move"});
+        return CommandResult::failure("Fleet has insufficient fuel for queued move");
     }
 
     fleet->queuedOrders.push_back(QueuedFleetOrder{
@@ -492,6 +598,17 @@ bool Simulation::startNextQueuedFleetOrder(Fleet& fleet, std::vector<SimEvent>* 
 
         if (fleet.currentBodyId == destinationBodyId) {
             const CommandRejectedEvent rejected{"Queued fleet order already at destination body"};
+            if (emitted == nullptr) {
+                appendEvent(EventSeverity::Warning, rejected);
+            } else {
+                emitEvent(*emitted, EventSeverity::Warning, rejected);
+            }
+            continue;
+        }
+
+        const double fuelCost = moveFuelCost(state_, fleet.currentBodyId, destinationBodyId);
+        if (!consumeFleetFuel(state_, fleet, fuelCost)) {
+            const CommandRejectedEvent rejected{"Queued fleet order lacked sufficient fuel"};
             if (emitted == nullptr) {
                 appendEvent(EventSeverity::Warning, rejected);
             } else {

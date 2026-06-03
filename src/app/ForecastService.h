@@ -132,6 +132,18 @@ struct FleetArrivalEtaForecast {
     std::string explanation;
 };
 
+// Fuel/range summary for one fleet. Range is expressed in current abstract map
+// distance units because v1 fuel cost is one propellant unit per map unit.
+struct FleetFuelForecast {
+    FleetId fleetId;
+    std::string fleetName;
+    double currentFuel = 0.0;
+    double fuelCapacity = 0.0;
+    double fuelPercent = 0.0;
+    double currentRange = 0.0;
+    std::string explanation;
+};
+
 // Read-only forecasting facade over SimulationService. Forecasts are copied out
 // as DTOs so UI code can display projections without owning simulation rules.
 class ForecastService {
@@ -164,6 +176,9 @@ public:
 
     // Returns fleet arrival ETAs for idle and moving fleets.
     [[nodiscard]] std::vector<FleetArrivalEtaForecast> fleetArrivalEtas() const;
+
+    // Returns current propellant and range forecasts for each fleet.
+    [[nodiscard]] std::vector<FleetFuelForecast> fleetFuelForecasts() const;
 
 private:
     const SimulationService& service_;

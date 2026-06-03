@@ -10,6 +10,7 @@
 // GameState directly. These tests protect that trust boundary without using the
 // persistence layer.
 
+#include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <exception>
@@ -190,6 +191,21 @@ void test_ship_claimed_by_multiple_fleets_is_rejected() {
     });
 }
 
+
+void test_ship_fuel_above_class_capacity_is_rejected() {
+    // A ship's current propellant must stay within the hull's designed capacity.
+    // This protects save/load and future refueling logic from creating fleets
+    // with impossible range.
+    expectInvalidState("ship fuel above class capacity", [](deep::GameState& state) {
+        const deep::ShipClassId shipClassId = state.ships.front().shipClassId;
+        const auto classIt = std::find_if(state.shipClasses.begin(), state.shipClasses.end(), [shipClassId](const deep::ShipClass& shipClass) {
+            return shipClass.id == shipClassId;
+        });
+        require(classIt != state.shipClasses.end(), "completed fixture ship class exists");
+        state.ships.front().fuel = classIt->fuelCapacity + 1.0;
+    });
+}
+
 void test_active_fleet_order_without_destination_is_rejected() {
     // MoveToBody orders require both a destination field and a target body. An
     // active order without either cannot complete deterministically.
@@ -269,6 +285,7 @@ int main() {
         test_ship_missing_from_owning_fleet_is_rejected();
         test_fleet_listing_nonexistent_ship_is_rejected();
         test_ship_claimed_by_multiple_fleets_is_rejected();
+        test_ship_fuel_above_class_capacity_is_rejected();
         test_active_fleet_order_without_destination_is_rejected();
         test_invalid_queued_fleet_order_is_rejected();
         test_event_day_after_current_day_is_rejected();

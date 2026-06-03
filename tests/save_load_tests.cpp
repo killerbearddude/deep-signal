@@ -388,6 +388,8 @@ void test_sqlite_save_load_round_trip() {
     }).ok, "manual processing policy is set before save");
 
     const deep::GameState expected = service.state();
+    require(almostEqual(expected.ships.front().fuel, 760.0),
+            "active movement consumes fuel before save/load round-trip");
     const auto saveResult = service.saveGame(path);
     require(saveResult.ok, "service saves SQLite file");
 
@@ -403,6 +405,8 @@ void test_sqlite_save_load_round_trip() {
     // state is not merely present but still valid for rule execution.
     loadedService.advanceDays(3);
     require(loadedService.state().fleets.front().currentBodyId == marsId, "loaded fleet arrives after remaining movement days");
+    require(almostEqual(loadedService.state().ships.front().fuel, 520.0),
+            "loaded fleet consumes fuel when first queued order starts");
     require(loadedService.state().fleets.front().activeOrder.type == deep::FleetOrderType::MoveToBody,
             "loaded fleet starts persisted queued order after arrival");
     require(loadedService.state().fleets.front().activeOrder.targetBodyId == service.state().bodies.front().id,
@@ -411,6 +415,8 @@ void test_sqlite_save_load_round_trip() {
     loadedService.advanceDays(5);
     require(loadedService.state().fleets.front().currentBodyId == service.state().bodies.front().id,
             "loaded fleet completes first promoted queued order");
+    require(almostEqual(loadedService.state().ships.front().fuel, 280.0),
+            "loaded fleet consumes fuel when second queued order starts");
     require(loadedService.state().fleets.front().activeOrder.type == deep::FleetOrderType::MoveToBody,
             "loaded fleet starts second persisted queued order");
     require(loadedService.state().fleets.front().activeOrder.targetBodyId == marsId,
@@ -419,6 +425,8 @@ void test_sqlite_save_load_round_trip() {
     loadedService.advanceDays(5);
     require(loadedService.state().fleets.front().currentBodyId == marsId,
             "loaded fleet completes second promoted queued order");
+    require(almostEqual(loadedService.state().ships.front().fuel, 280.0),
+            "arriving does not consume additional fuel after start-of-move consumption");
     require(loadedService.state().fleets.front().activeOrder.type == deep::FleetOrderType::None,
             "loaded fleet clears movement order after queued route finishes");
 

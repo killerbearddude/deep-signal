@@ -398,6 +398,39 @@ void test_fleet_arrival_eta_reports_active_move_order() {
     require(!fleets.front().explanation.empty(), "fleet ETA includes explanation text");
 }
 
+
+void test_fleet_fuel_forecast_reports_range_after_move_start() {
+    // Verifies the app forecast layer exposes propellant state for UI panels.
+    // Movement consumes fuel at order start, so the forecast should show the
+    // reduced range immediately after the command is accepted.
+    deep::SimulationService service;
+    const deep::ColonyId colonyId = service.state().colonies.front().id;
+    const deep::ShipClassId shipClassId = service.state().shipClasses.front().id;
+    const deep::BodyId marsId = service.state().bodies.at(1).id;
+
+    require(service.execute(deep::AssignShipyardBuildCommand{
+        .colonyId = colonyId,
+        .shipClassId = shipClassId,
+        .quantity = 1
+    }).ok, "build order is accepted before fleet fuel setup");
+
+    static_cast<void>(service.advanceDays(5));
+    const deep::FleetId fleetId = service.state().fleets.front().id;
+    require(service.execute(deep::MoveFleetCommand{
+        .fleetId = fleetId,
+        .destinationBodyId = marsId
+    }).ok, "move order is accepted before fleet fuel forecast");
+
+    const deep::ForecastService forecasts{service};
+    const auto fuels = forecasts.fleetFuelForecasts();
+
+    require(fuels.size() == 1, "one fleet fuel forecast is returned");
+    requireNear(fuels.front().fuelCapacity, 1000.0, "fuel forecast includes fleet capacity");
+    requireNear(fuels.front().currentFuel, 760.0, "fuel forecast includes movement-start consumption");
+    requireNear(fuels.front().currentRange, 760.0, "fuel forecast maps current fuel to v1 range");
+    require(!fuels.front().explanation.empty(), "fuel forecast includes explanation text");
+}
+
 } // namespace
 
 int main() {
@@ -414,6 +447,7 @@ int main() {
         test_production_backlog_uses_fifo_colony_capacity();
         test_production_backlog_reports_blocking_material();
         test_fleet_arrival_eta_reports_active_move_order();
+        test_fleet_fuel_forecast_reports_range_after_move_start();
     } catch (const std::exception& ex) {
         std::cerr << "Test failure: " << ex.what() << '\n';
         return EXIT_FAILURE;

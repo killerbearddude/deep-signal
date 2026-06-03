@@ -109,6 +109,7 @@ void initializeSchema(Database& db) {
             FOREIGN KEY(body_id) REFERENCES bodies(id)
         );
 
+        -- Ship-class fuel_capacity defines the maximum propellant one hull contributes.
         CREATE TABLE IF NOT EXISTS ship_classes (
             id INTEGER PRIMARY KEY NOT NULL CHECK(id > 0),
             name TEXT NOT NULL CHECK(length(name) > 0),
@@ -179,6 +180,7 @@ void initializeSchema(Database& db) {
             FOREIGN KEY(target_body_id) REFERENCES bodies(id)
         );
 
+        -- Ship fuel is the current propellant amount consumed by movement orders.
         CREATE TABLE IF NOT EXISTS ships (
             id INTEGER PRIMARY KEY NOT NULL CHECK(id > 0),
             ship_class_id INTEGER NOT NULL CHECK(ship_class_id > 0),

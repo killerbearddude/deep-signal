@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <optional>
 #include <sstream>
 #include <type_traits>
@@ -95,9 +96,56 @@ template <typename T, typename IdT>
 }
 
 // TEMP: Fleet movement uses the simulation's fixed five-day prototype duration
-// until route distance, speed, and fuel rules exist. Queue ETA is therefore a
-// deterministic UI forecast rather than a route-planning calculation.
+// until route distance and speed rules exist. Fuel v1 uses map distance but does
+// not yet change movement duration.
 constexpr int kPrototypeQueuedMoveDurationDays = 5;
+
+struct FleetFuelTotals {
+    double currentFuel = 0.0;
+    double fuelCapacity = 0.0;
+};
+
+[[nodiscard]] double bodyDistance(const Body& origin, const Body& destination) noexcept {
+    return std::hypot(destination.x - origin.x, destination.y - origin.y);
+}
+
+[[nodiscard]] double moveFuelCost(const GameState& state, const BodyId originBodyId, const BodyId destinationBodyId) noexcept {
+    if (originBodyId == destinationBodyId) {
+        return 0.0;
+    }
+
+    const Body* origin = bodyById(state, originBodyId);
+    const Body* destination = bodyById(state, destinationBodyId);
+    if (origin == nullptr || destination == nullptr) {
+        return 0.0;
+    }
+
+    return std::max(1.0, bodyDistance(*origin, *destination) * kPrototypeFuelPerMapUnit);
+}
+
+[[nodiscard]] FleetFuelTotals fleetFuelTotals(const GameState& state, const Fleet& fleet) noexcept {
+    FleetFuelTotals totals;
+    for (const ShipId shipId : fleet.shipIds) {
+        const Ship* ship = findById(state.ships, shipId);
+        if (ship == nullptr) {
+            continue;
+        }
+
+        totals.currentFuel += ship->fuel;
+        const ShipClass* shipClass = findById(state.shipClasses, ship->shipClassId);
+        if (shipClass != nullptr) {
+            totals.fuelCapacity += shipClass->fuelCapacity;
+        }
+    }
+    return totals;
+}
+
+[[nodiscard]] BodyId projectedQueueOrigin(const Fleet& fleet) noexcept {
+    if (fleet.activeOrder.type == FleetOrderType::MoveToBody && fleet.activeOrder.targetBodyId.has_value()) {
+        return *fleet.activeOrder.targetBodyId;
+    }
+    return fleet.currentBodyId;
+}
 
 [[nodiscard]] std::string fleetOrderName(const FleetOrderType type) {
     switch (type) {
@@ -469,6 +517,9 @@ std::vector<FleetSummary> SimulationQueries::fleets() const {
         const int activeOrderEtaDays = hasActiveOrder ? std::max(0, fleet.activeOrder.daysRemaining) : 0;
         const std::int64_t currentDay = state.date.day;
         std::int64_t nextStartDay = currentDay + activeOrderEtaDays;
+        const FleetFuelTotals fuel = fleetFuelTotals(state, fleet);
+        double projectedFuelRemaining = fuel.currentFuel;
+        BodyId projectedOrigin = projectedQueueOrigin(fleet);
 
         std::vector<FleetQueuedOrderSummary> queuedOrders;
         queuedOrders.reserve(fleet.queuedOrders.size());
@@ -476,6 +527,10 @@ std::vector<FleetSummary> SimulationQueries::fleets() const {
             const QueuedFleetOrder& order = fleet.queuedOrders.at(i);
             const std::int64_t startDay = nextStartDay;
             const std::int64_t arrivalDay = startDay + kPrototypeQueuedMoveDurationDays;
+            const double fuelCost = order.targetBodyId.has_value()
+                ? moveFuelCost(state, projectedOrigin, *order.targetBodyId)
+                : 0.0;
+            projectedFuelRemaining -= fuelCost;
 
             queuedOrders.push_back(FleetQueuedOrderSummary{
                 .queuePosition = i + 1U,
@@ -487,12 +542,18 @@ std::vector<FleetSummary> SimulationQueries::fleets() const {
                     : std::string{},
                 .etaDays = static_cast<int>(arrivalDay - currentDay),
                 .projectedStartDay = startDay,
-                .projectedArrivalDay = arrivalDay
+                .projectedArrivalDay = arrivalDay,
+                .fuelCost = fuelCost,
+                .projectedFuelRemaining = std::max(0.0, projectedFuelRemaining),
+                .fuelAffordable = projectedFuelRemaining + kFuelComparisonEpsilon >= 0.0
             });
 
             // Queued v1 moves execute serially. Each preview row starts when the
             // previous active/queued move is projected to arrive.
             nextStartDay = arrivalDay;
+            if (order.targetBodyId.has_value()) {
+                projectedOrigin = *order.targetBodyId;
+            }
         }
 
         const int totalRouteDurationDays = static_cast<int>(std::max<std::int64_t>(0, nextStartDay - currentDay));
@@ -512,6 +573,10 @@ std::vector<FleetSummary> SimulationQueries::fleets() const {
             .activeOrderName = fleetOrderName(fleet.activeOrder.type),
             .hasActiveOrder = hasActiveOrder,
             .daysRemaining = fleet.activeOrder.daysRemaining,
+            .currentFuel = fuel.currentFuel,
+            .fuelCapacity = fuel.fuelCapacity,
+            .fuelPercent = fuel.fuelCapacity <= kFuelComparisonEpsilon ? 0.0 : (fuel.currentFuel * 100.0 / fuel.fuelCapacity),
+            .currentRange = fuel.currentFuel / kPrototypeFuelPerMapUnit,
             .activeOrderEtaDays = hasActiveOrder ? std::optional<int>{activeOrderEtaDays} : std::optional<int>{},
             .totalRouteDurationDays = totalRouteDurationDays,
             .activeOrderProjectedArrivalDay = activeArrivalDay,
@@ -529,6 +594,52 @@ std::optional<FleetSummary> SimulationQueries::fleet(const FleetId id) const {
         return summary.id == id;
     });
     return it == summaries.end() ? std::optional<FleetSummary>{} : std::optional<FleetSummary>{*it};
+}
+
+
+std::optional<FleetMovePreview> SimulationQueries::fleetMovePreview(const FleetId fleetId, const BodyId destinationBodyId) const {
+    const GameState& state = service_.state();
+    const Fleet* fleet = findById(state.fleets, fleetId);
+    const Body* destination = bodyById(state, destinationBodyId);
+    if (fleet == nullptr || destination == nullptr) {
+        return std::nullopt;
+    }
+
+    FleetFuelTotals fuel = fleetFuelTotals(state, *fleet);
+    BodyId projectedOrigin = projectedQueueOrigin(*fleet);
+    double queuedFuelRequired = 0.0;
+
+    for (const QueuedFleetOrder& queuedOrder : fleet->queuedOrders) {
+        if (queuedOrder.type != FleetOrderType::MoveToBody || !queuedOrder.targetBodyId.has_value()) {
+            return std::nullopt;
+        }
+        queuedFuelRequired += moveFuelCost(state, projectedOrigin, *queuedOrder.targetBodyId);
+        projectedOrigin = *queuedOrder.targetBodyId;
+    }
+
+    const double newMoveCost = moveFuelCost(state, projectedOrigin, destinationBodyId);
+    queuedFuelRequired += newMoveCost;
+    const double projectedRemaining = fuel.currentFuel - queuedFuelRequired;
+    const bool canAfford = projectedRemaining + kFuelComparisonEpsilon >= 0.0;
+
+    std::string warning;
+    if (!canAfford) {
+        warning = "Insufficient fuel for queued route.";
+    } else if (fuel.fuelCapacity <= kFuelComparisonEpsilon) {
+        warning = "Fleet has no fuel capacity.";
+    }
+
+    return FleetMovePreview{
+        .fleetId = fleetId,
+        .destinationBodyId = destinationBodyId,
+        .destinationBodyName = destination->name,
+        .fuelAvailable = fuel.currentFuel,
+        .queuedFuelRequired = queuedFuelRequired,
+        .newMoveFuelCost = newMoveCost,
+        .projectedFuelRemaining = std::max(0.0, projectedRemaining),
+        .canAfford = canAfford,
+        .warningText = std::move(warning)
+    };
 }
 
 std::vector<BodySystemSummary> SimulationQueries::bodySystemOverview() const {

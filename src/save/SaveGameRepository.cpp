@@ -382,6 +382,8 @@ void saveFleets(Database& db, const GameState& state) {
 }
 
 void saveShips(Database& db, const GameState& state) {
+    // Persist current per-ship propellant, not just class fuel capacity, so
+    // loaded fleets keep the operational range they had at save time.
     Statement stmt{db, "INSERT INTO ships(id, ship_class_id, fleet_id, name, fuel) VALUES (?, ?, ?, ?, ?);"};
     for (const Ship& ship : state.ships) {
         stmt.bindInt64(1, idValue(ship.id));

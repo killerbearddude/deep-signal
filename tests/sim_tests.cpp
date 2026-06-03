@@ -433,6 +433,7 @@ void test_fleet_movement() {
     sim.advanceDays(5);
 
     const deep::FleetId fleetId = sim.state().fleets.front().id;
+    const double startingFuel = sim.state().ships.front().fuel;
     require(sim.execute(deep::MoveFleetCommand{
         .fleetId = fleetId,
         .destinationBodyId = marsId
@@ -440,6 +441,9 @@ void test_fleet_movement() {
 
     require(sim.state().fleets.front().activeOrder.type == deep::FleetOrderType::MoveToBody,
             "fleet has active move order");
+    requireNear(sim.state().ships.front().fuel,
+                startingFuel - 240.0,
+                "starting a Terra-to-Mars move consumes map-distance fuel immediately");
 
     sim.advanceDays(5);
 
@@ -448,6 +452,43 @@ void test_fleet_movement() {
             "fleet clears active order after arrival");
     require(std::holds_alternative<deep::FleetArrivedEvent>(sim.state().eventLog.back().payload),
             "fleet arrival remains in event log");
+}
+
+
+void test_fleet_movement_rejects_insufficient_fuel() {
+    // Verifies movement is now an operational fuel decision. A fleet with no
+    // propellant cannot start a move, and the rejected command leaves order and
+    // location state untouched.
+    deep::Simulation setup{deep::createHomeSystemScenario()};
+
+    const deep::ColonyId colonyId = setup.state().colonies.front().id;
+    const deep::ShipClassId shipClassId = setup.state().shipClasses.front().id;
+    const deep::BodyId terraId = setup.state().bodies.front().id;
+    const deep::BodyId marsId = setup.state().bodies.at(1).id;
+
+    require(setup.execute(deep::AssignShipyardBuildCommand{
+        .colonyId = colonyId,
+        .shipClassId = shipClassId,
+        .quantity = 1
+    }).ok, "build order accepted before no-fuel movement test");
+    setup.advanceDays(5);
+
+    deep::GameState state = setup.state();
+    state.ships.front().fuel = 0.0;
+    deep::Simulation sim{std::move(state)};
+
+    const deep::FleetId fleetId = sim.state().fleets.front().id;
+    const auto result = sim.execute(deep::MoveFleetCommand{
+        .fleetId = fleetId,
+        .destinationBodyId = marsId
+    });
+
+    require(!result.ok, "no-fuel fleet move is rejected");
+    require(sim.state().fleets.front().currentBodyId == terraId,
+            "rejected no-fuel move leaves fleet at origin");
+    require(sim.state().fleets.front().activeOrder.type == deep::FleetOrderType::None,
+            "rejected no-fuel move does not create an active order");
+    requireNear(sim.state().ships.front().fuel, 0.0, "rejected no-fuel move does not consume negative fuel");
 }
 
 void test_cancel_fleet_order() {
@@ -632,6 +673,7 @@ int main() {
         test_shipyard_capacity_is_shared_by_fifo_orders();
         test_shipyard_temporary_processed_material_shortage_recovers();
         test_fleet_movement();
+        test_fleet_movement_rejects_insufficient_fuel();
         test_cancel_fleet_order();
         test_fleet_order_queue_starts_next_order_after_arrival();
         test_clear_fleet_order_queue_preserves_current_order();
