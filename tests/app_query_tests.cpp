@@ -8,6 +8,7 @@
 
 #include <cstdlib>
 #include <exception>
+#include <cmath>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -23,6 +24,12 @@ public:
 
 void require(const bool condition, const std::string_view message) {
     if (!condition) {
+        throw TestFailure{message};
+    }
+}
+
+void requireNear(const double actual, const double expected, const std::string_view message) {
+    if (std::abs(actual - expected) > 1.0e-6) {
         throw TestFailure{message};
     }
 }
@@ -68,10 +75,20 @@ void test_colony_summaries_include_processing_policy() {
     require(colonies.front().processingPolicy == deep::ProcessingPolicy::Manual,
             "colony summary exposes processing policy enum");
     require(colonies.front().processingPolicyName == "Manual", "colony summary exposes processing policy display name");
-    require(colonies.front().manualProcessingAllocations.size() == 2,
-            "colony summary exposes manual processing allocation rows");
-    require(colonies.front().manualProcessingAllocations.front().materialName == "Propellant",
+    require(colonies.front().manualProcessingAllocations.size() == deep::processedMaterialCount(),
+            "colony summary exposes one manual processing row per processed material");
+    require(colonies.front().manualProcessingAllocations.at(deep::processedMaterialIndex(deep::ProcessedMaterial::Propellant)).materialName == "Propellant",
             "manual allocation summary resolves processed material display name");
+    requireNear(colonies.front().manualProcessingAllocations.at(deep::processedMaterialIndex(deep::ProcessedMaterial::Propellant)).normalizedPercent,
+                75.0,
+                "manual allocation summary reports normalized effective percent");
+    require(colonies.front().effectiveProcessingAllocations.size() == deep::processedMaterialCount(),
+            "colony summary exposes policy-derived processing rows for UI previews");
+    requireNear(colonies.front().effectiveProcessingAllocations.at(deep::processedMaterialIndex(deep::ProcessedMaterial::ReactorFuel)).normalizedPercent,
+                25.0,
+                "manual policy effective allocation is normalized from weights");
+    require(colonies.front().processedStockpiles.size() == deep::processedMaterialCount(),
+            "colony summary exposes processed stockpiles for policy preview math");
 }
 
 void test_shipyard_order_summaries_resolve_names() {

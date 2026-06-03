@@ -8,6 +8,7 @@
 // These tests avoid third-party dependencies for Phase 1, while still exercising
 // the command API, daily tick order, economy, production, movement, and event log.
 
+#include <cmath>
 #include <cstdlib>
 #include <exception>
 #include <iostream>
@@ -31,6 +32,12 @@ public:
 // than restating the expression so failures remain readable in CTest output.
 void require(const bool condition, const std::string_view message) {
     if (!condition) {
+        throw TestFailure{message};
+    }
+}
+
+void requireNear(const double actual, const double expected, const std::string_view message) {
+    if (std::abs(actual - expected) > 1.0e-6) {
         throw TestFailure{message};
     }
 }
@@ -168,6 +175,68 @@ void test_manual_processing_policy_directs_processor_capacity() {
             "manual policy allocates processor output to electronics");
     require(sim.state().colonies.front().processedStockpile.get(deep::ProcessedMaterial::StructuralAlloys) == startingAlloys,
             "manual policy does not also allocate capacity to structural alloys");
+}
+
+void test_manual_processing_weights_are_normalized() {
+    // Verifies Manual allocation values are relative weights, not percentages.
+    // A user can enter weights summing above or below 100 and the simulation
+    // still spends exactly one normalized processor-capacity pool per day.
+    deep::GameState state = deep::createHomeSystemScenario();
+    state.colonies.front().mines = 0.0;
+    state.colonies.front().processorCapacity = 40.0;
+    state.colonies.front().processedStockpile = deep::ProcessedMaterialSet{};
+    deep::Simulation sim{std::move(state)};
+    const deep::ColonyId colonyId = sim.state().colonies.front().id;
+
+    const auto policyResult = sim.execute(deep::SetColonyProcessingPolicyCommand{
+        .colonyId = colonyId,
+        .policy = deep::ProcessingPolicy::Manual,
+        .manualAllocations = {
+            deep::ProcessingAllocation{.material = deep::ProcessedMaterial::StructuralAlloys, .weight = 3.0},
+            deep::ProcessingAllocation{.material = deep::ProcessedMaterial::Electronics, .weight = 1.0}
+        }
+    });
+
+    require(policyResult.ok, "manual processing weights are accepted");
+    sim.advanceDays(1);
+
+    const deep::Colony& colony = sim.state().colonies.front();
+    requireNear(colony.processedStockpile.get(deep::ProcessedMaterial::StructuralAlloys),
+                30.0,
+                "manual weight 3 receives 75 percent of processor capacity");
+    requireNear(colony.processedStockpile.get(deep::ProcessedMaterial::Electronics),
+                10.0,
+                "manual weight 1 receives 25 percent of processor capacity");
+}
+
+void test_non_manual_policy_preserves_manual_weights() {
+    // Verifies preset policies do not overwrite the player's last Manual setup.
+    // The UI can switch to a read-only preset preview and then back to Manual
+    // without losing the stored manual weights.
+    deep::Simulation sim{deep::createHomeSystemScenario()};
+    const deep::ColonyId colonyId = sim.state().colonies.front().id;
+
+    require(sim.execute(deep::SetColonyProcessingPolicyCommand{
+        .colonyId = colonyId,
+        .policy = deep::ProcessingPolicy::Manual,
+        .manualAllocations = {
+            deep::ProcessingAllocation{.material = deep::ProcessedMaterial::Propellant, .weight = 2.0}
+        }
+    }).ok, "initial manual processing policy is accepted");
+
+    require(sim.execute(deep::SetColonyProcessingPolicyCommand{
+        .colonyId = colonyId,
+        .policy = deep::ProcessingPolicy::FuelFocus,
+        .manualAllocations = {
+            deep::ProcessingAllocation{.material = deep::ProcessedMaterial::Electronics, .weight = 9.0}
+        }
+    }).ok, "preset processing policy is accepted");
+
+    const deep::Colony& colony = sim.state().colonies.front();
+    require(colony.processingPolicy == deep::ProcessingPolicy::FuelFocus, "preset policy is stored");
+    require(colony.manualProcessingAllocations.size() == 1, "preset policy does not replace manual weights");
+    require(colony.manualProcessingAllocations.front().material == deep::ProcessedMaterial::Propellant,
+            "last manual material is preserved while preset policy is active");
 }
 
 void test_manual_processing_policy_requires_positive_weight() {
@@ -398,6 +467,8 @@ int main() {
         test_mining();
         test_processing_converts_raw_minerals_to_processed_materials();
         test_manual_processing_policy_directs_processor_capacity();
+        test_manual_processing_weights_are_normalized();
+        test_non_manual_policy_preserves_manual_weights();
         test_manual_processing_policy_requires_positive_weight();
         test_shipyard_completion();
         test_shipyard_capacity_is_shared_by_fifo_orders();

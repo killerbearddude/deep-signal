@@ -10,6 +10,7 @@
 #include "sim/Minerals.h"
 
 #include <algorithm>
+#include <array>
 #include <optional>
 #include <sstream>
 #include <type_traits>
@@ -126,15 +127,109 @@ template <typename T, typename IdT>
     return std::string{toString(material)};
 }
 
-[[nodiscard]] std::vector<ProcessingAllocationSummary> summarizeProcessingAllocations(const Colony& colony) {
-    std::vector<ProcessingAllocationSummary> summaries;
-    summaries.reserve(colony.manualProcessingAllocations.size());
+using ProcessingShares = std::array<double, processedMaterialCount()>;
 
-    for (const ProcessingAllocation& allocation : colony.manualProcessingAllocations) {
+void addProcessingWeight(ProcessingShares& weights, const ProcessedMaterial material, const double weight) noexcept {
+    if (weight <= 0.0 || processedMaterialIndex(material) >= processedMaterialCount()) {
+        return;
+    }
+
+    weights[processedMaterialIndex(material)] += weight;
+}
+
+[[nodiscard]] double processingWeightTotal(const ProcessingShares& weights) noexcept {
+    double total = 0.0;
+    for (const double weight : weights) {
+        total += std::max(0.0, weight);
+    }
+    return total;
+}
+
+[[nodiscard]] ProcessingShares balancedProcessingWeights() noexcept {
+    ProcessingShares weights{};
+    for (double& weight : weights) {
+        weight = 1.0;
+    }
+    return weights;
+}
+
+[[nodiscard]] ProcessingShares processingWeightsForPolicy(const Colony& colony, const ProcessingPolicy policy) noexcept {
+    ProcessingShares weights{};
+
+    switch (policy) {
+    case ProcessingPolicy::Balanced:
+        return balancedProcessingWeights();
+    case ProcessingPolicy::ShipbuildingFocus:
+        addProcessingWeight(weights, ProcessedMaterial::StructuralAlloys, 4.0);
+        addProcessingWeight(weights, ProcessedMaterial::Electronics, 2.0);
+        addProcessingWeight(weights, ProcessedMaterial::IndustrialComposites, 2.0);
+        addProcessingWeight(weights, ProcessedMaterial::Propellant, 1.0);
+        addProcessingWeight(weights, ProcessedMaterial::ReactorFuel, 1.0);
+        addProcessingWeight(weights, ProcessedMaterial::OrdnanceMaterials, 0.5);
+        break;
+    case ProcessingPolicy::FuelFocus:
+        addProcessingWeight(weights, ProcessedMaterial::Propellant, 5.0);
+        addProcessingWeight(weights, ProcessedMaterial::ReactorFuel, 2.0);
+        addProcessingWeight(weights, ProcessedMaterial::StructuralAlloys, 0.5);
+        addProcessingWeight(weights, ProcessedMaterial::Electronics, 0.5);
+        break;
+    case ProcessingPolicy::ElectronicsFocus:
+        addProcessingWeight(weights, ProcessedMaterial::Electronics, 5.0);
+        addProcessingWeight(weights, ProcessedMaterial::StructuralAlloys, 1.0);
+        addProcessingWeight(weights, ProcessedMaterial::IndustrialComposites, 1.0);
+        break;
+    case ProcessingPolicy::StockpileRecovery:
+        for (std::size_t i = 0; i < weights.size(); ++i) {
+            weights[i] = 1.0 / (1.0 + std::max(0.0, colony.processedStockpile.amount[i]));
+        }
+        break;
+    case ProcessingPolicy::Manual:
+        for (const ProcessingAllocation& allocation : colony.manualProcessingAllocations) {
+            addProcessingWeight(weights, allocation.material, allocation.weight);
+        }
+        break;
+    }
+
+    return weights;
+}
+
+[[nodiscard]] std::vector<ProcessingAllocationSummary> summarizeProcessingWeights(const ProcessingShares& weights) {
+    std::vector<ProcessingAllocationSummary> summaries;
+    summaries.reserve(weights.size());
+
+    const double totalWeight = processingWeightTotal(weights);
+    for (std::size_t i = 0; i < weights.size(); ++i) {
+        const ProcessedMaterial material = static_cast<ProcessedMaterial>(i);
+        const double weight = std::max(0.0, weights[i]);
         summaries.push_back(ProcessingAllocationSummary{
-            .material = allocation.material,
-            .materialName = processedMaterialName(allocation.material),
-            .weight = allocation.weight
+            .material = material,
+            .materialName = processedMaterialName(material),
+            .weight = weight,
+            .normalizedPercent = totalWeight <= kProcessedMaterialComparisonEpsilon ? 0.0 : weight * 100.0 / totalWeight
+        });
+    }
+
+    return summaries;
+}
+
+[[nodiscard]] std::vector<ProcessingAllocationSummary> summarizeManualProcessingAllocations(const Colony& colony) {
+    ProcessingShares weights{};
+    for (const ProcessingAllocation& allocation : colony.manualProcessingAllocations) {
+        addProcessingWeight(weights, allocation.material, allocation.weight);
+    }
+    return summarizeProcessingWeights(weights);
+}
+
+[[nodiscard]] std::vector<ProcessedMaterialStockpileSummary> summarizeProcessedStockpiles(const Colony& colony) {
+    std::vector<ProcessedMaterialStockpileSummary> summaries;
+    summaries.reserve(processedMaterialCount());
+
+    for (std::size_t i = 0; i < processedMaterialCount(); ++i) {
+        const ProcessedMaterial material = static_cast<ProcessedMaterial>(i);
+        summaries.push_back(ProcessedMaterialStockpileSummary{
+            .material = material,
+            .materialName = processedMaterialName(material),
+            .amount = colony.processedStockpile.amount[i]
         });
     }
 
@@ -254,7 +349,9 @@ std::vector<ColonySummary> SimulationQueries::colonies() const {
             .processorCapacity = colony.processorCapacity,
             .processingPolicy = colony.processingPolicy,
             .processingPolicyName = processingPolicyName(colony.processingPolicy),
-            .manualProcessingAllocations = summarizeProcessingAllocations(colony),
+            .manualProcessingAllocations = summarizeManualProcessingAllocations(colony),
+            .effectiveProcessingAllocations = summarizeProcessingWeights(processingWeightsForPolicy(colony, colony.processingPolicy)),
+            .processedStockpiles = summarizeProcessedStockpiles(colony),
             .shipyardCapacity = colony.shipyardCapacity,
             .totalRawStockpile = totalMinerals(colony.stockpile),
             .totalProcessedStockpile = totalProcessedMaterials(colony.processedStockpile)

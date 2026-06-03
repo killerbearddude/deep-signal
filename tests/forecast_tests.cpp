@@ -211,6 +211,31 @@ void test_processed_material_forecast_respects_processing_policy() {
     requireNear(alloys.processingIncomePerDay, 0.0, "manual electronics policy forecasts no structural alloy output");
 }
 
+void test_processed_material_forecast_normalizes_manual_weights() {
+    // Verifies manual forecast allocations are relative weights rather than
+    // literal percentages. The resulting material income should divide one
+    // processor-capacity pool by normalized share.
+    deep::SimulationService service;
+    const deep::ColonyId colonyId = service.state().colonies.front().id;
+
+    require(service.execute(deep::SetColonyProcessingPolicyCommand{
+        .colonyId = colonyId,
+        .policy = deep::ProcessingPolicy::Manual,
+        .manualAllocations = {
+            deep::ProcessingAllocation{.material = deep::ProcessedMaterial::StructuralAlloys, .weight = 3.0},
+            deep::ProcessingAllocation{.material = deep::ProcessedMaterial::Electronics, .weight = 1.0}
+        }
+    }).ok, "manual weighted processing policy is accepted before forecast");
+
+    const deep::ForecastService forecasts{service};
+    const auto chains = forecasts.processedMaterialForecastCauseChains();
+    const auto& alloys = requireMaterialCauseChain(chains, deep::ProcessedMaterial::StructuralAlloys);
+    const auto& electronics = requireMaterialCauseChain(chains, deep::ProcessedMaterial::Electronics);
+
+    requireNear(alloys.processingIncomePerDay, 37.5, "weight 3 forecasts 75 percent of processor output");
+    requireNear(electronics.processingIncomePerDay, 12.5, "weight 1 forecasts 25 percent of processor output");
+}
+
 void test_mineral_forecast_cause_chains_include_processing_demand() {
     // Verifies raw minerals include processing demand even without active
     // shipyard orders, because processors now consume raw inputs daily.
@@ -381,6 +406,7 @@ int main() {
         test_mineral_forecast_cause_chains_report_processing_demand();
         test_processed_material_forecast_cause_chains_report_shipyard_demand();
         test_processed_material_forecast_respects_processing_policy();
+        test_processed_material_forecast_normalizes_manual_weights();
         test_mineral_forecast_cause_chains_include_processing_demand();
         test_deposit_exhaustion_estimate_uses_current_income_rate();
         test_shipyard_order_eta_uses_capacity_and_accumulated_progress();

@@ -211,6 +211,9 @@ void addProcessingWeight(ProcessingShares& weights, const ProcessedMaterial mate
         return {};
     }
 
+    // Manual allocations and preset policies both use relative weights. Convert
+    // them to shares here so forecasts match Simulation::simulateProcessing and
+    // never treat UI-entered values as literal percentages.
     for (double& weight : weights) {
         weight /= totalWeight;
     }

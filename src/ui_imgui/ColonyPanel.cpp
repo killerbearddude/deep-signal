@@ -86,6 +86,83 @@ constexpr std::array<ProcessingPolicy, 6> kPolicies{
     return allocations;
 }
 
+void addProcessingWeight(std::array<double, processedMaterialCount()>& weights,
+                         const ProcessedMaterial material,
+                         const double weight) noexcept {
+    if (weight <= 0.0 || processedMaterialIndex(material) >= weights.size()) {
+        return;
+    }
+
+    weights[processedMaterialIndex(material)] += weight;
+}
+
+[[nodiscard]] double processedStockpileAmount(const ColonySummary& colony, const ProcessedMaterial material) noexcept {
+    const auto it = std::find_if(colony.processedStockpiles.begin(), colony.processedStockpiles.end(), [material](const ProcessedMaterialStockpileSummary& row) {
+        return row.material == material;
+    });
+    return it == colony.processedStockpiles.end() ? 0.0 : it->amount;
+}
+
+[[nodiscard]] std::array<double, processedMaterialCount()> policyWeightsForDisplay(
+    const ColonySummary& colony,
+    const ProcessingPolicy policy,
+    const std::array<double, processedMaterialCount()>& manualWeights) noexcept {
+    std::array<double, processedMaterialCount()> weights{};
+
+    switch (policy) {
+    case ProcessingPolicy::Balanced:
+        weights.fill(1.0);
+        break;
+    case ProcessingPolicy::ShipbuildingFocus:
+        addProcessingWeight(weights, ProcessedMaterial::StructuralAlloys, 4.0);
+        addProcessingWeight(weights, ProcessedMaterial::Electronics, 2.0);
+        addProcessingWeight(weights, ProcessedMaterial::IndustrialComposites, 2.0);
+        addProcessingWeight(weights, ProcessedMaterial::Propellant, 1.0);
+        addProcessingWeight(weights, ProcessedMaterial::ReactorFuel, 1.0);
+        addProcessingWeight(weights, ProcessedMaterial::OrdnanceMaterials, 0.5);
+        break;
+    case ProcessingPolicy::FuelFocus:
+        addProcessingWeight(weights, ProcessedMaterial::Propellant, 5.0);
+        addProcessingWeight(weights, ProcessedMaterial::ReactorFuel, 2.0);
+        addProcessingWeight(weights, ProcessedMaterial::StructuralAlloys, 0.5);
+        addProcessingWeight(weights, ProcessedMaterial::Electronics, 0.5);
+        break;
+    case ProcessingPolicy::ElectronicsFocus:
+        addProcessingWeight(weights, ProcessedMaterial::Electronics, 5.0);
+        addProcessingWeight(weights, ProcessedMaterial::StructuralAlloys, 1.0);
+        addProcessingWeight(weights, ProcessedMaterial::IndustrialComposites, 1.0);
+        break;
+    case ProcessingPolicy::StockpileRecovery:
+        for (std::size_t i = 0; i < weights.size(); ++i) {
+            const ProcessedMaterial material = static_cast<ProcessedMaterial>(i);
+            weights[i] = 1.0 / (1.0 + std::max(0.0, processedStockpileAmount(colony, material)));
+        }
+        break;
+    case ProcessingPolicy::Manual:
+        weights = manualWeights;
+        break;
+    }
+
+    return weights;
+}
+
+[[nodiscard]] double totalPositiveWeight(const std::array<double, processedMaterialCount()>& weights) noexcept {
+    double total = 0.0;
+    for (const double weight : weights) {
+        total += std::max(0.0, weight);
+    }
+    return total;
+}
+
+[[nodiscard]] double normalizedPercent(const std::array<double, processedMaterialCount()>& weights, const std::size_t index) noexcept {
+    const double total = totalPositiveWeight(weights);
+    if (total <= kProcessedMaterialComparisonEpsilon || index >= weights.size()) {
+        return 0.0;
+    }
+
+    return std::max(0.0, weights[index]) * 100.0 / total;
+}
+
 } // namespace
 
 void ColonyPanel::render(const SimulationQueries& queries,
@@ -177,29 +254,54 @@ void ColonyPanel::render(const SimulationQueries& queries,
         ImGui::EndCombo();
     }
 
-    ImGui::TextUnformatted("Manual Allocation");
-    constexpr double kMinManualPercent = 0.0;
-    constexpr double kMaxManualPercent = 100.0;
-    for (std::size_t i = 0; i < manualWeights_.size(); ++i) {
-        const ProcessedMaterial material = static_cast<ProcessedMaterial>(i);
-        ImGui::SliderScalar(std::string{toString(material)}.c_str(),
-                            ImGuiDataType_Double,
-                            &manualWeights_[i],
-                            &kMinManualPercent,
-                            &kMaxManualPercent,
-                            "%.1f%%");
+    const bool manualMode = selectedPolicy_ == ProcessingPolicy::Manual;
+    std::array<double, processedMaterialCount()> displayedWeights =
+        policyWeightsForDisplay(*colony, selectedPolicy_, manualWeights_);
+
+    ImGui::TextUnformatted(manualMode ? "Manual Allocation Weights" : "Policy-Derived Allocation");
+    if (!manualMode) {
+        ImGui::TextWrapped("Preset policies derive allocation weights automatically. Switch to Manual to edit weights.");
     }
 
-    if (ImGui::Button("Normalize")) {
-        normalizeManualWeights();
-        statusMessage_ = "Manual allocation normalized.";
+    constexpr double kMinManualWeight = 0.0;
+    constexpr double kMaxManualWeight = 10.0;
+    if (!manualMode) {
+        ImGui::BeginDisabled();
     }
-    ImGui::SameLine();
+    for (std::size_t i = 0; i < manualWeights_.size(); ++i) {
+        const ProcessedMaterial material = static_cast<ProcessedMaterial>(i);
+        const std::string materialName{toString(material)};
+        double& editableWeight = manualMode ? manualWeights_[i] : displayedWeights[i];
+        ImGui::PushID(static_cast<int>(i));
+        ImGui::SliderScalar(std::string{"Weight##" + materialName}.c_str(),
+                            ImGuiDataType_Double,
+                            &editableWeight,
+                            &kMinManualWeight,
+                            &kMaxManualWeight,
+                            "%.2f");
+        if (manualMode) {
+            displayedWeights[i] = manualWeights_[i];
+        }
+        ImGui::SameLine();
+        ImGui::Text("%s  %.1f%%", materialName.c_str(), normalizedPercent(displayedWeights, i));
+        ImGui::PopID();
+    }
+    if (!manualMode) {
+        ImGui::EndDisabled();
+    }
+
+    if (manualMode && ImGui::Button("Normalize")) {
+        normalizeManualWeights();
+        statusMessage_ = "Manual weights normalized; effective allocation remains 100%.";
+    }
+    if (manualMode) {
+        ImGui::SameLine();
+    }
     if (ImGui::Button("Apply")) {
         const CommandResult result = service.execute(SetColonyProcessingPolicyCommand{
             .colonyId = colony->id,
             .policy = selectedPolicy_,
-            .manualAllocations = allocationsFromWeights(manualWeights_)
+            .manualAllocations = manualMode ? allocationsFromWeights(manualWeights_) : std::vector<ProcessingAllocation>{}
         });
         statusMessage_ = result.message;
         if (result.ok) {
@@ -230,7 +332,7 @@ void ColonyPanel::loadEditorFromColony(const ColonySummary& colony) {
         return weight > kProcessedMaterialComparisonEpsilon;
     });
     if (!hasManualWeights) {
-        manualWeights_.fill(100.0 / static_cast<double>(manualWeights_.size()));
+        manualWeights_.fill(1.0);
     }
 
     statusMessage_.clear();
@@ -244,12 +346,12 @@ void ColonyPanel::normalizeManualWeights() noexcept {
     }
 
     if (total <= kProcessedMaterialComparisonEpsilon) {
-        manualWeights_.fill(100.0 / static_cast<double>(manualWeights_.size()));
+        manualWeights_.fill(1.0);
         return;
     }
 
     for (double& weight : manualWeights_) {
-        weight = weight * 100.0 / total;
+        weight /= total;
     }
 }
 

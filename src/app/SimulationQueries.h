@@ -23,6 +23,16 @@ struct ProcessingAllocationSummary {
     ProcessedMaterial material = ProcessedMaterial::StructuralAlloys;
     std::string materialName;
     double weight = 0.0;
+    double normalizedPercent = 0.0;
+};
+
+// Display-ready processed material stockpile row used by allocation previews.
+// The Colony panel needs per-material amounts for Stockpile Recovery without
+// reaching into raw Colony::processedStockpile arrays.
+struct ProcessedMaterialStockpileSummary {
+    ProcessedMaterial material = ProcessedMaterial::StructuralAlloys;
+    std::string materialName;
+    double amount = 0.0;
 };
 
 // Display-ready colony row for overview panels. Values are copied out of the
@@ -37,6 +47,8 @@ struct ColonySummary {
     ProcessingPolicy processingPolicy = ProcessingPolicy::Balanced;
     std::string processingPolicyName;
     std::vector<ProcessingAllocationSummary> manualProcessingAllocations;
+    std::vector<ProcessingAllocationSummary> effectiveProcessingAllocations;
+    std::vector<ProcessedMaterialStockpileSummary> processedStockpiles;
     double shipyardCapacity = 0.0;
     double totalRawStockpile = 0.0;
     double totalProcessedStockpile = 0.0;

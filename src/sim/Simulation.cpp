@@ -380,7 +380,12 @@ CommandResult Simulation::setColonyProcessingPolicy(const SetColonyProcessingPol
     }
 
     colony->processingPolicy = command.policy;
-    colony->manualProcessingAllocations = command.manualAllocations;
+    if (command.policy == ProcessingPolicy::Manual) {
+        // Manual weights are persistent player intent. Preset policies derive
+        // their own weights every day, so do not overwrite the last manual
+        // setup when the player temporarily switches to a preset.
+        colony->manualProcessingAllocations = command.manualAllocations;
+    }
 
     return CommandResult::success("Colony processing policy updated");
 }
