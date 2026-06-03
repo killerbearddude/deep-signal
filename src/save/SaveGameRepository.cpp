@@ -1,6 +1,6 @@
 #include "save/SaveGameRepository.h"
 
-// Implements schema v4 save/load mapping for the headless simulation state.
+// Implements schema v5 save/load mapping for the headless simulation state.
 // The repository uses prepared statements and transactions throughout; raw SQL
 // execution is limited to static schema/table maintenance statements with no data.
 
@@ -42,7 +42,7 @@ template <typename EnumT>
     return static_cast<std::int64_t>(value);
 }
 
-// Returns true when a persisted enum ordinal is part of the current schema v4
+// Returns true when a persisted enum ordinal is part of the current schema v5
 // contract. Keep this explicit instead of raw-casting database values; SQLite
 // files are inspectable and may be hand-edited or corrupted.
 template <typename EnumT>
@@ -51,6 +51,8 @@ template <typename EnumT>
         return value >= 0 && value < static_cast<std::int64_t>(mineralCount());
     } else if constexpr (std::is_same_v<EnumT, ProcessedMaterial>) {
         return value >= 0 && value < static_cast<std::int64_t>(processedMaterialCount());
+    } else if constexpr (std::is_same_v<EnumT, InstitutionType>) {
+        return value >= 0 && value <= static_cast<std::int64_t>(InstitutionType::ContinuityOffice);
     } else if constexpr (std::is_same_v<EnumT, BodyType>) {
         return value >= 0 && value <= static_cast<std::int64_t>(BodyType::Asteroid);
     } else if constexpr (std::is_same_v<EnumT, ShipRole>) {
@@ -147,7 +149,7 @@ void reuse(Statement& stmt) {
 }
 
 void clearExistingSave(Database& db) {
-    // Delete child tables first because schema v4 intentionally uses explicit
+    // Delete child tables first because schema v5 intentionally uses explicit
     // foreign keys rather than ON DELETE CASCADE. This makes destructive save
     // behavior visible and easy to audit.
     db.execute(R"sql(
@@ -163,6 +165,7 @@ void clearExistingSave(Database& db) {
         DELETE FROM colony_minerals;
         DELETE FROM mineral_deposits;
         DELETE FROM colonies;
+        DELETE FROM institutions;
         DELETE FROM bodies;
         DELETE FROM star_systems;
         DELETE FROM id_counters;
@@ -200,6 +203,7 @@ void saveIdCounters(Database& db, const IdCounters& ids) {
     insertCounter("next_star_system_id", ids.nextStarSystemId);
     insertCounter("next_body_id", ids.nextBodyId);
     insertCounter("next_colony_id", ids.nextColonyId);
+    insertCounter("next_institution_id", ids.nextInstitutionId);
     insertCounter("next_ship_class_id", ids.nextShipClassId);
     insertCounter("next_shipyard_order_id", ids.nextShipyardOrderId);
     insertCounter("next_ship_id", ids.nextShipId);
@@ -212,6 +216,17 @@ void saveStarSystems(Database& db, const GameState& state) {
     for (const StarSystem& system : state.starSystems) {
         stmt.bindInt64(1, idValue(system.id));
         stmt.bindText(2, system.name);
+        stmt.execute();
+        reuse(stmt);
+    }
+}
+
+void saveInstitutions(Database& db, const GameState& state) {
+    Statement stmt{db, "INSERT INTO institutions(id, name, institution_type) VALUES (?, ?, ?);"};
+    for (const Institution& institution : state.institutions) {
+        stmt.bindInt64(1, idValue(institution.id));
+        stmt.bindText(2, institution.name);
+        stmt.bindInt64(3, enumValue(institution.type));
         stmt.execute();
         reuse(stmt);
     }
@@ -233,8 +248,10 @@ void saveBodies(Database& db, const GameState& state) {
 
 void saveColonies(Database& db, const GameState& state) {
     Statement colonyStmt{db, R"sql(
-        INSERT INTO colonies(id, body_id, name, mines, processor_capacity, shipyard_capacity, processing_policy)
-        VALUES (?, ?, ?, ?, ?, ?, ?);
+        INSERT INTO colonies(
+            id, body_id, name, owner_institution_id, mines, processor_capacity,
+            shipyard_capacity, processing_policy
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?);
     )sql"};
     Statement mineralStmt{db, "INSERT INTO colony_minerals(colony_id, mineral, amount) VALUES (?, ?, ?);"};
     Statement materialStmt{db, "INSERT INTO colony_materials(colony_id, material, amount) VALUES (?, ?, ?);"};
@@ -247,10 +264,11 @@ void saveColonies(Database& db, const GameState& state) {
         colonyStmt.bindInt64(1, idValue(colony.id));
         colonyStmt.bindInt64(2, idValue(colony.bodyId));
         colonyStmt.bindText(3, colony.name);
-        colonyStmt.bindDouble(4, colony.mines);
-        colonyStmt.bindDouble(5, colony.processorCapacity);
-        colonyStmt.bindDouble(6, colony.shipyardCapacity);
-        colonyStmt.bindInt64(7, enumValue(colony.processingPolicy));
+        bindOptionalId(colonyStmt, 4, colony.ownerInstitutionId);
+        colonyStmt.bindDouble(5, colony.mines);
+        colonyStmt.bindDouble(6, colony.processorCapacity);
+        colonyStmt.bindDouble(7, colony.shipyardCapacity);
+        colonyStmt.bindInt64(8, enumValue(colony.processingPolicy));
         colonyStmt.execute();
         reuse(colonyStmt);
 
@@ -345,9 +363,9 @@ void saveShipyardOrders(Database& db, const GameState& state) {
 void saveFleets(Database& db, const GameState& state) {
     Statement fleetStmt{db, R"sql(
         INSERT INTO fleets(
-            id, name, current_body_id, destination_body_id, order_type,
-            order_target_body_id, order_days_remaining
-        ) VALUES (?, ?, ?, ?, ?, ?, ?);
+            id, name, owner_institution_id, current_body_id, destination_body_id,
+            order_type, order_target_body_id, order_days_remaining
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?);
     )sql"};
     Statement queueStmt{db, R"sql(
         INSERT INTO fleet_order_queue(fleet_id, ordinal, order_type, target_body_id)
@@ -357,11 +375,12 @@ void saveFleets(Database& db, const GameState& state) {
     for (const Fleet& fleet : state.fleets) {
         fleetStmt.bindInt64(1, idValue(fleet.id));
         fleetStmt.bindText(2, fleet.name);
-        fleetStmt.bindInt64(3, idValue(fleet.currentBodyId));
-        bindOptionalId(fleetStmt, 4, fleet.destinationBodyId);
-        fleetStmt.bindInt64(5, enumValue(fleet.activeOrder.type));
-        bindOptionalId(fleetStmt, 6, fleet.activeOrder.targetBodyId);
-        fleetStmt.bindInt64(7, fleet.activeOrder.daysRemaining);
+        bindOptionalId(fleetStmt, 3, fleet.ownerInstitutionId);
+        fleetStmt.bindInt64(4, idValue(fleet.currentBodyId));
+        bindOptionalId(fleetStmt, 5, fleet.destinationBodyId);
+        fleetStmt.bindInt64(6, enumValue(fleet.activeOrder.type));
+        bindOptionalId(fleetStmt, 7, fleet.activeOrder.targetBodyId);
+        fleetStmt.bindInt64(8, fleet.activeOrder.daysRemaining);
         fleetStmt.execute();
         reuse(fleetStmt);
 
@@ -451,6 +470,7 @@ void loadIdCounters(Database& db, IdCounters& ids) {
     ids.nextStarSystemId = loadCounter(db, "next_star_system_id");
     ids.nextBodyId = loadCounter(db, "next_body_id");
     ids.nextColonyId = loadCounter(db, "next_colony_id");
+    ids.nextInstitutionId = loadCounter(db, "next_institution_id");
     ids.nextShipClassId = loadCounter(db, "next_ship_class_id");
     ids.nextShipyardOrderId = loadCounter(db, "next_shipyard_order_id");
     ids.nextShipId = loadCounter(db, "next_ship_id");
@@ -464,6 +484,17 @@ void loadStarSystems(Database& db, GameState& state) {
         state.starSystems.push_back(StarSystem{
             .id = StarSystemId{stmt.columnInt64(0)},
             .name = stmt.columnText(1)
+        });
+    }
+}
+
+void loadInstitutions(Database& db, GameState& state) {
+    Statement stmt{db, "SELECT id, name, institution_type FROM institutions ORDER BY id;"};
+    while (stmt.step()) {
+        state.institutions.push_back(Institution{
+            .id = InstitutionId{stmt.columnInt64(0)},
+            .name = stmt.columnText(1),
+            .type = enumFromValue<InstitutionType>(stmt.columnInt64(2))
         });
     }
 }
@@ -484,7 +515,8 @@ void loadBodies(Database& db, GameState& state) {
 
 void loadColonies(Database& db, GameState& state) {
     Statement colonies{db, R"sql(
-        SELECT id, body_id, name, mines, processor_capacity, shipyard_capacity, processing_policy
+        SELECT id, body_id, name, owner_institution_id, mines, processor_capacity,
+               shipyard_capacity, processing_policy
         FROM colonies
         ORDER BY id;
     )sql"};
@@ -495,11 +527,12 @@ void loadColonies(Database& db, GameState& state) {
             .name = colonies.columnText(2),
             .stockpile = MineralSet{},
             .processedStockpile = ProcessedMaterialSet{},
-            .mines = colonies.columnDouble(3),
-            .processorCapacity = colonies.columnDouble(4),
-            .shipyardCapacity = colonies.columnDouble(5),
-            .processingPolicy = enumFromValue<ProcessingPolicy>(colonies.columnInt64(6)),
-            .manualProcessingAllocations = {}
+            .mines = colonies.columnDouble(4),
+            .processorCapacity = colonies.columnDouble(5),
+            .shipyardCapacity = colonies.columnDouble(6),
+            .processingPolicy = enumFromValue<ProcessingPolicy>(colonies.columnInt64(7)),
+            .manualProcessingAllocations = {},
+            .ownerInstitutionId = optionalIdFromColumn<InstitutionId>(colonies, 3)
         });
     }
 
@@ -604,8 +637,8 @@ void loadShipyardOrders(Database& db, GameState& state) {
 
 void loadFleets(Database& db, GameState& state) {
     Statement stmt{db, R"sql(
-        SELECT id, name, current_body_id, destination_body_id, order_type,
-               order_target_body_id, order_days_remaining
+        SELECT id, name, owner_institution_id, current_body_id, destination_body_id,
+               order_type, order_target_body_id, order_days_remaining
         FROM fleets
         ORDER BY id;
     )sql"};
@@ -613,15 +646,16 @@ void loadFleets(Database& db, GameState& state) {
         state.fleets.push_back(Fleet{
             .id = FleetId{stmt.columnInt64(0)},
             .name = stmt.columnText(1),
-            .currentBodyId = BodyId{stmt.columnInt64(2)},
-            .destinationBodyId = optionalIdFromColumn<BodyId>(stmt, 3),
+            .currentBodyId = BodyId{stmt.columnInt64(3)},
+            .destinationBodyId = optionalIdFromColumn<BodyId>(stmt, 4),
             .shipIds = {},
             .activeOrder = FleetOrder{
-                .type = enumFromValue<FleetOrderType>(stmt.columnInt64(4)),
-                .targetBodyId = optionalIdFromColumn<BodyId>(stmt, 5),
-                .daysRemaining = checkedIntFromSql(stmt.columnInt64(6), "fleets.order_days_remaining")
+                .type = enumFromValue<FleetOrderType>(stmt.columnInt64(5)),
+                .targetBodyId = optionalIdFromColumn<BodyId>(stmt, 6),
+                .daysRemaining = checkedIntFromSql(stmt.columnInt64(7), "fleets.order_days_remaining")
             },
-            .queuedOrders = {}
+            .queuedOrders = {},
+            .ownerInstitutionId = optionalIdFromColumn<InstitutionId>(stmt, 2)
         });
     }
 
@@ -693,6 +727,7 @@ void SaveGameRepository::save(const std::filesystem::path& path, const GameState
     saveMeta(db, state);
     saveIdCounters(db, state.ids);
     saveStarSystems(db, state);
+    saveInstitutions(db, state);
     saveBodies(db, state);
     saveColonies(db, state);
     saveMineralDeposits(db, state);
@@ -722,6 +757,7 @@ GameState SaveGameRepository::load(const std::filesystem::path& path) {
     state.date.day = loadMetaInt64(db, "current_day");
     loadIdCounters(db, state.ids);
     loadStarSystems(db, state);
+    loadInstitutions(db, state);
     loadBodies(db, state);
     loadColonies(db, state);
     loadMineralDeposits(db, state);
@@ -732,7 +768,7 @@ GameState SaveGameRepository::load(const std::filesystem::path& path) {
     loadEvents(db, state);
 
     // There is intentionally no load step for dailyEconomySnapshots. Economy
-    // telemetry is transient runtime data in schema v4 and remains empty until
+    // telemetry is transient runtime data in schema v5 and remains empty until
     // the loaded simulation advances new days.
 
     // SQLite constraints are first-line protection only. The authoritative pass

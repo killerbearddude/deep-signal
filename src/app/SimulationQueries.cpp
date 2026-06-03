@@ -35,6 +35,15 @@ template <typename T, typename IdT>
     return body == nullptr ? std::string{"<unknown body>"} : body->name;
 }
 
+[[nodiscard]] std::string institutionName(const GameState& state, const InstitutionId id) {
+    const Institution* institution = findById(state.institutions, id);
+    return institution == nullptr ? std::string{"<unknown institution>"} : institution->name;
+}
+
+[[nodiscard]] std::string optionalInstitutionName(const GameState& state, const std::optional<InstitutionId> id) {
+    return id.has_value() ? institutionName(state, *id) : std::string{};
+}
+
 [[nodiscard]] const Body* bodyById(const GameState& state, const BodyId id) noexcept {
     return findById(state.bodies, id);
 }
@@ -424,6 +433,8 @@ std::vector<ColonySummary> SimulationQueries::colonies() const {
             .processorCapacity = colony.processorCapacity,
             .processingPolicy = colony.processingPolicy,
             .processingPolicyName = processingPolicyName(colony.processingPolicy),
+            .ownerInstitutionId = colony.ownerInstitutionId,
+            .ownerInstitutionName = optionalInstitutionName(state, colony.ownerInstitutionId),
             .manualProcessingAllocations = summarizeManualProcessingAllocations(colony),
             .effectiveProcessingAllocations = summarizeProcessingWeights(processingWeightsForPolicy(colony, colony.processingPolicy)),
             .processedStockpiles = summarizeProcessedStockpiles(colony),
@@ -569,6 +580,8 @@ std::vector<FleetSummary> SimulationQueries::fleets() const {
                 ? bodyName(state, *fleet.destinationBodyId)
                 : std::string{},
             .shipCount = fleet.shipIds.size(),
+            .ownerInstitutionId = fleet.ownerInstitutionId,
+            .ownerInstitutionName = optionalInstitutionName(state, fleet.ownerInstitutionId),
             .activeOrderType = fleet.activeOrder.type,
             .activeOrderName = fleetOrderName(fleet.activeOrder.type),
             .hasActiveOrder = hasActiveOrder,
@@ -587,6 +600,10 @@ std::vector<FleetSummary> SimulationQueries::fleets() const {
     return summaries;
 }
 
+
+std::string SimulationQueries::institutionDisplayName(const InstitutionId id) const {
+    return institutionName(service_.state(), id);
+}
 
 std::optional<FleetSummary> SimulationQueries::fleet(const FleetId id) const {
     const std::vector<FleetSummary> summaries = fleets();

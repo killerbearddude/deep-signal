@@ -155,6 +155,18 @@ void test_manual_processing_policy_without_positive_total_weight_is_rejected() {
     });
 }
 
+void test_invalid_institution_references_are_rejected() {
+    // Institution ownership is optional in v1, but any present reference must
+    // resolve before later trust/access mechanics consume it.
+    expectInvalidState("colony owner institution missing", [](deep::GameState& state) {
+        state.colonies.front().ownerInstitutionId = deep::InstitutionId{999};
+    });
+
+    expectInvalidState("fleet owner institution missing", [](deep::GameState& state) {
+        state.fleets.front().ownerInstitutionId = deep::InstitutionId{999};
+    });
+}
+
 void test_ship_missing_from_owning_fleet_is_rejected() {
     // Ship and fleet references must be bidirectional. A ship whose fleet does
     // not list it would disappear from fleet-level views and order resolution.
@@ -186,7 +198,8 @@ void test_ship_claimed_by_multiple_fleets_is_rejected() {
             .destinationBodyId = std::nullopt,
             .shipIds = {shipId},
             .activeOrder = {},
-            .queuedOrders = {}
+            .queuedOrders = {},
+            .ownerInstitutionId = state.fleets.front().ownerInstitutionId
         });
     });
 }
@@ -282,6 +295,7 @@ int main() {
         test_invalid_manual_processing_material_is_rejected();
         test_invalid_manual_processing_weights_are_rejected();
         test_manual_processing_policy_without_positive_total_weight_is_rejected();
+        test_invalid_institution_references_are_rejected();
         test_ship_missing_from_owning_fleet_is_rejected();
         test_fleet_listing_nonexistent_ship_is_rejected();
         test_ship_claimed_by_multiple_fleets_is_rejected();

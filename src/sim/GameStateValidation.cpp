@@ -34,6 +34,21 @@ void requireState(const bool condition, const std::string_view message) {
     }
 }
 
+[[nodiscard]] bool isValidInstitutionType(const InstitutionType value) noexcept {
+    switch (value) {
+    case InstitutionType::InnerAuthority:
+    case InstitutionType::NavalConstruction:
+    case InstitutionType::ExtractionCombine:
+    case InstitutionType::FuelTrust:
+    case InstitutionType::SurveyOffice:
+    case InstitutionType::PrivateHauler:
+    case InstitutionType::DevelopmentBureau:
+    case InstitutionType::ContinuityOffice:
+        return true;
+    }
+    return false;
+}
+
 [[nodiscard]] bool isValidBodyType(const BodyType value) noexcept {
     switch (value) {
     case BodyType::Star:
@@ -261,6 +276,7 @@ void validateGameState(const GameState& state) {
     validateIdsAndCounter<StarSystem, StarSystemId>(state.starSystems, state.ids.nextStarSystemId, "star system");
     validateIdsAndCounter<Body, BodyId>(state.bodies, state.ids.nextBodyId, "body");
     validateIdsAndCounter<Colony, ColonyId>(state.colonies, state.ids.nextColonyId, "colony");
+    validateIdsAndCounter<Institution, InstitutionId>(state.institutions, state.ids.nextInstitutionId, "institution");
     validateIdsAndCounter<ShipClass, ShipClassId>(state.shipClasses, state.ids.nextShipClassId, "ship class");
     validateIdsAndCounter<ShipyardOrder, ShipyardOrderId>(state.shipyardOrders,
                                                             state.ids.nextShipyardOrderId,
@@ -273,6 +289,11 @@ void validateGameState(const GameState& state) {
         requireState(!system.name.empty(), "star system name must be non-empty");
     }
 
+    for (const Institution& institution : state.institutions) {
+        requireState(!institution.name.empty(), "institution name must be non-empty");
+        requireState(isValidInstitutionType(institution.type), "institution type must be valid");
+    }
+
     for (const Body& body : state.bodies) {
         requireValidReference(containsId(state.starSystems, body.systemId), body.systemId, "body system");
         requireState(!body.name.empty(), "body name must be non-empty");
@@ -282,6 +303,11 @@ void validateGameState(const GameState& state) {
 
     for (const Colony& colony : state.colonies) {
         requireValidReference(containsId(state.bodies, colony.bodyId), colony.bodyId, "colony body");
+        if (colony.ownerInstitutionId.has_value()) {
+            requireValidReference(containsId(state.institutions, *colony.ownerInstitutionId),
+                                  *colony.ownerInstitutionId,
+                                  "colony owner institution");
+        }
         requireState(!colony.name.empty(), "colony name must be non-empty");
         validateMineralSet(colony.stockpile, "colony raw stockpile");
         validateProcessedMaterialSet(colony.processedStockpile, "colony processed stockpile");
@@ -350,6 +376,11 @@ void validateGameState(const GameState& state) {
     std::unordered_map<std::int64_t, FleetId> listedShipFleetIds;
     for (const Fleet& fleet : state.fleets) {
         requireState(!fleet.name.empty(), "fleet name must be non-empty");
+        if (fleet.ownerInstitutionId.has_value()) {
+            requireValidReference(containsId(state.institutions, *fleet.ownerInstitutionId),
+                                  *fleet.ownerInstitutionId,
+                                  "fleet owner institution");
+        }
         requireValidReference(containsId(state.bodies, fleet.currentBodyId), fleet.currentBodyId, "fleet current body");
         validateFleetOrder(state, fleet);
 

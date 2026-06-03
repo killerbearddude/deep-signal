@@ -807,7 +807,8 @@ void Simulation::simulateShipyards(std::vector<SimEvent>& emitted) {
                 .destinationBodyId = std::nullopt,
                 .shipIds = {shipId},
                 .activeOrder = FleetOrder{},
-                .queuedOrders = {}
+                .queuedOrders = {},
+                .ownerInstitutionId = colony->ownerInstitutionId
             };
 
             Ship ship{

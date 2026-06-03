@@ -1,6 +1,6 @@
 #include "save/Schema.h"
 
-// Implements schema v4 for Prototype 0.1 saves.
+// Implements schema v5 for Prototype 0.1 saves.
 // The schema mirrors GameState-owned records and keeps event payloads as typed
 // JSON text for inspectable, forward-migratable audit history. CHECK constraints
 // intentionally duplicate core invariants so hand-edited save files fail early.
@@ -36,7 +36,7 @@ void initializeSchema(Database& db) {
 
         CREATE TABLE IF NOT EXISTS schema_version (
             id INTEGER PRIMARY KEY CHECK(id = 1),
-            version INTEGER NOT NULL CHECK(version = 4)
+            version INTEGER NOT NULL CHECK(version = 5)
         );
 
         CREATE TABLE IF NOT EXISTS game_meta (
@@ -54,6 +54,12 @@ void initializeSchema(Database& db) {
             name TEXT NOT NULL CHECK(length(name) > 0)
         );
 
+        CREATE TABLE IF NOT EXISTS institutions (
+            id INTEGER PRIMARY KEY NOT NULL CHECK(id > 0),
+            name TEXT NOT NULL CHECK(length(name) > 0),
+            institution_type INTEGER NOT NULL CHECK(institution_type BETWEEN 0 AND 7)
+        );
+
         CREATE TABLE IF NOT EXISTS bodies (
             id INTEGER PRIMARY KEY NOT NULL CHECK(id > 0),
             system_id INTEGER NOT NULL CHECK(system_id > 0),
@@ -68,11 +74,13 @@ void initializeSchema(Database& db) {
             id INTEGER PRIMARY KEY NOT NULL CHECK(id > 0),
             body_id INTEGER NOT NULL CHECK(body_id > 0),
             name TEXT NOT NULL CHECK(length(name) > 0),
+            owner_institution_id INTEGER NULL CHECK(owner_institution_id IS NULL OR owner_institution_id > 0),
             mines REAL NOT NULL CHECK(mines >= 0.0),
             processor_capacity REAL NOT NULL CHECK(processor_capacity >= 0.0),
             shipyard_capacity REAL NOT NULL CHECK(shipyard_capacity >= 0.0),
             processing_policy INTEGER NOT NULL CHECK(processing_policy BETWEEN 0 AND 5),
-            FOREIGN KEY(body_id) REFERENCES bodies(id)
+            FOREIGN KEY(body_id) REFERENCES bodies(id),
+            FOREIGN KEY(owner_institution_id) REFERENCES institutions(id)
         );
 
         CREATE TABLE IF NOT EXISTS colony_minerals (
@@ -148,6 +156,7 @@ void initializeSchema(Database& db) {
         CREATE TABLE IF NOT EXISTS fleets (
             id INTEGER PRIMARY KEY NOT NULL CHECK(id > 0),
             name TEXT NOT NULL CHECK(length(name) > 0),
+            owner_institution_id INTEGER NULL CHECK(owner_institution_id IS NULL OR owner_institution_id > 0),
             current_body_id INTEGER NOT NULL CHECK(current_body_id > 0),
             destination_body_id INTEGER NULL CHECK(destination_body_id IS NULL OR destination_body_id > 0),
             order_type INTEGER NOT NULL CHECK(order_type BETWEEN 0 AND 1),
@@ -163,6 +172,7 @@ void initializeSchema(Database& db) {
                  destination_body_id != current_body_id AND
                  order_days_remaining > 0)
             ),
+            FOREIGN KEY(owner_institution_id) REFERENCES institutions(id),
             FOREIGN KEY(current_body_id) REFERENCES bodies(id),
             FOREIGN KEY(destination_body_id) REFERENCES bodies(id),
             FOREIGN KEY(order_target_body_id) REFERENCES bodies(id)
@@ -201,8 +211,10 @@ void initializeSchema(Database& db) {
 
         CREATE INDEX IF NOT EXISTS idx_bodies_system_id ON bodies(system_id);
         CREATE INDEX IF NOT EXISTS idx_colonies_body_id ON colonies(body_id);
+        CREATE INDEX IF NOT EXISTS idx_colonies_owner_institution_id ON colonies(owner_institution_id);
         CREATE INDEX IF NOT EXISTS idx_colony_processing_allocations_colony_id
             ON colony_processing_allocations(colony_id);
+        CREATE INDEX IF NOT EXISTS idx_fleets_owner_institution_id ON fleets(owner_institution_id);
         CREATE INDEX IF NOT EXISTS idx_fleet_order_queue_fleet_id ON fleet_order_queue(fleet_id);
         CREATE INDEX IF NOT EXISTS idx_ships_fleet_id ON ships(fleet_id);
         CREATE INDEX IF NOT EXISTS idx_events_day ON event_log(day);

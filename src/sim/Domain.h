@@ -20,6 +20,30 @@ inline constexpr double kPrototypeFuelPerMapUnit = 1.0;
 // Shared tolerance for fleet fuel affordability and post-consumption clamping.
 inline constexpr double kFuelComparisonEpsilon = 1.0e-6;
 
+
+// Coarse institutional roles for the mature home-system start. These are
+// identity/category labels only; v1 ownership does not add politics, trust,
+// contracts, access rights, or autonomous behavior.
+enum class InstitutionType {
+    InnerAuthority,
+    NavalConstruction,
+    ExtractionCombine,
+    FuelTrust,
+    SurveyOffice,
+    PrivateHauler,
+    DevelopmentBureau,
+    ContinuityOffice
+};
+
+// Lightweight institution identity record. Institutions own or influence assets
+// by ID references on core domain records, while all policy mechanics are left
+// for later patches.
+struct Institution {
+    InstitutionId id;
+    std::string name;
+    InstitutionType type = InstitutionType::ContinuityOffice;
+};
+
 // A star system container. Prototype 0.1 starts with a single Sol system.
 struct StarSystem {
     StarSystemId id;
@@ -90,6 +114,9 @@ struct Colony {
     double shipyardCapacity = 0.0;
     ProcessingPolicy processingPolicy = ProcessingPolicy::Balanced;
     std::vector<ProcessingAllocation> manualProcessingAllocations;
+    // Optional owner/influence reference used to identify which home-system
+    // institution is responsible for the colony. V1 has no access rules.
+    std::optional<InstitutionId> ownerInstitutionId;
 };
 
 // Prototype ship roles used for filtering and future UI grouping.
@@ -178,6 +205,9 @@ struct Fleet {
     std::vector<ShipId> shipIds;
     FleetOrder activeOrder;
     std::vector<QueuedFleetOrder> queuedOrders;
+    // Optional owner/influence reference used for audit and future command
+    // constraints. V1 does not restrict fleet orders by owner.
+    std::optional<InstitutionId> ownerInstitutionId;
 };
 
 } // namespace deep

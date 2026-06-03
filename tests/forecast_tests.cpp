@@ -104,7 +104,8 @@ void test_mineral_income_per_day_shares_deposits_between_colonies() {
         .processorCapacity = 0.0,
         .shipyardCapacity = 0.0,
         .processingPolicy = deep::ProcessingPolicy::Balanced,
-        .manualProcessingAllocations = {}
+        .manualProcessingAllocations = {},
+        .ownerInstitutionId = state.colonies.front().ownerInstitutionId
     });
 
     const deep::SimulationService service{std::move(state)};

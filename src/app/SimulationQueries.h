@@ -46,6 +46,8 @@ struct ColonySummary {
     double processorCapacity = 0.0;
     ProcessingPolicy processingPolicy = ProcessingPolicy::Balanced;
     std::string processingPolicyName;
+    std::optional<InstitutionId> ownerInstitutionId;
+    std::string ownerInstitutionName;
     std::vector<ProcessingAllocationSummary> manualProcessingAllocations;
     std::vector<ProcessingAllocationSummary> effectiveProcessingAllocations;
     std::vector<ProcessedMaterialStockpileSummary> processedStockpiles;
@@ -132,6 +134,8 @@ struct FleetSummary {
     std::optional<BodyId> destinationBodyId;
     std::string destinationBodyName;
     std::size_t shipCount = 0;
+    std::optional<InstitutionId> ownerInstitutionId;
+    std::string ownerInstitutionName;
     FleetOrderType activeOrderType = FleetOrderType::None;
     std::string activeOrderName;
     bool hasActiveOrder = false;
@@ -239,6 +243,10 @@ public:
 
     // Returns a single fleet summary when the ID exists in the active snapshot.
     [[nodiscard]] std::optional<FleetSummary> fleet(FleetId id) const;
+
+    // Returns a display name for an institution reference. Unknown IDs produce a
+    // stable placeholder so UI/tests can show broken references clearly.
+    [[nodiscard]] std::string institutionDisplayName(InstitutionId id) const;
 
     // Returns fuel affordability for appending one move to the current fleet queue.
     [[nodiscard]] std::optional<FleetMovePreview> fleetMovePreview(FleetId fleetId, BodyId destinationBodyId) const;

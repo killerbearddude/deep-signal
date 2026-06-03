@@ -16,11 +16,45 @@ GameState createHomeSystemScenario() {
     const BodyId terraId{state.ids.nextBodyId++};
     const BodyId marsId{state.ids.nextBodyId++};
     const ColonyId terraColonyId{state.ids.nextColonyId++};
+    const InstitutionId continuityOfficeId{state.ids.nextInstitutionId++};
+    const InstitutionId navalBoardId{state.ids.nextInstitutionId++};
+    const InstitutionId extractionCombineId{state.ids.nextInstitutionId++};
+    const InstitutionId fuelTrustId{state.ids.nextInstitutionId++};
+    const InstitutionId surveyOfficeId{state.ids.nextInstitutionId++};
     const ShipClassId surveyCutterId{state.ids.nextShipClassId++};
 
     state.starSystems.push_back(StarSystem{
         .id = solId,
         .name = "Sol"
+    });
+
+    // Starter institutions are identity anchors only. Ownership references let
+    // assets carry institutional provenance before trust, requests, or access
+    // mechanics exist.
+    state.institutions.push_back(Institution{
+        .id = continuityOfficeId,
+        .name = "Strategic Continuity Office",
+        .type = InstitutionType::ContinuityOffice
+    });
+    state.institutions.push_back(Institution{
+        .id = navalBoardId,
+        .name = "Naval Construction Board",
+        .type = InstitutionType::NavalConstruction
+    });
+    state.institutions.push_back(Institution{
+        .id = extractionCombineId,
+        .name = "Belt Extraction Combine",
+        .type = InstitutionType::ExtractionCombine
+    });
+    state.institutions.push_back(Institution{
+        .id = fuelTrustId,
+        .name = "Outer Fuel Trust",
+        .type = InstitutionType::FuelTrust
+    });
+    state.institutions.push_back(Institution{
+        .id = surveyOfficeId,
+        .name = "Survey Office",
+        .type = InstitutionType::SurveyOffice
     });
 
     state.bodies.push_back(Body{
@@ -75,7 +109,8 @@ GameState createHomeSystemScenario() {
         .processorCapacity = 50.0,
         .shipyardCapacity = 100.0,
         .processingPolicy = ProcessingPolicy::Balanced,
-        .manualProcessingAllocations = {}
+        .manualProcessingAllocations = {},
+        .ownerInstitutionId = continuityOfficeId
     });
 
     // Starter deposits are raw resources only. Colony processors convert them

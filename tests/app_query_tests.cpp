@@ -45,6 +45,9 @@ void test_colony_summaries_resolve_body_context() {
     require(colonies.size() == 1, "home scenario exposes one colony summary");
     require(colonies.front().name == "Terra Directorate", "colony summary includes colony name");
     require(colonies.front().bodyName == "Terra", "colony summary resolves body name");
+    require(colonies.front().ownerInstitutionId.has_value(), "colony summary exposes owner institution ID");
+    require(colonies.front().ownerInstitutionName == "Strategic Continuity Office",
+            "colony summary resolves owner institution name");
     require(colonies.front().mines == 10.0, "colony summary includes mine count");
     require(colonies.front().processorCapacity == 50.0, "colony summary includes processor capacity");
     require(colonies.front().shipyardCapacity == 100.0, "colony summary includes shipyard capacity");
@@ -330,6 +333,12 @@ void test_single_record_queries_return_matching_summaries() {
 
     require(fleet.has_value(), "existing fleet ID returns a fleet summary");
     require(fleet->id == fleetId, "fleet lookup preserves the requested ID");
+    require(fleet->ownerInstitutionName == "Strategic Continuity Office",
+            "fleet summary resolves inherited owner institution name");
+    require(queries.institutionDisplayName(*fleet->ownerInstitutionId) == "Strategic Continuity Office",
+            "institution display-name helper resolves known institution IDs");
+    require(queries.institutionDisplayName(deep::InstitutionId{9999}) == "<unknown institution>",
+            "institution display-name helper marks unknown institution IDs");
     require(body.has_value(), "existing body ID returns a strategic body summary");
     require(body->name == "Terra", "body lookup resolves Terra");
     require(!missingFleet.has_value(), "missing fleet ID returns no summary");

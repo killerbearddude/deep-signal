@@ -5,8 +5,8 @@
 #include "sim/Minerals.h"
 
 // Regression tests for SQLite save/load round-tripping.
-// These tests verify that schema v3 persists durable Prototype 0.1 state,
-// including ID counters, economy rows, production, active fleet orders, and events.
+// These tests verify that schema v5 persists durable Prototype 0.1 state,
+// including ID counters, institutions, ownership, production, fleet orders, and events.
 // Runtime-only economy telemetry is tested separately as intentionally transient.
 
 #include <cmath>
@@ -131,6 +131,7 @@ void requireSameState(const deep::GameState& expected, const deep::GameState& ac
     require(expected.ids.nextStarSystemId == actual.ids.nextStarSystemId, "star-system counter round-trips");
     require(expected.ids.nextBodyId == actual.ids.nextBodyId, "body counter round-trips");
     require(expected.ids.nextColonyId == actual.ids.nextColonyId, "colony counter round-trips");
+    require(expected.ids.nextInstitutionId == actual.ids.nextInstitutionId, "institution counter round-trips");
     require(expected.ids.nextShipClassId == actual.ids.nextShipClassId, "ship-class counter round-trips");
     require(expected.ids.nextShipyardOrderId == actual.ids.nextShipyardOrderId, "shipyard-order counter round-trips");
     require(expected.ids.nextShipId == actual.ids.nextShipId, "ship counter round-trips");
@@ -141,6 +142,15 @@ void requireSameState(const deep::GameState& expected, const deep::GameState& ac
     for (std::size_t i = 0; i < expected.starSystems.size(); ++i) {
         require(expected.starSystems.at(i).id == actual.starSystems.at(i).id, "star-system ID round-trips");
         require(expected.starSystems.at(i).name == actual.starSystems.at(i).name, "star-system name round-trips");
+    }
+
+    require(expected.institutions.size() == actual.institutions.size(), "institution row count round-trips");
+    for (std::size_t i = 0; i < expected.institutions.size(); ++i) {
+        const deep::Institution& left = expected.institutions.at(i);
+        const deep::Institution& right = actual.institutions.at(i);
+        require(left.id == right.id, "institution ID round-trips");
+        require(left.name == right.name, "institution name round-trips");
+        require(left.type == right.type, "institution type round-trips");
     }
 
     require(expected.bodies.size() == actual.bodies.size(), "body row count round-trips");
@@ -162,6 +172,7 @@ void requireSameState(const deep::GameState& expected, const deep::GameState& ac
         require(left.id == right.id, "colony ID round-trips");
         require(left.bodyId == right.bodyId, "colony body ID round-trips");
         require(left.name == right.name, "colony name round-trips");
+        require(sameOptionalId(left.ownerInstitutionId, right.ownerInstitutionId), "colony owner institution round-trips");
         require(sameMineralSet(left.stockpile, right.stockpile), "colony raw stockpile round-trips");
         require(sameProcessedMaterialSet(left.processedStockpile, right.processedStockpile),
                 "colony processed stockpile round-trips");
@@ -215,6 +226,7 @@ void requireSameState(const deep::GameState& expected, const deep::GameState& ac
         const deep::Fleet& right = actual.fleets.at(i);
         require(left.id == right.id, "fleet ID round-trips");
         require(left.name == right.name, "fleet name round-trips");
+        require(sameOptionalId(left.ownerInstitutionId, right.ownerInstitutionId), "fleet owner institution round-trips");
         require(left.currentBodyId == right.currentBodyId, "fleet current body round-trips");
         require(sameOptionalId(left.destinationBodyId, right.destinationBodyId), "fleet destination body round-trips");
         require(left.shipIds == right.shipIds, "fleet ship ID list is rebuilt from ships");
@@ -433,6 +445,40 @@ void test_sqlite_save_load_round_trip() {
     std::filesystem::remove(path);
 }
 
+void test_institution_identity_and_ownership_round_trip() {
+    // Verifies the mature-home-system identity layer is durable before any
+    // politics or access mechanics are added on top of the owner references.
+    const std::filesystem::path path = std::filesystem::temp_directory_path() /
+                                      "deep_signal_institution_ownership_roundtrip.sqlite";
+    std::filesystem::remove(path);
+
+    deep::SimulationService service;
+    require(service.state().institutions.size() >= 5, "starter scenario includes institution records");
+    require(service.state().colonies.front().ownerInstitutionId.has_value(),
+            "starter colony has an owner institution before save");
+
+    const deep::ColonyId colonyId = service.state().colonies.front().id;
+    const deep::ShipClassId shipClassId = service.state().shipClasses.front().id;
+    require(service.execute(deep::AssignShipyardBuildCommand{
+        .colonyId = colonyId,
+        .shipClassId = shipClassId,
+        .quantity = 1
+    }).ok, "build order is accepted before institution round-trip");
+    service.advanceDays(5);
+    require(service.state().fleets.front().ownerInstitutionId == service.state().colonies.front().ownerInstitutionId,
+            "new fleet inherits colony owner institution");
+
+    const auto saveResult = service.saveGame(path);
+    require(saveResult.ok, "service saves institution ownership state");
+
+    const deep::GameState loaded = deep::save::SaveGameRepository::load(path);
+    requireSameState(service.state(), loaded);
+    require(loaded.institutions.front().name == "Strategic Continuity Office",
+            "institution name survives repository load");
+
+    std::filesystem::remove(path);
+}
+
 void test_manual_processing_policy_state_round_trips() {
     // Verifies the player-facing processing allocation controls are durable.
     // Without this coverage, loading a save can silently revert production intent
@@ -472,7 +518,7 @@ void test_manual_processing_policy_state_round_trips() {
 }
 
 void test_daily_economy_snapshots_are_runtime_only() {
-    // Confirms the schema v3 contract for high-volume economy telemetry. The
+    // Confirms the schema v5 contract for high-volume economy telemetry. The
     // stockpile/deposit state is durable, but per-day mining samples are a
     // current-session UI/forecast/debug aid and intentionally reload empty.
     const std::filesystem::path path = std::filesystem::temp_directory_path() / "deep_signal_transient_telemetry.sqlite";
@@ -642,6 +688,19 @@ void test_malformed_save_unknown_order_status_is_rejected() {
                                 true);
 }
 
+void test_malformed_save_broken_owner_institution_reference_is_rejected() {
+    // Ownership is soft gameplay data in v1, but a present owner ID must still
+    // point at a real institution so future access/trust rules have safe inputs.
+    expectMalformedSaveRejected("broken_colony_owner",
+                                "UPDATE colonies SET owner_institution_id = 999 WHERE id = 1;",
+                                false,
+                                true);
+    expectMalformedSaveRejected("broken_fleet_owner",
+                                "UPDATE fleets SET owner_institution_id = 999 WHERE id = 1;",
+                                false,
+                                true);
+}
+
 void test_malformed_save_negative_colony_mines_is_rejected() {
     // SQLite CHECK constraints are not authoritative because external tools can
     // disable them. The loaded GameState graph must reject negative production.
@@ -669,6 +728,7 @@ void test_malformed_save_event_payload_missing_field_is_rejected() {
 int main() {
     try {
         test_sqlite_save_load_round_trip();
+        test_institution_identity_and_ownership_round_trip();
         test_manual_processing_policy_state_round_trips();
         test_daily_economy_snapshots_are_runtime_only();
         test_malformed_save_missing_schema_version_is_rejected();
@@ -690,6 +750,7 @@ int main() {
         test_malformed_save_completed_order_with_build_progress_is_rejected();
         test_malformed_save_active_order_already_complete_is_rejected();
         test_malformed_save_unknown_order_status_is_rejected();
+        test_malformed_save_broken_owner_institution_reference_is_rejected();
         test_malformed_save_negative_colony_mines_is_rejected();
         test_malformed_save_non_finite_numeric_value_is_rejected();
         test_malformed_save_event_payload_missing_field_is_rejected();

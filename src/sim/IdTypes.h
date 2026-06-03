@@ -25,6 +25,7 @@ struct Id {
 struct StarSystemTag;
 struct BodyTag;
 struct ColonyTag;
+struct InstitutionTag;
 struct ShipClassTag;
 struct ShipTag;
 struct FleetTag;
@@ -34,6 +35,7 @@ struct EventTag;
 using StarSystemId = Id<StarSystemTag>;
 using BodyId = Id<BodyTag>;
 using ColonyId = Id<ColonyTag>;
+using InstitutionId = Id<InstitutionTag>;
 using ShipClassId = Id<ShipClassTag>;
 using ShipId = Id<ShipTag>;
 using FleetId = Id<FleetTag>;
