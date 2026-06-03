@@ -319,6 +319,9 @@ void Simulation::simulateShipyards(std::vector<SimEvent>& emitted) {
                 break;
             }
 
+            // TEMP: Ship construction consumes raw minerals directly in the
+            // prototype economy. A later processing-chain patch should charge
+            // intermediate industrial materials instead.
             colony->stockpile.subtract(shipClass->buildCost);
             order.accumulatedBuildPoints -= shipClass->buildPoints;
             ++order.quantityCompleted;

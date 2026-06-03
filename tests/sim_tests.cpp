@@ -43,14 +43,14 @@ void test_mineral_subtraction_clamps_epsilon_negative_residue() {
     deep::MineralSet stockpile;
     deep::MineralSet cost;
 
-    stockpile.set(deep::Mineral::Structural, 500.0);
-    cost.set(deep::Mineral::Structural, 500.0 + (deep::kMineralComparisonEpsilon * 0.5));
+    stockpile.set(deep::Mineral::Iron, 500.0);
+    cost.set(deep::Mineral::Iron, 500.0 + (deep::kMineralComparisonEpsilon * 0.5));
 
     require(stockpile.canPay(cost), "epsilon-sized mineral residue is payable");
 
     stockpile.subtract(cost);
 
-    require(stockpile.get(deep::Mineral::Structural) == 0.0,
+    require(stockpile.get(deep::Mineral::Iron) == 0.0,
             "epsilon-sized negative mineral residue clamps exactly to zero");
 }
 
@@ -60,8 +60,8 @@ void test_mineral_can_pay_rejects_meaningful_shortage() {
     deep::MineralSet stockpile;
     deep::MineralSet cost;
 
-    stockpile.set(deep::Mineral::Structural, 500.0);
-    cost.set(deep::Mineral::Structural, 501.0);
+    stockpile.set(deep::Mineral::Iron, 500.0);
+    cost.set(deep::Mineral::Iron, 501.0);
 
     require(!stockpile.canPay(cost), "meaningful mineral shortage is not payable");
 
@@ -86,8 +86,8 @@ void test_time_advancement() {
     require(sim.state().date.day == 5, "advancing 5 days reaches day 5");
     require(events.empty(), "pure mining days emit no audit events");
     require(sim.state().eventLog.empty(), "pure mining days do not append audit history");
-    require(sim.state().dailyEconomySnapshots.size() == 10,
-            "five days of two deposits creates ten telemetry rows");
+    require(sim.state().dailyEconomySnapshots.size() == 35,
+            "five days of seven Terra deposits creates thirty-five telemetry rows");
     require(sim.state().dailyEconomySnapshots.front().day == 1, "telemetry captures first simulated day");
     require(sim.state().dailyEconomySnapshots.back().day == 5, "telemetry captures latest simulated day");
 }
@@ -97,25 +97,25 @@ void test_mining() {
     // economic foundation for future industry and forecast systems.
     deep::Simulation sim{deep::createHomeSystemScenario()};
 
-    const double startingStructural = sim.state().colonies.front().stockpile.get(deep::Mineral::Structural);
+    const double startingIron = sim.state().colonies.front().stockpile.get(deep::Mineral::Iron);
     const double startingDeposit = sim.state().mineralDeposits.front().remaining;
 
     sim.advanceDays(1);
 
-    const double endingStructural = sim.state().colonies.front().stockpile.get(deep::Mineral::Structural);
+    const double endingIron = sim.state().colonies.front().stockpile.get(deep::Mineral::Iron);
     const double endingDeposit = sim.state().mineralDeposits.front().remaining;
 
-    require(endingStructural > startingStructural, "mining increases structural stockpile");
+    require(endingIron > startingIron, "mining increases iron stockpile");
     require(endingDeposit < startingDeposit, "mining decreases deposit");
-    require(sim.state().dailyEconomySnapshots.size() == 2, "one mining day creates telemetry for both deposits");
+    require(sim.state().dailyEconomySnapshots.size() == 7, "one mining day creates telemetry for all Terra deposits");
 
-    const deep::DailyEconomySnapshot& structuralTelemetry = sim.state().dailyEconomySnapshots.front();
-    require(structuralTelemetry.day == 1, "mining telemetry records the production day");
-    require(structuralTelemetry.colonyId == sim.state().colonies.front().id, "mining telemetry records colony ID");
-    require(structuralTelemetry.bodyId == sim.state().colonies.front().bodyId, "mining telemetry records body ID");
-    require(structuralTelemetry.mineral == deep::Mineral::Structural, "mining telemetry records mineral type");
-    require(structuralTelemetry.amount > 0.0, "mining telemetry records extracted amount");
-    require(structuralTelemetry.remainingDeposit == endingDeposit, "mining telemetry records remaining deposit");
+    const deep::DailyEconomySnapshot& ironTelemetry = sim.state().dailyEconomySnapshots.front();
+    require(ironTelemetry.day == 1, "mining telemetry records the production day");
+    require(ironTelemetry.colonyId == sim.state().colonies.front().id, "mining telemetry records colony ID");
+    require(ironTelemetry.bodyId == sim.state().colonies.front().bodyId, "mining telemetry records body ID");
+    require(ironTelemetry.mineral == deep::Mineral::Iron, "mining telemetry records mineral type");
+    require(ironTelemetry.amount > 0.0, "mining telemetry records extracted amount");
+    require(ironTelemetry.remainingDeposit == endingDeposit, "mining telemetry records remaining deposit");
 }
 
 void test_shipyard_completion() {
@@ -192,9 +192,9 @@ void test_shipyard_temporary_mineral_shortage_recovers() {
     // blocking the order. This prevents a deadlock where future mining produces
     // enough minerals but the order is skipped forever because its status changed.
     deep::GameState state = deep::createHomeSystemScenario();
-    state.colonies.front().stockpile.set(deep::Mineral::Structural, 0.0);
-    state.colonies.front().stockpile.set(deep::Mineral::Propulsion, 1'000.0);
-    state.colonies.front().stockpile.set(deep::Mineral::Electronics, 1'000.0);
+    state.colonies.front().stockpile.set(deep::Mineral::Iron, 0.0);
+    state.colonies.front().stockpile.set(deep::Mineral::Titanium, 1'000.0);
+    state.colonies.front().stockpile.set(deep::Mineral::Copper, 1'000.0);
 
     deep::Simulation sim{std::move(state)};
     const deep::ColonyId colonyId = sim.state().colonies.front().id;

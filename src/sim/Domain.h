@@ -43,7 +43,7 @@ struct Body {
 // values above 1.0 can model unusually rich deposits in later scenario data.
 struct MineralDeposit {
     BodyId bodyId;
-    Mineral mineral = Mineral::Structural;
+    Mineral mineral = Mineral::Iron;
     double remaining = 0.0;
     double accessibility = 1.0;
 };

@@ -203,11 +203,11 @@ void test_body_system_overview_exposes_counts() {
     require(bodies.front().name == "Terra", "first body overview row resolves Terra");
     require(bodies.front().typeName == "Terrestrial", "body overview resolves body type name");
     require(bodies.front().colonyCount == 1, "Terra body overview counts the colony");
-    require(bodies.front().mineralDepositCount == 2, "Terra body overview counts mineral deposits");
+    require(bodies.front().mineralDepositCount == 7, "Terra body overview counts mineral deposits");
     require(bodies.front().fleetCount == 1, "Terra body overview counts the newly completed fleet");
     require(bodies.at(1).name == "Mars", "second body overview row resolves Mars");
     require(bodies.at(1).colonyCount == 0, "Mars body overview has no colonies in the home scenario");
-    require(bodies.at(1).mineralDepositCount == 0, "Mars body overview has no deposits in the home scenario");
+    require(bodies.at(1).mineralDepositCount == 4, "Mars body overview counts mineral deposits");
     require(bodies.at(1).fleetCount == 0, "Mars body overview has no fleets before movement");
 }
 

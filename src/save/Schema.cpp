@@ -75,7 +75,7 @@ void initializeSchema(Database& db) {
 
         CREATE TABLE IF NOT EXISTS colony_minerals (
             colony_id INTEGER NOT NULL CHECK(colony_id > 0),
-            mineral INTEGER NOT NULL CHECK(mineral BETWEEN 0 AND 4),
+            mineral INTEGER NOT NULL CHECK(mineral BETWEEN 0 AND 13),
             amount REAL NOT NULL CHECK(amount >= 0.0),
             PRIMARY KEY(colony_id, mineral),
             FOREIGN KEY(colony_id) REFERENCES colonies(id)
@@ -83,7 +83,7 @@ void initializeSchema(Database& db) {
 
         CREATE TABLE IF NOT EXISTS mineral_deposits (
             body_id INTEGER NOT NULL CHECK(body_id > 0),
-            mineral INTEGER NOT NULL CHECK(mineral BETWEEN 0 AND 4),
+            mineral INTEGER NOT NULL CHECK(mineral BETWEEN 0 AND 13),
             remaining REAL NOT NULL CHECK(remaining >= 0.0),
             accessibility REAL NOT NULL CHECK(accessibility >= 0.0),
             PRIMARY KEY(body_id, mineral),
@@ -101,7 +101,7 @@ void initializeSchema(Database& db) {
 
         CREATE TABLE IF NOT EXISTS ship_class_costs (
             ship_class_id INTEGER NOT NULL CHECK(ship_class_id > 0),
-            mineral INTEGER NOT NULL CHECK(mineral BETWEEN 0 AND 4),
+            mineral INTEGER NOT NULL CHECK(mineral BETWEEN 0 AND 13),
             amount REAL NOT NULL CHECK(amount >= 0.0),
             PRIMARY KEY(ship_class_id, mineral),
             FOREIGN KEY(ship_class_id) REFERENCES ship_classes(id)

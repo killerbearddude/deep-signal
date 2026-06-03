@@ -28,7 +28,7 @@ enum class EventSeverity {
 struct MineralExtractedEvent {
     ColonyId colonyId;
     BodyId bodyId;
-    Mineral mineral = Mineral::Structural;
+    Mineral mineral = Mineral::Iron;
     double amount = 0.0;
     double remainingDeposit = 0.0;
 };
@@ -40,7 +40,7 @@ struct DailyEconomySnapshot {
     std::int64_t day = 0;
     ColonyId colonyId;
     BodyId bodyId;
-    Mineral mineral = Mineral::Structural;
+    Mineral mineral = Mineral::Iron;
     double amount = 0.0;
     double remainingDeposit = 0.0;
 };

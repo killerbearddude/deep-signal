@@ -108,7 +108,7 @@ void test_mineral_extracted_round_trips() {
     requireRoundTrip(deep::MineralExtractedEvent{
         .colonyId = deep::ColonyId{1},
         .bodyId = deep::BodyId{2},
-        .mineral = deep::Mineral::Electronics,
+        .mineral = deep::Mineral::Copper,
         .amount = 12.5,
         .remainingDeposit = 9876.25
     }, "mineral_extracted payload round-trips");
@@ -189,7 +189,7 @@ void test_invalid_mineral_ordinal_is_rejected() {
     requireThrows("invalid mineral ordinal is rejected", [] {
         static_cast<void>(deep::save::eventPayloadFromJson(
             "mineral_extracted",
-            R"({"colony_id":1,"body_id":2,"mineral":5,"amount":1.0,"remaining_deposit":2.0})"));
+            R"({"colony_id":1,"body_id":2,"mineral":14,"amount":1.0,"remaining_deposit":2.0})"));
     });
 }
 
@@ -210,7 +210,7 @@ void test_non_finite_numeric_serialization_is_rejected() {
         static_cast<void>(deep::save::eventPayloadToJson(deep::MineralExtractedEvent{
             .colonyId = deep::ColonyId{1},
             .bodyId = deep::BodyId{2},
-            .mineral = deep::Mineral::Structural,
+            .mineral = deep::Mineral::Iron,
             .amount = std::numeric_limits<double>::quiet_NaN(),
             .remainingDeposit = 2.0
         }));
@@ -220,7 +220,7 @@ void test_non_finite_numeric_serialization_is_rejected() {
         static_cast<void>(deep::save::eventPayloadToJson(deep::MineralExtractedEvent{
             .colonyId = deep::ColonyId{1},
             .bodyId = deep::BodyId{2},
-            .mineral = deep::Mineral::Structural,
+            .mineral = deep::Mineral::Iron,
             .amount = 1.0,
             .remainingDeposit = std::numeric_limits<double>::infinity()
         }));

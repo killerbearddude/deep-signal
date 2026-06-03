@@ -103,7 +103,7 @@ void test_non_finite_stockpile_amounts_are_rejected() {
     // NaN/Inf quantities poison arithmetic and comparisons. Reject them at the
     // state boundary instead of attempting to repair downstream systems.
     expectInvalidState("non-finite stockpile", [](deep::GameState& state) {
-        state.colonies.front().stockpile.set(deep::Mineral::Structural,
+        state.colonies.front().stockpile.set(deep::Mineral::Iron,
                                              std::numeric_limits<double>::infinity());
     });
 }

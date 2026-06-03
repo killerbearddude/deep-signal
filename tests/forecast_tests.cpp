@@ -58,12 +58,12 @@ void test_mineral_income_per_day_uses_current_mining_formula() {
 
     const auto income = forecasts.mineralIncomePerDay();
 
-    require(income.size() == 2, "home scenario has two income forecast rows");
+    require(income.size() == 7, "home scenario has seven Terra income forecast rows");
     require(income.front().colonyName == "Terra Directorate", "income forecast resolves colony name");
     require(income.front().bodyName == "Terra", "income forecast resolves body name");
-    require(income.front().mineralName == "Structural", "income forecast exposes mineral name");
-    requireNear(income.front().incomePerDay, 10.0, "structural income uses mines times accessibility");
-    requireNear(income.at(1).incomePerDay, 4.5, "propulsion income uses accessibility multiplier");
+    require(income.front().mineralName == "Iron", "income forecast exposes mineral name");
+    requireNear(income.front().incomePerDay, 10.0, "iron income uses mines times accessibility");
+    requireNear(income.at(1).incomePerDay, 8.0, "nickel income uses accessibility multiplier");
     require(!income.front().explanation.empty(), "income forecast includes explanation text");
 }
 
@@ -77,7 +77,7 @@ void test_mineral_income_per_day_shares_deposits_between_colonies() {
     const deep::ColonyId secondColonyId{state.ids.nextColonyId++};
 
     for (deep::MineralDeposit& deposit : state.mineralDeposits) {
-        if (deposit.bodyId == terraId && deposit.mineral == deep::Mineral::Structural) {
+        if (deposit.bodyId == terraId && deposit.mineral == deep::Mineral::Iron) {
             deposit.remaining = 10.0;
         }
     }
@@ -95,27 +95,27 @@ void test_mineral_income_per_day_shares_deposits_between_colonies() {
     const deep::ForecastService forecasts{service};
     const auto income = forecasts.mineralIncomePerDay();
 
-    double structuralIncomeTotal = 0.0;
-    std::optional<double> firstColonyStructuralIncome;
-    std::optional<double> secondColonyStructuralIncome;
+    double ironIncomeTotal = 0.0;
+    std::optional<double> firstColonyIronIncome;
+    std::optional<double> secondColonyIronIncome;
     for (const deep::MineralIncomeForecast& row : income) {
-        if (row.bodyId != terraId || row.mineral != deep::Mineral::Structural) {
+        if (row.bodyId != terraId || row.mineral != deep::Mineral::Iron) {
             continue;
         }
 
-        structuralIncomeTotal += row.incomePerDay;
+        ironIncomeTotal += row.incomePerDay;
         if (row.colonyId == firstColonyId) {
-            firstColonyStructuralIncome = row.incomePerDay;
+            firstColonyIronIncome = row.incomePerDay;
         } else if (row.colonyId == secondColonyId) {
-            secondColonyStructuralIncome = row.incomePerDay;
+            secondColonyIronIncome = row.incomePerDay;
         }
     }
 
-    require(firstColonyStructuralIncome.has_value(), "first colony structural forecast row exists");
-    require(secondColonyStructuralIncome.has_value(), "second colony structural forecast row exists");
-    requireNear(structuralIncomeTotal, 10.0, "combined income does not exceed shared deposit remaining");
-    requireNear(*firstColonyStructuralIncome, 10.0, "first colony receives the capped remaining deposit");
-    requireNear(*secondColonyStructuralIncome, 0.0, "later colony receives no income after deposit exhaustion");
+    require(firstColonyIronIncome.has_value(), "first colony iron forecast row exists");
+    require(secondColonyIronIncome.has_value(), "second colony iron forecast row exists");
+    requireNear(ironIncomeTotal, 10.0, "combined income does not exceed shared deposit remaining");
+    requireNear(*firstColonyIronIncome, 10.0, "first colony receives the capped remaining deposit");
+    requireNear(*secondColonyIronIncome, 0.0, "later colony receives no income after deposit exhaustion");
 }
 
 void test_mineral_forecast_cause_chains_report_shipyard_demand() {
@@ -133,20 +133,20 @@ void test_mineral_forecast_cause_chains_report_shipyard_demand() {
 
     const deep::ForecastService forecasts{service};
     const auto chains = forecasts.mineralForecastCauseChains();
-    const deep::MineralForecastCauseChain& structural = requireCauseChain(chains, deep::Mineral::Structural);
+    const deep::MineralForecastCauseChain& iron = requireCauseChain(chains, deep::Mineral::Iron);
 
     require(chains.size() == deep::mineralCount(), "one cause chain is returned for every mineral");
-    require(structural.mineralName == "Structural", "cause chain exposes mineral name");
-    requireNear(structural.stockpile, 10000.0, "cause chain sums colony stockpiles");
-    requireNear(structural.miningIncomePerDay, 10.0, "cause chain includes mining income per day");
-    requireNear(structural.activeShipyardDemandPerDay, 100.0, "cause chain amortizes active shipyard demand");
-    requireNear(structural.netPerDay, -90.0, "cause chain computes net mineral flow");
-    require(structural.stockpileRunoutDays.has_value(), "negative net flow yields stockpile runout");
-    require(*structural.stockpileRunoutDays == 112, "runout rounds stockpile divided by deficit up to days");
-    require(structural.causes.size() == 2, "cause chain contains the v1 explanation rows");
-    require(structural.causes.front().label == "Mining", "first cause row explains mining");
-    require(structural.causes.at(1).label == "Active shipyard orders", "second cause row explains shipyard demand");
-    requireNear(structural.causes.at(1).amountPerDay, -100.0, "shipyard cause row reports demand as a negative contribution");
+    require(iron.mineralName == "Iron", "cause chain exposes mineral name");
+    requireNear(iron.stockpile, 10000.0, "cause chain sums colony stockpiles");
+    requireNear(iron.miningIncomePerDay, 10.0, "cause chain includes mining income per day");
+    requireNear(iron.activeShipyardDemandPerDay, 100.0, "cause chain amortizes active shipyard demand");
+    requireNear(iron.netPerDay, -90.0, "cause chain computes net mineral flow");
+    require(iron.stockpileRunoutDays.has_value(), "negative net flow yields stockpile runout");
+    require(*iron.stockpileRunoutDays == 112, "runout rounds stockpile divided by deficit up to days");
+    require(iron.causes.size() == 2, "cause chain contains the v1 explanation rows");
+    require(iron.causes.front().label == "Mining", "first cause row explains mining");
+    require(iron.causes.at(1).label == "Active shipyard orders", "second cause row explains shipyard demand");
+    requireNear(iron.causes.at(1).amountPerDay, -100.0, "shipyard cause row reports demand as a negative contribution");
 }
 
 void test_mineral_forecast_cause_chains_omit_runout_for_surplus() {
@@ -155,12 +155,12 @@ void test_mineral_forecast_cause_chains_omit_runout_for_surplus() {
     const deep::SimulationService service;
     const deep::ForecastService forecasts{service};
     const auto chains = forecasts.mineralForecastCauseChains();
-    const deep::MineralForecastCauseChain& structural = requireCauseChain(chains, deep::Mineral::Structural);
+    const deep::MineralForecastCauseChain& iron = requireCauseChain(chains, deep::Mineral::Iron);
 
-    requireNear(structural.miningIncomePerDay, 10.0, "surplus forecast includes current mining income");
-    requireNear(structural.activeShipyardDemandPerDay, 0.0, "surplus forecast has no active shipyard demand");
-    requireNear(structural.netPerDay, 10.0, "surplus forecast computes positive net flow");
-    require(!structural.stockpileRunoutDays.has_value(), "non-negative net flow has no runout day");
+    requireNear(iron.miningIncomePerDay, 10.0, "surplus forecast includes current mining income");
+    requireNear(iron.activeShipyardDemandPerDay, 0.0, "surplus forecast has no active shipyard demand");
+    requireNear(iron.netPerDay, 10.0, "surplus forecast computes positive net flow");
+    require(!iron.stockpileRunoutDays.has_value(), "non-negative net flow has no runout day");
 }
 
 void test_deposit_exhaustion_estimate_uses_current_income_rate() {
@@ -171,11 +171,11 @@ void test_deposit_exhaustion_estimate_uses_current_income_rate() {
 
     const auto deposits = forecasts.depositExhaustionEstimates();
 
-    require(deposits.size() == 2, "home scenario has two deposit exhaustion rows");
+    require(deposits.size() == 11, "home scenario has Terra and Mars deposit exhaustion rows");
     require(deposits.front().exhaustionDays.has_value(), "positive income yields exhaustion estimate");
-    require(*deposits.front().exhaustionDays == 100000, "structural deposit exhaustion is rounded up by days");
-    require(deposits.at(1).exhaustionDays.has_value(), "propulsion deposit also has exhaustion estimate");
-    require(*deposits.at(1).exhaustionDays == 55556, "propulsion exhaustion uses accessibility-adjusted income");
+    require(*deposits.front().exhaustionDays == 100000, "iron deposit exhaustion is rounded up by days");
+    require(deposits.at(1).exhaustionDays.has_value(), "nickel deposit also has exhaustion estimate");
+    require(*deposits.at(1).exhaustionDays == 75000, "nickel exhaustion uses accessibility-adjusted income");
     require(!deposits.front().explanation.empty(), "deposit exhaustion forecast includes explanation text");
 }
 
@@ -248,7 +248,7 @@ void test_production_backlog_reports_blocking_mineral() {
     // order from completing with current stockpiles. This is an app-layer
     // explanation only; it does not change simulation production rules.
     deep::GameState state = deep::createHomeSystemScenario();
-    state.colonies.front().stockpile.set(deep::Mineral::Structural, 100.0);
+    state.colonies.front().stockpile.set(deep::Mineral::Iron, 100.0);
 
     deep::SimulationService service{std::move(state)};
     const deep::ColonyId colonyId = service.state().colonies.front().id;
@@ -266,11 +266,11 @@ void test_production_backlog_reports_blocking_mineral() {
     require(backlog.size() == 1, "one blocked backlog row is returned");
     require(backlog.front().blockedByMineral, "backlog row marks mineral blocker");
     require(backlog.front().blockingMineral.has_value(), "blocking mineral enum is set");
-    require(*backlog.front().blockingMineral == deep::Mineral::Structural, "structural is the blocking mineral");
-    require(backlog.front().blockingMineralName == "Structural", "blocking mineral name is display-ready");
-    requireNear(backlog.front().requiredMineralsRemaining.get(deep::Mineral::Structural), 500.0,
-                "required remaining minerals include one Survey Cutter structural cost");
-    require(backlog.front().statusName == "Blocked: Structural", "status names the blocking mineral");
+    require(*backlog.front().blockingMineral == deep::Mineral::Iron, "iron is the blocking mineral");
+    require(backlog.front().blockingMineralName == "Iron", "blocking mineral name is display-ready");
+    requireNear(backlog.front().requiredMineralsRemaining.get(deep::Mineral::Iron), 500.0,
+                "required remaining minerals include one Survey Cutter iron cost");
+    require(backlog.front().statusName == "Blocked: Iron", "status names the blocking mineral");
 }
 
 void test_fleet_arrival_eta_reports_active_move_order() {

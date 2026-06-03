@@ -21,7 +21,7 @@ namespace deep {
 struct MineralIncomeForecast {
     ColonyId colonyId;
     BodyId bodyId;
-    Mineral mineral = Mineral::Structural;
+    Mineral mineral = Mineral::Iron;
     std::string colonyName;
     std::string bodyName;
     std::string mineralName;
@@ -41,7 +41,7 @@ struct MineralForecastCauseRow {
 // This v1 forecast uses current mining income and amortized active shipyard
 // commitments; it does not introduce new economy systems or future automation.
 struct MineralForecastCauseChain {
-    Mineral mineral = Mineral::Structural;
+    Mineral mineral = Mineral::Iron;
     std::string mineralName;
     double stockpile = 0.0;
     double miningIncomePerDay = 0.0;
@@ -55,7 +55,7 @@ struct MineralForecastCauseChain {
 // exhaustionDays is empty when no positive extraction rate exists.
 struct DepositExhaustionForecast {
     BodyId bodyId;
-    Mineral mineral = Mineral::Structural;
+    Mineral mineral = Mineral::Iron;
     std::string bodyName;
     std::string mineralName;
     double remainingDeposit = 0.0;

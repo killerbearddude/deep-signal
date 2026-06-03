@@ -42,11 +42,20 @@ GameState createHomeSystemScenario() {
     });
 
     MineralSet startingStockpile;
-    startingStockpile.set(Mineral::Structural, 10'000.0);
-    startingStockpile.set(Mineral::Propulsion, 5'000.0);
-    startingStockpile.set(Mineral::Electronics, 5'000.0);
-    startingStockpile.set(Mineral::Fuel, 50'000.0);
-    startingStockpile.set(Mineral::Ordnance, 2'000.0);
+    startingStockpile.set(Mineral::Iron, 10'000.0);
+    startingStockpile.set(Mineral::Nickel, 5'000.0);
+    startingStockpile.set(Mineral::Titanium, 4'000.0);
+    startingStockpile.set(Mineral::Aluminum, 8'000.0);
+    startingStockpile.set(Mineral::Copper, 3'000.0);
+    startingStockpile.set(Mineral::Silicon, 4'000.0);
+    startingStockpile.set(Mineral::Lithium, 1'000.0);
+    startingStockpile.set(Mineral::Uranium, 500.0);
+    startingStockpile.set(Mineral::Thorium, 500.0);
+    startingStockpile.set(Mineral::RareEarthElements, 700.0);
+    startingStockpile.set(Mineral::PlatinumGroupMetals, 200.0);
+    startingStockpile.set(Mineral::WaterIce, 50'000.0);
+    startingStockpile.set(Mineral::CarbonCompounds, 10'000.0);
+    startingStockpile.set(Mineral::Volatiles, 20'000.0);
 
     state.colonies.push_back(Colony{
         .id = terraColonyId,
@@ -57,24 +66,93 @@ GameState createHomeSystemScenario() {
         .shipyardCapacity = 100.0
     });
 
+    // Starter deposits are intentionally raw resources only. Processing chains
+    // will later convert these into alloys, electronics, propellant, and fuel.
     state.mineralDeposits.push_back(MineralDeposit{
         .bodyId = terraId,
-        .mineral = Mineral::Structural,
+        .mineral = Mineral::Iron,
         .remaining = 1'000'000.0,
         .accessibility = 1.0
     });
 
     state.mineralDeposits.push_back(MineralDeposit{
         .bodyId = terraId,
-        .mineral = Mineral::Propulsion,
+        .mineral = Mineral::Nickel,
+        .remaining = 600'000.0,
+        .accessibility = 0.8
+    });
+
+    state.mineralDeposits.push_back(MineralDeposit{
+        .bodyId = terraId,
+        .mineral = Mineral::Copper,
+        .remaining = 200'000.0,
+        .accessibility = 0.6
+    });
+
+    state.mineralDeposits.push_back(MineralDeposit{
+        .bodyId = terraId,
+        .mineral = Mineral::Silicon,
+        .remaining = 700'000.0,
+        .accessibility = 0.9
+    });
+
+    state.mineralDeposits.push_back(MineralDeposit{
+        .bodyId = terraId,
+        .mineral = Mineral::WaterIce,
+        .remaining = 2'000'000.0,
+        .accessibility = 1.0
+    });
+
+    state.mineralDeposits.push_back(MineralDeposit{
+        .bodyId = terraId,
+        .mineral = Mineral::CarbonCompounds,
+        .remaining = 500'000.0,
+        .accessibility = 0.7
+    });
+
+    state.mineralDeposits.push_back(MineralDeposit{
+        .bodyId = terraId,
+        .mineral = Mineral::Volatiles,
+        .remaining = 800'000.0,
+        .accessibility = 0.75
+    });
+
+    state.mineralDeposits.push_back(MineralDeposit{
+        .bodyId = marsId,
+        .mineral = Mineral::Iron,
+        .remaining = 800'000.0,
+        .accessibility = 0.9
+    });
+
+    state.mineralDeposits.push_back(MineralDeposit{
+        .bodyId = marsId,
+        .mineral = Mineral::Titanium,
         .remaining = 250'000.0,
-        .accessibility = 0.45
+        .accessibility = 0.55
+    });
+
+    state.mineralDeposits.push_back(MineralDeposit{
+        .bodyId = marsId,
+        .mineral = Mineral::Aluminum,
+        .remaining = 300'000.0,
+        .accessibility = 0.65
+    });
+
+    state.mineralDeposits.push_back(MineralDeposit{
+        .bodyId = marsId,
+        .mineral = Mineral::WaterIce,
+        .remaining = 350'000.0,
+        .accessibility = 0.5
     });
 
     MineralSet surveyCutterCost;
-    surveyCutterCost.set(Mineral::Structural, 500.0);
-    surveyCutterCost.set(Mineral::Propulsion, 120.0);
-    surveyCutterCost.set(Mineral::Electronics, 80.0);
+    // TEMP: Prototype shipyard orders consume raw minerals directly. A later
+    // processing-chain patch will convert raw minerals into intermediate
+    // industrial materials before ship construction.
+    surveyCutterCost.set(Mineral::Iron, 500.0);
+    surveyCutterCost.set(Mineral::Titanium, 120.0);
+    surveyCutterCost.set(Mineral::Copper, 80.0);
+    surveyCutterCost.set(Mineral::Silicon, 40.0);
 
     state.shipClasses.push_back(ShipClass{
         .id = surveyCutterId,
