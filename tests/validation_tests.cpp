@@ -92,6 +92,73 @@ void test_invalid_body_strategic_zone_is_rejected() {
     });
 }
 
+
+void test_direct_body_parent_cycle_is_rejected() {
+    // A two-body parent cycle would recurse indefinitely in rail projection and
+    // route planning. Validation rejects it before map/render code sees it.
+    expectInvalidState("direct body parent cycle", [](deep::GameState& state) {
+        require(state.bodies.size() >= 3, "fixture has at least three bodies");
+        state.bodies.at(1).parentBodyId = state.bodies.at(2).id;
+        state.bodies.at(2).parentBodyId = state.bodies.at(1).id;
+    });
+}
+
+void test_indirect_body_parent_cycle_is_rejected() {
+    // Longer orbital loops are just as invalid as direct cycles. This protects
+    // future moons-of-moons or nested station rails from hidden recursion bugs.
+    expectInvalidState("indirect body parent cycle", [](deep::GameState& state) {
+        require(state.bodies.size() >= 4, "fixture has at least four bodies");
+        state.bodies.at(1).parentBodyId = state.bodies.at(2).id;
+        state.bodies.at(2).parentBodyId = state.bodies.at(3).id;
+        state.bodies.at(3).parentBodyId = state.bodies.at(1).id;
+    });
+}
+
+void test_excessive_body_parent_chain_depth_is_rejected() {
+    // Even acyclic chains should stay shallow. An excessive chain is treated as
+    // corrupted state rather than relying on runtime fallback depth guards.
+    expectInvalidState("excessive body parent chain depth", [](deep::GameState& state) {
+        require(!state.bodies.empty(), "fixture has a root body");
+
+        const deep::StarSystemId systemId = state.bodies.front().systemId;
+        deep::BodyId previousParent = state.bodies.front().id;
+        for (int i = 0; i < 18; ++i) {
+            const deep::BodyId id{state.ids.nextBodyId++};
+            state.bodies.push_back(deep::Body{
+                .id = id,
+                .systemId = systemId,
+                .name = "Synthetic Rail Depth Body " + std::to_string(i),
+                .type = deep::BodyType::Asteroid,
+                .strategicZone = deep::StrategicZone::DeepSurveyFrontier,
+                .parentBodyId = previousParent,
+                .orbitalRadiusKm = 1'000.0,
+                .orbitalPeriodDays = 30.0,
+                .phaseRadians = 0.0,
+                .displayRadius = 4.0,
+                .x = 0.0,
+                .y = 0.0
+            });
+            previousParent = id;
+        }
+    });
+}
+
+void test_valid_nested_body_parent_graph_is_accepted() {
+    // Valid nested rails such as Sun -> Planet -> Moon must remain accepted so
+    // scenario authors can describe simple orbital hierarchy without fixtures.
+    deep::GameState state = makeCompletedPrototypeState();
+    require(state.bodies.size() >= 3, "fixture has at least three bodies");
+
+    state.bodies.at(0).type = deep::BodyType::Star;
+    state.bodies.at(0).parentBodyId = std::nullopt;
+    state.bodies.at(1).type = deep::BodyType::Terrestrial;
+    state.bodies.at(1).parentBodyId = state.bodies.at(0).id;
+    state.bodies.at(2).type = deep::BodyType::Moon;
+    state.bodies.at(2).parentBodyId = state.bodies.at(1).id;
+
+    deep::validateGameState(state);
+}
+
 void test_stale_id_counters_are_rejected() {
     // Allocators must stay ahead of loaded IDs so the next simulated creation
     // cannot reuse an existing record ID.
@@ -362,6 +429,10 @@ int main() {
         test_valid_completed_state_is_accepted();
         test_duplicate_body_ids_are_rejected();
         test_invalid_body_strategic_zone_is_rejected();
+        test_direct_body_parent_cycle_is_rejected();
+        test_indirect_body_parent_cycle_is_rejected();
+        test_excessive_body_parent_chain_depth_is_rejected();
+        test_valid_nested_body_parent_graph_is_accepted();
         test_stale_id_counters_are_rejected();
         test_negative_colony_mines_are_rejected();
         test_non_finite_stockpile_amounts_are_rejected();

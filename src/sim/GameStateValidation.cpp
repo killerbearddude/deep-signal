@@ -216,6 +216,41 @@ void validateProcessedMaterialSet(const ProcessedMaterialSet& set, const std::st
     }
 }
 
+
+void validateBodyParentGraph(const std::vector<Body>& bodies) {
+    constexpr int kMaximumParentChainDepth = 16;
+
+    std::unordered_map<std::int64_t, const Body*> bodyById;
+    bodyById.reserve(bodies.size());
+    for (const Body& body : bodies) {
+        bodyById.emplace(body.id.value, &body);
+    }
+
+    for (const Body& body : bodies) {
+        std::unordered_set<std::int64_t> visited;
+        const Body* current = &body;
+        int depth = 0;
+
+        while (current->parentBodyId.has_value()) {
+            // Track the chain from each starting body independently. Seeing the
+            // same parent twice means the rail hierarchy can never terminate at
+            // a root/star and would recurse forever in map/transit projections.
+            requireState(visited.insert(current->id.value).second,
+                         "body parent graph must not contain cycles");
+            requireState(depth < kMaximumParentChainDepth,
+                         "body parent chain depth exceeds validation limit");
+
+            const BodyId parentId = *current->parentBodyId;
+            requireState(parentId != current->id, "body parent must not be itself");
+
+            const auto parentIt = bodyById.find(parentId.value);
+            requireState(parentIt != bodyById.end(), "body parent reference is missing");
+            current = parentIt->second;
+            ++depth;
+        }
+    }
+}
+
 void validateProcessingPolicy(const Colony& colony) {
     requireState(isValidProcessingPolicy(colony.processingPolicy), "colony processing policy must be valid");
 
@@ -393,6 +428,8 @@ void validateGameState(const GameState& state) {
         requireState(person.seniorityLevel >= 0, "person seniority level must be non-negative");
         validatePersonServiceRecord(person.serviceRecord);
     }
+
+    validateBodyParentGraph(state.bodies);
 
     for (const Body& body : state.bodies) {
         requireValidReference(containsId(state.starSystems, body.systemId), body.systemId, "body system");
