@@ -13,11 +13,13 @@
 #include <exception>
 #include <iostream>
 #include <limits>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 #include <utility>
 #include <variant>
+#include <vector>
 
 namespace {
 
@@ -50,6 +52,44 @@ deep::PersonId personIdByName(const deep::GameState& state, const std::string_vi
         }
     }
     throw TestFailure{"expected person was not present in scenario"};
+}
+
+deep::BodyId bodyIdByName(const deep::GameState& state, const std::string_view name) {
+    for (const deep::Body& body : state.bodies) {
+        if (body.name == name) {
+            return body.id;
+        }
+    }
+    throw TestFailure{"expected body was not present in scenario"};
+}
+
+deep::FleetId addTestFleetAt(deep::GameState& state, const deep::BodyId bodyId) {
+    // Tests that target command validation need a fleet at non-colony bodies.
+    // Create the minimal bidirectional ship/fleet records that GameState
+    // validation requires, using the scenario's first survey-capable class.
+    const deep::FleetId fleetId{state.ids.nextFleetId++};
+    const deep::ShipId shipId{state.ids.nextShipId++};
+    const deep::ShipClass& shipClass = state.shipClasses.front();
+
+    state.fleets.push_back(deep::Fleet{
+        .id = fleetId,
+        .name = "Test Survey Fleet",
+        .currentBodyId = bodyId,
+        .destinationBodyId = std::nullopt,
+        .shipIds = {shipId},
+        .activeOrder = deep::FleetOrder{},
+        .queuedOrders = {},
+        .ownerInstitutionId = std::nullopt
+    });
+    state.ships.push_back(deep::Ship{
+        .id = shipId,
+        .shipClassId = shipClass.id,
+        .name = "Test Survey Cutter",
+        .fleetId = fleetId,
+        .fuel = shipClass.fuelCapacity
+    });
+
+    return fleetId;
 }
 
 
@@ -575,6 +615,117 @@ void test_fleet_commander_reduces_move_fuel_cost_within_cap() {
                 "fleet commander capped modifier reduces planned transit fuel cost");
 }
 
+void test_resource_survey_increases_deposit_confidence() {
+    // Verifies that a fleet stationed at a survey target can turn uncertain
+    // resource intelligence into higher-confidence reserve estimates.
+    deep::GameState state = deep::createHomeSystemScenario();
+    const deep::BodyId frontierId = bodyIdByName(state, "Helios Far Survey Object");
+    const deep::FleetId fleetId = addTestFleetAt(state, frontierId);
+    deep::Simulation sim{std::move(state)};
+
+    double beforeConfidenceTotal = 0.0;
+    for (const deep::MineralDeposit& deposit : sim.state().mineralDeposits) {
+        if (deposit.bodyId == frontierId) {
+            beforeConfidenceTotal += deposit.confidence;
+        }
+    }
+
+    const auto result = sim.execute(deep::ResourceSurveyCommand{
+        .fleetId = fleetId,
+        .bodyId = frontierId
+    });
+
+    require(result.ok, "resource survey command is accepted at the fleet's current body");
+    double afterConfidenceTotal = 0.0;
+    bool revealedHiddenDeposit = false;
+    for (const deep::MineralDeposit& deposit : sim.state().mineralDeposits) {
+        if (deposit.bodyId != frontierId) {
+            continue;
+        }
+        afterConfidenceTotal += deposit.confidence;
+        if (deposit.confidence >= deep::kResourceSurveyMinimumRevealedConfidence) {
+            revealedHiddenDeposit = true;
+        }
+    }
+
+    require(afterConfidenceTotal > beforeConfidenceTotal, "survey increases total target-body confidence");
+    require(revealedHiddenDeposit, "survey reveals hidden deposits as estimated reserves");
+    require(std::holds_alternative<deep::ResourceSurveyCompletedEvent>(sim.state().eventLog.back().payload),
+            "accepted survey emits a resource-survey completion event");
+}
+
+void test_resource_survey_does_not_change_fully_known_body() {
+    // Fully known bodies should not accumulate meaningless survey events or
+    // churn confidence values. This keeps survey commands tied to unknowns.
+    deep::GameState state = deep::createHomeSystemScenario();
+    const deep::BodyId terraId = bodyIdByName(state, "Terra");
+    const deep::FleetId fleetId = addTestFleetAt(state, terraId);
+    deep::Simulation sim{std::move(state)};
+
+    std::vector<double> before;
+    for (const deep::MineralDeposit& deposit : sim.state().mineralDeposits) {
+        if (deposit.bodyId == terraId) {
+            before.push_back(deposit.confidence);
+        }
+    }
+
+    const auto result = sim.execute(deep::ResourceSurveyCommand{
+        .fleetId = fleetId,
+        .bodyId = terraId
+    });
+
+    require(!result.ok, "surveying a fully known body is rejected");
+    std::size_t index = 0;
+    for (const deep::MineralDeposit& deposit : sim.state().mineralDeposits) {
+        if (deposit.bodyId == terraId) {
+            requireNear(deposit.confidence, before.at(index++), "fully known deposit confidence is unchanged");
+        }
+    }
+}
+
+void test_resource_survey_rejects_invalid_targets() {
+    // Command validation should fail before mutating deposits when a UI or save
+    // boundary supplies stale fleet/body IDs.
+    deep::GameState state = deep::createHomeSystemScenario();
+    const deep::BodyId frontierId = bodyIdByName(state, "Helios Far Survey Object");
+    const deep::FleetId fleetId = addTestFleetAt(state, frontierId);
+    deep::Simulation sim{std::move(state)};
+
+    const auto missingFleet = sim.execute(deep::ResourceSurveyCommand{
+        .fleetId = deep::FleetId{999'999},
+        .bodyId = frontierId
+    });
+    require(!missingFleet.ok, "survey rejects a missing fleet ID");
+
+    const auto missingBody = sim.execute(deep::ResourceSurveyCommand{
+        .fleetId = fleetId,
+        .bodyId = deep::BodyId{999'999}
+    });
+    require(!missingBody.ok, "survey rejects a missing body ID");
+}
+
+void test_resource_survey_rejects_fleet_not_at_body() {
+    // V1 surveys are intentionally local and immediate. Fleets must first move
+    // to the target body before improving its deposit confidence.
+    deep::GameState state = deep::createHomeSystemScenario();
+    const deep::BodyId terraId = bodyIdByName(state, "Terra");
+    const deep::BodyId frontierId = bodyIdByName(state, "Helios Far Survey Object");
+    const deep::FleetId fleetId = addTestFleetAt(state, terraId);
+    deep::Simulation sim{std::move(state)};
+
+    const auto result = sim.execute(deep::ResourceSurveyCommand{
+        .fleetId = fleetId,
+        .bodyId = frontierId
+    });
+
+    require(!result.ok, "survey rejects fleets that are not at the target body");
+    for (const deep::MineralDeposit& deposit : sim.state().mineralDeposits) {
+        if (deposit.bodyId == frontierId && deposit.mineral == deep::Mineral::RareEarthElements) {
+            requireNear(deposit.confidence, 0.0, "rejected remote survey leaves hidden deposit hidden");
+        }
+    }
+}
+
 void test_cancel_fleet_order() {
     // Verifies that the player can cancel an active movement order without
     // teleporting the fleet. This protects the first UI cancel button from
@@ -823,6 +974,10 @@ int main() {
         test_fleet_transit_curve_bends_on_expected_display_side();
         test_fleet_movement_rejects_insufficient_fuel();
         test_fleet_commander_reduces_move_fuel_cost_within_cap();
+        test_resource_survey_increases_deposit_confidence();
+        test_resource_survey_does_not_change_fully_known_body();
+        test_resource_survey_rejects_invalid_targets();
+        test_resource_survey_rejects_fleet_not_at_body();
         test_cancel_fleet_order();
         test_fleet_order_queue_starts_next_order_after_arrival();
         test_clear_fleet_order_queue_preserves_current_order();

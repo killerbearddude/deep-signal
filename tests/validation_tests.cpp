@@ -422,6 +422,25 @@ void test_completed_order_with_build_progress_is_rejected() {
     });
 }
 
+void test_invalid_resource_survey_event_is_rejected() {
+    // Resource-survey events are persisted audit data. Reject impossible result
+    // summaries so corrupted saves cannot claim that a no-op survey completed.
+    expectInvalidState("resource survey event with no improvements", [](deep::GameState& state) {
+        state.eventLog.push_back(deep::SimEvent{
+            .id = deep::EventId{state.ids.nextEventId++},
+            .day = state.date.day,
+            .severity = deep::EventSeverity::Info,
+            .payload = deep::ResourceSurveyCompletedEvent{
+                .fleetId = state.fleets.front().id,
+                .bodyId = state.fleets.front().currentBodyId,
+                .depositsImproved = 0,
+                .averageConfidenceBefore = 0.25,
+                .averageConfidenceAfter = 0.75
+            }
+        });
+    });
+}
+
 } // namespace
 
 int main() {
@@ -453,6 +472,7 @@ int main() {
         test_event_day_after_current_day_is_rejected();
         test_event_ids_out_of_order_are_rejected();
         test_completed_order_with_build_progress_is_rejected();
+        test_invalid_resource_survey_event_is_rejected();
     } catch (const std::exception& ex) {
         std::cerr << "Validation test failure: " << ex.what() << '\n';
         return EXIT_FAILURE;

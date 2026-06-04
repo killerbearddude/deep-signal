@@ -77,6 +77,17 @@ struct FleetArrivedEvent {
     BodyId destinationBodyId;
 };
 
+// Emitted after a resource survey improves one or more low-confidence deposits
+// on the target body. Confidence fields are averages across changed deposits so
+// the event remains compact while still explaining the survey result.
+struct ResourceSurveyCompletedEvent {
+    FleetId fleetId;
+    BodyId bodyId;
+    int depositsImproved = 0;
+    double averageConfidenceBefore = 0.0;
+    double averageConfidenceAfter = 0.0;
+};
+
 // Emitted when validation rejects a command or a daily process detects invalid
 // state. The reason should be precise enough for UI display and test assertions.
 struct CommandRejectedEvent {
@@ -91,6 +102,7 @@ using SimEventPayload = std::variant<
     ShipCompletedEvent,
     FleetOrderAssignedEvent,
     FleetArrivedEvent,
+    ResourceSurveyCompletedEvent,
     CommandRejectedEvent
 >;
 

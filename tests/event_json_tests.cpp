@@ -77,6 +77,12 @@ bool samePayload(const deep::SimEventPayload& lhs, const deep::SimEventPayload& 
         } else if constexpr (std::is_same_v<Left, deep::FleetArrivedEvent>) {
             return left.fleetId == right.fleetId &&
                    left.destinationBodyId == right.destinationBodyId;
+        } else if constexpr (std::is_same_v<Left, deep::ResourceSurveyCompletedEvent>) {
+            return left.fleetId == right.fleetId &&
+                   left.bodyId == right.bodyId &&
+                   left.depositsImproved == right.depositsImproved &&
+                   almostEqual(left.averageConfidenceBefore, right.averageConfidenceBefore) &&
+                   almostEqual(left.averageConfidenceAfter, right.averageConfidenceAfter);
         } else if constexpr (std::is_same_v<Left, deep::CommandRejectedEvent>) {
             return left.reason == right.reason;
         }
@@ -155,6 +161,18 @@ void test_fleet_arrived_round_trips() {
         .fleetId = deep::FleetId{16},
         .destinationBodyId = deep::BodyId{17}
     }, "fleet_arrived payload round-trips");
+}
+
+void test_resource_survey_completed_round_trips() {
+    // Resource surveys are durable exploration audit events. This prevents
+    // confidence improvements from losing their target or result summary.
+    requireRoundTrip(deep::ResourceSurveyCompletedEvent{
+        .fleetId = deep::FleetId{18},
+        .bodyId = deep::BodyId{19},
+        .depositsImproved = 3,
+        .averageConfidenceBefore = 0.25,
+        .averageConfidenceAfter = 0.75
+    }, "resource_survey_completed payload round-trips");
 }
 
 void test_command_rejected_round_trips_escaped_reason() {
@@ -258,6 +276,8 @@ void test_event_type_names_are_stable_schema_v1_strings() {
             "fleet_order_assigned type name is stable");
     require(deep::save::eventTypeName(deep::FleetArrivedEvent{}) == "fleet_arrived",
             "fleet_arrived type name is stable");
+    require(deep::save::eventTypeName(deep::ResourceSurveyCompletedEvent{}) == "resource_survey_completed",
+            "resource_survey_completed type name is stable");
     require(deep::save::eventTypeName(deep::CommandRejectedEvent{}) == "command_rejected",
             "command_rejected type name is stable");
 }
@@ -268,6 +288,7 @@ void runAllTests() {
     test_ship_completed_round_trips();
     test_fleet_order_assigned_round_trips();
     test_fleet_arrived_round_trips();
+    test_resource_survey_completed_round_trips();
     test_command_rejected_round_trips_escaped_reason();
     test_unknown_event_type_is_rejected();
     test_missing_required_field_is_rejected();

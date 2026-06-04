@@ -354,6 +354,12 @@ bool consumeFleetFuel(GameState& state, const Fleet& fleet, const double fuelCos
     return remainingCost <= kFuelComparisonEpsilon;
 }
 
+[[nodiscard]] bool hasSurveyableDeposit(const GameState& state, const BodyId bodyId) noexcept {
+    return std::any_of(state.mineralDeposits.begin(), state.mineralDeposits.end(), [bodyId](const MineralDeposit& deposit) {
+        return deposit.bodyId == bodyId && !isDepositKnown(deposit);
+    });
+}
+
 } // namespace
 
 Simulation::Simulation(GameState initialState)
@@ -390,6 +396,8 @@ CommandResult Simulation::execute(const SimCommand& command) {
             return clearFleetOrderQueue(concreteCommand);
         } else if constexpr (std::is_same_v<Command, CancelFleetOrderCommand>) {
             return cancelFleetOrder(concreteCommand);
+        } else if constexpr (std::is_same_v<Command, ResourceSurveyCommand>) {
+            return resourceSurvey(concreteCommand);
         } else if constexpr (std::is_same_v<Command, AssignAppointmentCommand>) {
             return assignAppointment(concreteCommand);
         } else if constexpr (std::is_same_v<Command, SetColonyProcessingPolicyCommand>) {
@@ -573,6 +581,64 @@ CommandResult Simulation::cancelFleetOrder(const CancelFleetOrderCommand& comman
     fleet->activeOrder = FleetOrder{};
 
     return CommandResult::success("Fleet order cancelled");
+}
+
+CommandResult Simulation::resourceSurvey(const ResourceSurveyCommand& command) {
+    Fleet* fleet = findFleet(command.fleetId);
+    if (fleet == nullptr) {
+        appendEvent(EventSeverity::Warning, CommandRejectedEvent{"Fleet does not exist"});
+        return CommandResult::failure("Fleet does not exist");
+    }
+
+    if (findBody(command.bodyId) == nullptr) {
+        appendEvent(EventSeverity::Warning, CommandRejectedEvent{"Survey target body does not exist"});
+        return CommandResult::failure("Survey target body does not exist");
+    }
+
+    if (fleet->activeOrder.type != FleetOrderType::None || fleet->destinationBodyId.has_value()) {
+        appendEvent(EventSeverity::Warning, CommandRejectedEvent{"Fleet must be stationary to survey"});
+        return CommandResult::failure("Fleet must be stationary to survey");
+    }
+
+    if (fleet->currentBodyId != command.bodyId) {
+        appendEvent(EventSeverity::Warning, CommandRejectedEvent{"Fleet must be at survey target body"});
+        return CommandResult::failure("Fleet must be at survey target body");
+    }
+
+    if (!hasSurveyableDeposit(state_, command.bodyId)) {
+        appendEvent(EventSeverity::Warning, CommandRejectedEvent{"Survey target has no low-confidence deposits"});
+        return CommandResult::failure("Survey target has no low-confidence deposits");
+    }
+
+    int improvedDeposits = 0;
+    double confidenceBeforeTotal = 0.0;
+    double confidenceAfterTotal = 0.0;
+    for (MineralDeposit& deposit : state_.mineralDeposits) {
+        if (deposit.bodyId != command.bodyId || isDepositKnown(deposit)) {
+            continue;
+        }
+
+        const double before = deposit.confidence;
+        const double after = surveyedDepositConfidence(deposit);
+        if (after <= before) {
+            continue;
+        }
+
+        deposit.confidence = after;
+        confidenceBeforeTotal += before;
+        confidenceAfterTotal += after;
+        ++improvedDeposits;
+    }
+
+    appendEvent(EventSeverity::Info, ResourceSurveyCompletedEvent{
+        .fleetId = fleet->id,
+        .bodyId = command.bodyId,
+        .depositsImproved = improvedDeposits,
+        .averageConfidenceBefore = confidenceBeforeTotal / static_cast<double>(improvedDeposits),
+        .averageConfidenceAfter = confidenceAfterTotal / static_cast<double>(improvedDeposits)
+    });
+
+    return CommandResult::success("Resource survey completed");
 }
 
 CommandResult Simulation::assignAppointment(const AssignAppointmentCommand& command) {

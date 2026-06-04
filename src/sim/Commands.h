@@ -52,6 +52,14 @@ struct CancelFleetOrderCommand {
     FleetId fleetId;
 };
 
+// Requests an immediate resource survey at the fleet's current body. V1 has no
+// survey duration or module requirement, so accepted commands synchronously
+// improve deposit confidence and emit an audit event.
+struct ResourceSurveyCommand {
+    FleetId fleetId;
+    BodyId bodyId;
+};
+
 
 // Assigns or replaces the current person responsible for one appointment slot.
 // The target scope is identified by its scope type and raw typed-ID value so one
@@ -81,6 +89,7 @@ using SimCommand = std::variant<
     QueueFleetMoveOrderCommand,
     ClearFleetOrderQueueCommand,
     CancelFleetOrderCommand,
+    ResourceSurveyCommand,
     AssignAppointmentCommand,
     SetColonyProcessingPolicyCommand
 >;

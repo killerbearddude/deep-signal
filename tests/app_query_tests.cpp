@@ -13,6 +13,7 @@
 #include <exception>
 #include <cmath>
 #include <iostream>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -72,6 +73,44 @@ const deep::AppointmentScoreBreakdownRow& scoreRowByLabel(
     throw TestFailure{"expected score breakdown row was not present"};
 }
 
+
+deep::BodyId bodyIdByName(const deep::GameState& state, const std::string_view name) {
+    for (const deep::Body& body : state.bodies) {
+        if (body.name == name) {
+            return body.id;
+        }
+    }
+    throw TestFailure{"expected body was not present in scenario"};
+}
+
+deep::FleetId addTestFleetAt(deep::GameState& state, const deep::BodyId bodyId) {
+    // App-query survey tests need a fleet at a frontier body without requiring a
+    // movement command or save fixture. Keep the fixture valid by adding the
+    // matching ship and fleet records together.
+    const deep::FleetId fleetId{state.ids.nextFleetId++};
+    const deep::ShipId shipId{state.ids.nextShipId++};
+    const deep::ShipClass& shipClass = state.shipClasses.front();
+
+    state.fleets.push_back(deep::Fleet{
+        .id = fleetId,
+        .name = "Query Survey Fleet",
+        .currentBodyId = bodyId,
+        .destinationBodyId = std::nullopt,
+        .shipIds = {shipId},
+        .activeOrder = deep::FleetOrder{},
+        .queuedOrders = {},
+        .ownerInstitutionId = std::nullopt
+    });
+    state.ships.push_back(deep::Ship{
+        .id = shipId,
+        .shipClassId = shipClass.id,
+        .name = "Query Survey Cutter",
+        .fleetId = fleetId,
+        .fuel = shipClass.fuelCapacity
+    });
+
+    return fleetId;
+}
 
 double sumModifierRows(const std::vector<deep::AppointmentModifierBreakdownRow>& rows) {
     double total = 0.0;
@@ -839,6 +878,45 @@ void test_body_deposit_queries_expose_confidence_status() {
             "deposit detail separates confirmed and estimated quantities");
 }
 
+void test_resource_survey_preview_and_queries_update_after_survey() {
+    // Verifies the Fleet Orders panel can preview survey eligibility through the
+    // app layer and that body deposit query rows reflect the accepted command.
+    deep::GameState state = deep::createHomeSystemScenario();
+    const deep::BodyId frontierId = bodyIdByName(state, "Helios Far Survey Object");
+    const deep::FleetId fleetId = addTestFleetAt(state, frontierId);
+    deep::SimulationService service{std::move(state)};
+    deep::SimulationQueries queries{service};
+
+    const std::optional<deep::ResourceSurveyPreview> before = queries.resourceSurveyPreview(fleetId, frontierId);
+    require(before.has_value(), "survey preview exists for valid fleet/body IDs");
+    require(before->canSurvey, "survey preview allows fleet at low-confidence body");
+    require(before->surveyableDepositCount == 3, "survey preview counts all non-known deposits");
+    require(before->projectedAverageConfidenceAfter > before->averageConfidenceBefore,
+            "survey preview explains the projected confidence gain");
+
+    require(service.execute(deep::ResourceSurveyCommand{
+        .fleetId = fleetId,
+        .bodyId = frontierId
+    }).ok, "resource survey command is accepted through service");
+
+    const auto deposits = queries.bodyDeposits(frontierId);
+    const auto hiddenDeposit = std::find_if(deposits.begin(), deposits.end(), [](const deep::BodyDepositSummary& deposit) {
+        return deposit.mineral == deep::Mineral::RareEarthElements;
+    });
+    require(hiddenDeposit != deposits.end(), "surveyed body still exposes rare-earth deposit row");
+    require(hiddenDeposit->surveyStateName == "Estimated", "formerly hidden deposit becomes an estimate after survey");
+    require(hiddenDeposit->confidence >= deep::kResourceSurveyMinimumRevealedConfidence,
+            "surveyed hidden deposit receives visible confidence");
+
+    const auto overview = queries.bodySystemOverview();
+    const auto body = std::find_if(overview.begin(), overview.end(), [frontierId](const deep::BodySystemSummary& row) {
+        return row.id == frontierId;
+    });
+    require(body != overview.end(), "surveyed frontier body remains in body overview");
+    require(body->unknownDepositCount == 0, "survey clears unknown deposit count for the target body");
+    require(body->estimatedDepositCount == 3, "surveyed deposits remain visible estimates until fully known");
+}
+
 void test_recent_events_returns_limited_chronological_tail() {
     // Verifies that recentEvents(limit) returns the newest audit entries but
     // preserves log order inside that returned window. Routine mining telemetry
@@ -901,6 +979,7 @@ int main() {
         test_body_system_overview_exposes_counts();
         test_strategic_map_summaries_resolve_positions();
         test_body_deposit_queries_expose_confidence_status();
+        test_resource_survey_preview_and_queries_update_after_survey();
         test_recent_events_returns_limited_chronological_tail();
     } catch (const std::exception& ex) {
         std::cerr << "Test failure: " << ex.what() << '\n';

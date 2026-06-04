@@ -217,6 +217,44 @@ void FleetOrdersPanel::render(const SimulationQueries& queries,
         ImGui::TextUnformatted("Insufficient fuel.");
     }
 
+    ImGui::SeparatorText("Survey");
+    const std::optional<ResourceSurveyPreview> surveyPreview = fleet.has_value() && destinationSelected
+        ? queries.resourceSurveyPreview(fleet->id, *destinationBodyId_)
+        : std::optional<ResourceSurveyPreview>{};
+
+    if (surveyPreview.has_value()) {
+        ImGui::Text("Survey target: %s", surveyPreview->bodyName.c_str());
+        ImGui::Text("Surveyable deposits: %zu", surveyPreview->surveyableDepositCount);
+        if (surveyPreview->surveyableDepositCount > 0U) {
+            ImGui::Text("Avg confidence: %.0f%% -> %.0f%%",
+                        surveyPreview->averageConfidenceBefore * 100.0,
+                        surveyPreview->projectedAverageConfidenceAfter * 100.0);
+        }
+        if (!surveyPreview->warningText.empty()) {
+            ImGui::TextWrapped("%s", surveyPreview->warningText.c_str());
+        }
+    } else {
+        ImGui::TextUnformatted("Select a fleet and body to preview resource survey eligibility.");
+    }
+
+    const bool canSurvey = surveyPreview.has_value() && surveyPreview->canSurvey;
+    if (!canSurvey) {
+        ImGui::BeginDisabled();
+    }
+    const bool surveyClicked = ImGui::Button("Survey Body");
+    if (!canSurvey) {
+        ImGui::EndDisabled();
+    }
+
+    if (surveyClicked && fleet.has_value() && destinationBodyId_.has_value()) {
+        const CommandResult result = service.execute(ResourceSurveyCommand{
+            .fleetId = fleet->id,
+            .bodyId = *destinationBodyId_
+        });
+        commandSucceeded_ = result.ok;
+        commandStatus_ = result.message;
+    }
+
     const bool canCancel = fleet.has_value() && fleet->hasActiveOrder;
     if (!canCancel) {
         ImGui::BeginDisabled();

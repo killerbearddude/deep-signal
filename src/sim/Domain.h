@@ -33,6 +33,12 @@ inline constexpr int kTransitPlanningIterations = 5;
 // Shared tolerance for fleet fuel affordability and post-consumption clamping.
 inline constexpr double kFuelComparisonEpsilon = 1.0e-6;
 
+// Resource survey v1 improves existing hand-authored deposit knowledge without
+// generating new deposits. Unknown deposits become actionable estimates, while
+// partially estimated deposits can advance to fully known state.
+inline constexpr double kResourceSurveyConfidenceGain = 0.50;
+inline constexpr double kResourceSurveyMinimumRevealedConfidence = 0.50;
+
 
 // Coarse institutional roles for the mature home-system start. These are
 // identity/category labels only; v1 ownership does not add politics, trust,
@@ -331,6 +337,11 @@ struct MineralDeposit {
 
 [[nodiscard]] inline double estimatedDepositQuantity(const MineralDeposit& deposit) noexcept {
     return isDepositSurveyed(deposit) ? deposit.remaining : 0.0;
+}
+
+[[nodiscard]] inline double surveyedDepositConfidence(const MineralDeposit& deposit) noexcept {
+    return std::min(1.0, std::max(deposit.confidence + kResourceSurveyConfidenceGain,
+                                  kResourceSurveyMinimumRevealedConfidence));
 }
 
 

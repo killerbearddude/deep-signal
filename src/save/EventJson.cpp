@@ -266,6 +266,8 @@ void requireFlatJsonObjectShape(const std::string_view json) {
             return "fleet_order_assigned";
         } else if constexpr (std::is_same_v<Event, FleetArrivedEvent>) {
             return "fleet_arrived";
+        } else if constexpr (std::is_same_v<Event, ResourceSurveyCompletedEvent>) {
+            return "resource_survey_completed";
         } else if constexpr (std::is_same_v<Event, CommandRejectedEvent>) {
             return "command_rejected";
         }
@@ -303,6 +305,14 @@ void requireFlatJsonObjectShape(const std::string_view json) {
         } else if constexpr (std::is_same_v<Event, FleetArrivedEvent>) {
             object["fleet_id"] = idValue(event.fleetId);
             object["destination_body_id"] = idValue(event.destinationBodyId);
+        } else if constexpr (std::is_same_v<Event, ResourceSurveyCompletedEvent>) {
+            object["fleet_id"] = idValue(event.fleetId);
+            object["body_id"] = idValue(event.bodyId);
+            object["deposits_improved"] = event.depositsImproved;
+            object["average_confidence_before"] = checkedFiniteDoubleFromPayload(
+                event.averageConfidenceBefore, "event.average_confidence_before");
+            object["average_confidence_after"] = checkedFiniteDoubleFromPayload(
+                event.averageConfidenceAfter, "event.average_confidence_after");
         } else if constexpr (std::is_same_v<Event, CommandRejectedEvent>) {
             object["reason"] = event.reason;
         }
@@ -340,6 +350,14 @@ void requireFlatJsonObjectShape(const std::string_view json) {
         } else if constexpr (std::is_same_v<Event, FleetArrivedEvent>) {
             out << "\"fleet_id\":" << idValue(event.fleetId)
                 << ",\"destination_body_id\":" << idValue(event.destinationBodyId);
+        } else if constexpr (std::is_same_v<Event, ResourceSurveyCompletedEvent>) {
+            out << "\"fleet_id\":" << idValue(event.fleetId)
+                << ",\"body_id\":" << idValue(event.bodyId)
+                << ",\"deposits_improved\":" << event.depositsImproved
+                << ",\"average_confidence_before\":" << numberToJson(
+                    event.averageConfidenceBefore, "event.average_confidence_before")
+                << ",\"average_confidence_after\":" << numberToJson(
+                    event.averageConfidenceAfter, "event.average_confidence_after");
         } else if constexpr (std::is_same_v<Event, CommandRejectedEvent>) {
             out << "\"reason\":" << quoteJson(event.reason);
         }
@@ -430,6 +448,16 @@ void requireFlatJsonObjectShape(const std::string_view json) {
         };
     }
 
+    if (eventType == "resource_survey_completed") {
+        return ResourceSurveyCompletedEvent{
+            .fleetId = FleetId{requireInt64("fleet_id")},
+            .bodyId = BodyId{requireInt64("body_id")},
+            .depositsImproved = checkedIntFromPayload(requireInt64("deposits_improved"), "event.deposits_improved"),
+            .averageConfidenceBefore = requireDouble("average_confidence_before"),
+            .averageConfidenceAfter = requireDouble("average_confidence_after")
+        };
+    }
+
     if (eventType == "command_rejected") {
         return CommandRejectedEvent{.reason = requireString("reason")};
     }
@@ -479,6 +507,16 @@ void requireFlatJsonObjectShape(const std::string_view json) {
         return FleetArrivedEvent{
             .fleetId = FleetId{jsonInt64(payloadJson, "fleet_id")},
             .destinationBodyId = BodyId{jsonInt64(payloadJson, "destination_body_id")}
+        };
+    }
+
+    if (eventType == "resource_survey_completed") {
+        return ResourceSurveyCompletedEvent{
+            .fleetId = FleetId{jsonInt64(payloadJson, "fleet_id")},
+            .bodyId = BodyId{jsonInt64(payloadJson, "body_id")},
+            .depositsImproved = checkedIntFromPayload(jsonInt64(payloadJson, "deposits_improved"), "event.deposits_improved"),
+            .averageConfidenceBefore = jsonDouble(payloadJson, "average_confidence_before"),
+            .averageConfidenceAfter = jsonDouble(payloadJson, "average_confidence_after")
         };
     }
 

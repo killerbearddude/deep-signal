@@ -262,6 +262,19 @@ struct FleetMovePreview {
     std::string warningText;
 };
 
+// Read-only preflight summary for the immediate resource-survey command. V1
+// surveys are instant and require the fleet to be stationary at the target body.
+struct ResourceSurveyPreview {
+    FleetId fleetId;
+    BodyId bodyId;
+    std::string bodyName;
+    std::size_t surveyableDepositCount = 0;
+    double averageConfidenceBefore = 0.0;
+    double projectedAverageConfidenceAfter = 0.0;
+    bool canSurvey = false;
+    std::string warningText;
+};
+
 // Display-ready body/system overview row. Counts are resolved in the app layer
 // so UI overview panels do not need to scan raw GameState vectors.
 struct BodySystemSummary {
@@ -407,6 +420,9 @@ public:
 
     // Returns fuel affordability for appending one move to the current fleet queue.
     [[nodiscard]] std::optional<FleetMovePreview> fleetMovePreview(FleetId fleetId, BodyId destinationBodyId) const;
+
+    // Returns whether an immediate resource survey is valid for a fleet/body.
+    [[nodiscard]] std::optional<ResourceSurveyPreview> resourceSurveyPreview(FleetId fleetId, BodyId bodyId) const;
 
     // Returns one overview row per body with colony, deposit, and fleet counts.
     [[nodiscard]] std::vector<BodySystemSummary> bodySystemOverview() const;

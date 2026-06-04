@@ -117,6 +117,12 @@ bool samePayload(const deep::SimEventPayload& lhs, const deep::SimEventPayload& 
         } else if constexpr (std::is_same_v<Left, deep::FleetArrivedEvent>) {
             return left.fleetId == right.fleetId &&
                    left.destinationBodyId == right.destinationBodyId;
+        } else if constexpr (std::is_same_v<Left, deep::ResourceSurveyCompletedEvent>) {
+            return left.fleetId == right.fleetId &&
+                   left.bodyId == right.bodyId &&
+                   left.depositsImproved == right.depositsImproved &&
+                   almostEqual(left.averageConfidenceBefore, right.averageConfidenceBefore) &&
+                   almostEqual(left.averageConfidenceAfter, right.averageConfidenceAfter);
         } else if constexpr (std::is_same_v<Left, deep::CommandRejectedEvent>) {
             return left.reason == right.reason;
         }

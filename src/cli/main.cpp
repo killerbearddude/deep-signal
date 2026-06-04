@@ -45,6 +45,12 @@ struct EventPrinter {
                   << " body=" << event.destinationBodyId.value << '\n';
     }
 
+    void operator()(const deep::ResourceSurveyCompletedEvent& event) const {
+        std::cout << "  Resource survey completed: fleet=" << event.fleetId.value
+                  << " body=" << event.bodyId.value
+                  << " deposits=" << event.depositsImproved << '\n';
+    }
+
     void operator()(const deep::CommandRejectedEvent& event) const {
         std::cout << "  Command rejected: " << event.reason << '\n';
     }

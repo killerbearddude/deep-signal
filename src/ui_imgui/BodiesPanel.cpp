@@ -49,7 +49,7 @@ void BodiesPanel::render(const SimulationQueries& queries, SelectionState& selec
         ImGui::TableSetupColumn("Colonies");
         ImGui::TableSetupColumn("Deposits");
         ImGui::TableSetupColumn("Known / Est / Unknown");
-        ImGui::TableSetupColumn("Confirmed Qty");
+        ImGui::TableSetupColumn("Confirmed / Est / Uncertain");
         ImGui::TableSetupColumn("Fleets");
         ImGui::TableHeadersRow();
 
@@ -83,7 +83,7 @@ void BodiesPanel::render(const SimulationQueries& queries, SelectionState& selec
             ImGui::TableSetColumnIndex(9);
             ImGui::Text("%zu / %zu / %zu", body.knownDepositCount, body.estimatedDepositCount, body.unknownDepositCount);
             ImGui::TableSetColumnIndex(10);
-            ImGui::Text("%.0f / %.0f", body.confirmedDepositQuantity, body.estimatedDepositQuantity);
+            ImGui::Text("%.0f / %.0f / %.0f", body.confirmedDepositQuantity, body.estimatedDepositQuantity, body.uncertainDepositQuantity);
             ImGui::TableSetColumnIndex(11);
             ImGui::Text("%zu", body.fleetCount);
         }

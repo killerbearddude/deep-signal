@@ -49,6 +49,7 @@ private:
     CommandResult queueFleetMoveOrder(const QueueFleetMoveOrderCommand& command);
     CommandResult clearFleetOrderQueue(const ClearFleetOrderQueueCommand& command);
     CommandResult cancelFleetOrder(const CancelFleetOrderCommand& command);
+    CommandResult resourceSurvey(const ResourceSurveyCommand& command);
     CommandResult assignAppointment(const AssignAppointmentCommand& command);
     CommandResult setColonyProcessingPolicy(const SetColonyProcessingPolicyCommand& command);
 

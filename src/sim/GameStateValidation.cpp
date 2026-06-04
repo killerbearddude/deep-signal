@@ -386,6 +386,18 @@ void validateEventPayload(const GameState& state, const SimEventPayload& payload
             requireValidReference(containsId(state.fleets, event.fleetId), event.fleetId, "event fleet");
             requireValidReference(containsId(state.bodies, event.destinationBodyId), event.destinationBodyId,
                                   "event destination body");
+        } else if constexpr (std::is_same_v<Event, ResourceSurveyCompletedEvent>) {
+            requireValidReference(containsId(state.fleets, event.fleetId), event.fleetId, "event fleet");
+            requireValidReference(containsId(state.bodies, event.bodyId), event.bodyId, "event survey body");
+            requireState(event.depositsImproved > 0, "survey event must improve at least one deposit");
+            requireState(isFinite(event.averageConfidenceBefore) && event.averageConfidenceBefore >= 0.0 &&
+                             event.averageConfidenceBefore <= 1.0,
+                         "survey event average before confidence must be between zero and one");
+            requireState(isFinite(event.averageConfidenceAfter) && event.averageConfidenceAfter >= 0.0 &&
+                             event.averageConfidenceAfter <= 1.0,
+                         "survey event average after confidence must be between zero and one");
+            requireState(event.averageConfidenceAfter >= event.averageConfidenceBefore,
+                         "survey event confidence must not decrease");
         } else if constexpr (std::is_same_v<Event, CommandRejectedEvent>) {
             requireState(!event.reason.empty(), "command-rejected event reason must be non-empty");
         }

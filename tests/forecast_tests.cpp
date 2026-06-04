@@ -16,6 +16,7 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 namespace {
 
@@ -48,6 +49,44 @@ deep::PersonId personIdByName(const deep::GameState& state, const std::string_vi
         }
     }
     throw TestFailure{"expected person was not present in scenario"};
+}
+
+deep::BodyId bodyIdByName(const deep::GameState& state, const std::string_view name) {
+    for (const deep::Body& body : state.bodies) {
+        if (body.name == name) {
+            return body.id;
+        }
+    }
+    throw TestFailure{"expected body was not present in scenario"};
+}
+
+deep::FleetId addTestFleetAt(deep::GameState& state, const deep::BodyId bodyId) {
+    // Survey forecast tests need an already-positioned fleet so they can isolate
+    // confidence changes from movement and fuel mechanics. The ship/fleet pair
+    // is fully valid for GameState validation.
+    const deep::FleetId fleetId{state.ids.nextFleetId++};
+    const deep::ShipId shipId{state.ids.nextShipId++};
+    const deep::ShipClass& shipClass = state.shipClasses.front();
+
+    state.fleets.push_back(deep::Fleet{
+        .id = fleetId,
+        .name = "Forecast Survey Fleet",
+        .currentBodyId = bodyId,
+        .destinationBodyId = std::nullopt,
+        .shipIds = {shipId},
+        .activeOrder = deep::FleetOrder{},
+        .queuedOrders = {},
+        .ownerInstitutionId = std::nullopt
+    });
+    state.ships.push_back(deep::Ship{
+        .id = shipId,
+        .shipClassId = shipClass.id,
+        .name = "Forecast Survey Cutter",
+        .fleetId = fleetId,
+        .fuel = shipClass.fuelCapacity
+    });
+
+    return fleetId;
 }
 
 const deep::MineralForecastCauseChain& requireCauseChain(const std::vector<deep::MineralForecastCauseChain>& chains,
@@ -289,6 +328,44 @@ void test_deposit_forecasts_expose_confidence_and_uncertainty() {
                 "uncertain deposit is the unconfirmed reserve remainder");
 }
 
+void test_resource_survey_updates_confirmed_and_estimated_forecasts() {
+    // Accepted survey commands should immediately change forecast certainty: the
+    // physical reserve was already in state, but its confirmed/estimated split
+    // must reflect the improved confidence.
+    deep::GameState state = deep::createHomeSystemScenario();
+    const deep::BodyId frontierId = bodyIdByName(state, "Helios Far Survey Object");
+    const deep::FleetId fleetId = addTestFleetAt(state, frontierId);
+    deep::SimulationService service{std::move(state)};
+
+    const auto beforeRows = deep::ForecastService{service}.depositExhaustionEstimates();
+    const auto beforeIt = std::find_if(beforeRows.begin(), beforeRows.end(), [](const deep::DepositExhaustionForecast& row) {
+        return row.bodyName == "Helios Far Survey Object" && row.mineral == deep::Mineral::RareEarthElements;
+    });
+    require(beforeIt != beforeRows.end(), "frontier rare-earth forecast exists before survey");
+    requireNear(beforeIt->confidence, 0.0, "rare-earth frontier deposit starts hidden");
+    requireNear(beforeIt->confirmedDeposit, 0.0, "hidden deposit has no confirmed reserve before survey");
+    requireNear(beforeIt->estimatedDeposit, 0.0, "hidden deposit has no displayed estimate before survey");
+
+    require(service.execute(deep::ResourceSurveyCommand{
+        .fleetId = fleetId,
+        .bodyId = frontierId
+    }).ok, "resource survey command is accepted before forecast update");
+
+    const auto afterRows = deep::ForecastService{service}.depositExhaustionEstimates();
+    const auto afterIt = std::find_if(afterRows.begin(), afterRows.end(), [](const deep::DepositExhaustionForecast& row) {
+        return row.bodyName == "Helios Far Survey Object" && row.mineral == deep::Mineral::RareEarthElements;
+    });
+    require(afterIt != afterRows.end(), "frontier rare-earth forecast exists after survey");
+    require(afterIt->confidence >= deep::kResourceSurveyMinimumRevealedConfidence,
+            "survey raises hidden deposit confidence into estimated range");
+    require(afterIt->confirmedDeposit > beforeIt->confirmedDeposit,
+            "survey increases confirmed reserve forecast");
+    require(afterIt->estimatedDeposit > beforeIt->estimatedDeposit,
+            "survey exposes estimated reserve forecast");
+    require(afterIt->uncertainDeposit < afterIt->remainingDeposit,
+            "survey reduces uncertain reserve share");
+}
+
 void test_deposit_exhaustion_estimate_uses_current_income_rate() {
     // Verifies deposit lifetime estimates are explainable capacity projections.
     // This catches drift if Simulation mining formulas change later.
@@ -525,6 +602,7 @@ int main() {
         test_processed_material_forecast_normalizes_manual_weights();
         test_mineral_forecast_cause_chains_include_processing_demand();
         test_deposit_forecasts_expose_confidence_and_uncertainty();
+        test_resource_survey_updates_confirmed_and_estimated_forecasts();
         test_deposit_exhaustion_estimate_uses_current_income_rate();
         test_shipyard_order_eta_uses_capacity_and_accumulated_progress();
         test_production_backlog_uses_fifo_colony_capacity();

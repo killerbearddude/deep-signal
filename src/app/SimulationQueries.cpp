@@ -800,6 +800,8 @@ void addProcessingWeight(ProcessingShares& weights, const ProcessedMaterial mate
             return "fleet_order_assigned";
         } else if constexpr (std::is_same_v<Event, FleetArrivedEvent>) {
             return "fleet_arrived";
+        } else if constexpr (std::is_same_v<Event, ResourceSurveyCompletedEvent>) {
+            return "resource_survey_completed";
         } else if constexpr (std::is_same_v<Event, CommandRejectedEvent>) {
             return "command_rejected";
         }
@@ -827,6 +829,12 @@ void addProcessingWeight(ProcessingShares& weights, const ProcessedMaterial mate
         } else if constexpr (std::is_same_v<Event, FleetArrivedEvent>) {
             out << "Fleet " << idText(event.fleetId.value)
                 << " arrived at body " << idText(event.destinationBodyId.value);
+        } else if constexpr (std::is_same_v<Event, ResourceSurveyCompletedEvent>) {
+            out << "Fleet " << idText(event.fleetId.value)
+                << " surveyed body " << idText(event.bodyId.value)
+                << "; improved " << event.depositsImproved << " deposit(s)"
+                << " from " << (event.averageConfidenceBefore * 100.0) << "% to "
+                << (event.averageConfidenceAfter * 100.0) << "% average confidence";
         } else if constexpr (std::is_same_v<Event, CommandRejectedEvent>) {
             out << event.reason;
         }
@@ -1259,6 +1267,53 @@ std::optional<FleetMovePreview> SimulationQueries::fleetMovePreview(const FleetI
         .canAfford = canAfford,
         .warningText = std::move(warning)
     };
+}
+
+std::optional<ResourceSurveyPreview> SimulationQueries::resourceSurveyPreview(const FleetId fleetId, const BodyId bodyId) const {
+    const GameState& state = service_.state();
+    const Fleet* fleet = findById(state.fleets, fleetId);
+    const Body* body = bodyById(state, bodyId);
+    if (fleet == nullptr || body == nullptr) {
+        return std::nullopt;
+    }
+
+    ResourceSurveyPreview preview{
+        .fleetId = fleetId,
+        .bodyId = bodyId,
+        .bodyName = body->name,
+        .surveyableDepositCount = 0,
+        .averageConfidenceBefore = 0.0,
+        .projectedAverageConfidenceAfter = 0.0,
+        .canSurvey = false,
+        .warningText = {}
+    };
+
+    for (const MineralDeposit& deposit : state.mineralDeposits) {
+        if (deposit.bodyId != bodyId || isDepositKnown(deposit)) {
+            continue;
+        }
+        preview.averageConfidenceBefore += deposit.confidence;
+        preview.projectedAverageConfidenceAfter += surveyedDepositConfidence(deposit);
+        ++preview.surveyableDepositCount;
+    }
+
+    if (preview.surveyableDepositCount > 0U) {
+        const double count = static_cast<double>(preview.surveyableDepositCount);
+        preview.averageConfidenceBefore /= count;
+        preview.projectedAverageConfidenceAfter /= count;
+    }
+
+    if (fleet->activeOrder.type != FleetOrderType::None || fleet->destinationBodyId.has_value()) {
+        preview.warningText = "Fleet must be stationary to survey.";
+    } else if (fleet->currentBodyId != bodyId) {
+        preview.warningText = "Fleet must be at the selected body.";
+    } else if (preview.surveyableDepositCount == 0U) {
+        preview.warningText = "No low-confidence deposits remain on this body.";
+    } else {
+        preview.canSurvey = true;
+    }
+
+    return preview;
 }
 
 std::vector<BodySystemSummary> SimulationQueries::bodySystemOverview() const {
