@@ -38,10 +38,13 @@ void BodiesPanel::render(const SimulationQueries& queries, SelectionState& selec
     const std::vector<BodySystemSummary> bodies = queries.bodySystemOverview();
     ImGui::Text("Bodies: %zu", bodies.size());
 
-    if (ImGui::BeginTable("BodySystemTable", 7, kBodyTableFlags)) {
+    if (ImGui::BeginTable("BodySystemTable", 10, kBodyTableFlags)) {
         ImGui::TableSetupColumn("Body");
         ImGui::TableSetupColumn("Type");
         ImGui::TableSetupColumn("Zone");
+        ImGui::TableSetupColumn("Parent");
+        ImGui::TableSetupColumn("Orbit Radius");
+        ImGui::TableSetupColumn("Period");
         ImGui::TableSetupColumn("Owner / Institution");
         ImGui::TableSetupColumn("Colonies");
         ImGui::TableSetupColumn("Mineral Deposits");
@@ -64,12 +67,18 @@ void BodiesPanel::render(const SimulationQueries& queries, SelectionState& selec
             ImGui::TableSetColumnIndex(2);
             ImGui::TextUnformatted(body.strategicZoneName.c_str());
             ImGui::TableSetColumnIndex(3);
-            ImGui::TextUnformatted(body.ownerInstitutionName.empty() ? "-" : body.ownerInstitutionName.c_str());
+            ImGui::TextUnformatted(body.parentBodyName.empty() ? "-" : body.parentBodyName.c_str());
             ImGui::TableSetColumnIndex(4);
-            ImGui::Text("%zu", body.colonyCount);
+            ImGui::Text("%.1fM km", body.orbitalRadiusKm / 1'000'000.0);
             ImGui::TableSetColumnIndex(5);
-            ImGui::Text("%zu", body.mineralDepositCount);
+            ImGui::Text("%.1f d", body.orbitalPeriodDays);
             ImGui::TableSetColumnIndex(6);
+            ImGui::TextUnformatted(body.ownerInstitutionName.empty() ? "-" : body.ownerInstitutionName.c_str());
+            ImGui::TableSetColumnIndex(7);
+            ImGui::Text("%zu", body.colonyCount);
+            ImGui::TableSetColumnIndex(8);
+            ImGui::Text("%zu", body.mineralDepositCount);
+            ImGui::TableSetColumnIndex(9);
             ImGui::Text("%zu", body.fleetCount);
         }
 

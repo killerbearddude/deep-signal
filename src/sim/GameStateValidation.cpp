@@ -282,6 +282,28 @@ void validateFleetOrder(const GameState& state, const Fleet& fleet) {
         requireState(*fleet.destinationBodyId == *fleet.activeOrder.targetBodyId,
                      "moving fleet destination and target body must match");
         requireState(fleet.activeOrder.daysRemaining > 0, "moving fleet must have positive days remaining");
+        requireState(fleet.activeOrder.departureBodyId.has_value(), "moving fleet must have a departure body");
+        requireValidReference(containsId(state.bodies, *fleet.activeOrder.departureBodyId), *fleet.activeOrder.departureBodyId,
+                              "fleet departure body");
+        requireState(fleet.activeOrder.departureDay >= 0, "moving fleet departure day must be non-negative");
+        requireState(fleet.activeOrder.arrivalDay > fleet.activeOrder.departureDay,
+                     "moving fleet arrival day must follow departure day");
+        requireState(fleet.activeOrder.arrivalDay >= state.date.day,
+                     "moving fleet arrival day must not be in the past");
+        requireState(fleet.activeOrder.arrivalDay - state.date.day == fleet.activeOrder.daysRemaining,
+                     "moving fleet days remaining must match arrival day");
+        requireState(isFinite(fleet.activeOrder.departurePosition.x) && isFinite(fleet.activeOrder.departurePosition.y),
+                     "moving fleet departure position must be finite");
+        requireState(isFinite(fleet.activeOrder.projectedArrivalPosition.x) &&
+                         isFinite(fleet.activeOrder.projectedArrivalPosition.y),
+                     "moving fleet projected arrival position must be finite");
+        requireState(isFinite(fleet.activeOrder.routeCurveControlPoint.x) &&
+                         isFinite(fleet.activeOrder.routeCurveControlPoint.y),
+                     "moving fleet route curve control point must be finite");
+        requireState(isFinite(fleet.activeOrder.transitDistanceKm) && fleet.activeOrder.transitDistanceKm > 0.0,
+                     "moving fleet transit distance must be positive and finite");
+        requireState(isFinite(fleet.activeOrder.burnAccelerationG) && fleet.activeOrder.burnAccelerationG > 0.0,
+                     "moving fleet burn acceleration must be positive and finite");
         requireState(*fleet.destinationBodyId != fleet.currentBodyId, "moving fleet destination must differ from current body");
         requireValidReference(containsId(state.bodies, *fleet.destinationBodyId), *fleet.destinationBodyId,
                               "fleet destination body");
@@ -377,6 +399,17 @@ void validateGameState(const GameState& state) {
         requireState(!body.name.empty(), "body name must be non-empty");
         requireState(isValidBodyType(body.type), "body type must be valid");
         requireState(isValidStrategicZone(body.strategicZone), "body strategic zone must be valid");
+        if (body.parentBodyId.has_value()) {
+            requireValidReference(containsId(state.bodies, *body.parentBodyId), *body.parentBodyId, "body parent");
+            requireState(*body.parentBodyId != body.id, "body parent must not be itself");
+        }
+        requireState(isFinite(body.orbitalRadiusKm) && body.orbitalRadiusKm >= 0.0,
+                     "body orbital radius must be finite and non-negative");
+        requireState(isFinite(body.orbitalPeriodDays) && body.orbitalPeriodDays >= 0.0,
+                     "body orbital period must be finite and non-negative");
+        requireState(isFinite(body.phaseRadians), "body phase must be finite");
+        requireState(isFinite(body.displayRadius) && body.displayRadius > 0.0,
+                     "body display radius must be finite and positive");
         requireState(isFinite(body.x) && isFinite(body.y), "body coordinates must be finite");
     }
 

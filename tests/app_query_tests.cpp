@@ -528,16 +528,20 @@ void test_fleet_summaries_resolve_location_and_order() {
     require(fleets.front().destinationBodyName == "Mars", "fleet summary resolves destination body");
     require(fleets.front().shipCount == 1, "fleet summary includes ship count");
     requireNear(fleets.front().fuelCapacity, 1000.0, "fleet summary includes total fuel capacity");
-    requireNear(fleets.front().currentFuel, 760.0, "fleet summary includes fuel after starting movement");
-    requireNear(fleets.front().currentRange, 760.0, "fleet summary exposes current fuel range");
+    const double expectedFuel = 1000.0 - fleets.front().activeOrderTransitDistanceKm / deep::kKilometersPerMapUnit;
+    requireNear(fleets.front().currentFuel, expectedFuel, "fleet summary includes fuel after starting movement");
+    requireNear(fleets.front().currentRange, expectedFuel, "fleet summary exposes current fuel range");
     require(fleets.front().activeOrderName == "MoveToBody", "fleet summary includes active order type");
     require(fleets.front().hasActiveOrder, "fleet summary marks active movement orders");
-    require(fleets.front().daysRemaining == 5, "fleet summary includes remaining movement days");
+    require(fleets.front().daysRemaining > 0, "fleet summary includes remaining movement days");
     require(fleets.front().activeOrderEtaDays.has_value(), "active movement exposes an ETA");
-    require(*fleets.front().activeOrderEtaDays == 5, "active movement ETA uses remaining movement days");
-    require(fleets.front().activeOrderProjectedArrivalDay == service.state().date.day + 5,
+    require(*fleets.front().activeOrderEtaDays == fleets.front().daysRemaining, "active movement ETA uses remaining movement days");
+    require(fleets.front().activeOrderProjectedArrivalDay == service.state().date.day + fleets.front().daysRemaining,
             "active movement exposes projected arrival day");
-    require(fleets.front().totalRouteDurationDays == 5, "single active order route lasts five days");
+    require(fleets.front().activeOrderTransitDistanceKm > 0.0, "active movement exposes transit distance");
+    require(fleets.front().activeOrderBurnAccelerationG > 0.0, "active movement exposes burn acceleration");
+    require(!fleets.front().activeOrderBurnPhase.empty(), "active movement exposes burn phase");
+    require(fleets.front().totalRouteDurationDays == fleets.front().daysRemaining, "single active order route duration matches ETA");
     require(fleets.front().queuedOrders.empty(), "fleet summary exposes an empty queue for immediate movement");
 }
 
@@ -578,26 +582,37 @@ void test_fleet_summaries_include_queued_orders() {
     require(fleet->queuedOrders.front().orderName == "MoveToBody", "queued order summary resolves order name");
     require(fleet->queuedOrders.front().destinationBodyId == terraId, "queued order summary includes destination ID");
     require(fleet->queuedOrders.front().destinationBodyName == "Terra", "queued order summary resolves destination name");
-    require(fleet->queuedOrders.front().etaDays == 10,
-            "queued order summary exposes cumulative ETA after the active order and queued move");
-    require(fleet->queuedOrders.front().projectedStartDay == service.state().date.day + 5,
+    require(fleet->queuedOrders.front().etaDays > 0,
+            "queued order summary exposes ETA for the queued move");
+    require(fleet->queuedOrders.front().projectedStartDay == fleet->activeOrderProjectedArrivalDay,
             "queued order summary exposes projected start after active order arrival");
-    require(fleet->queuedOrders.front().projectedArrivalDay == service.state().date.day + 10,
+    require(fleet->queuedOrders.front().projectedArrivalDay ==
+                fleet->queuedOrders.front().projectedStartDay + fleet->queuedOrders.front().etaDays,
             "queued order summary exposes projected arrival after queued move duration");
-    requireNear(fleet->queuedOrders.front().fuelCost, 240.0,
+    require(fleet->queuedOrders.front().transitDistanceKm > 0.0,
+            "queued order summary includes projected transit distance");
+    require(fleet->queuedOrders.front().burnAccelerationG > 0.0,
+            "queued order summary includes burn acceleration");
+    requireNear(fleet->queuedOrders.front().fuelCost,
+                fleet->queuedOrders.front().transitDistanceKm / deep::kKilometersPerMapUnit,
                 "queued order summary includes fuel cost from projected origin");
-    requireNear(fleet->queuedOrders.front().projectedFuelRemaining, 520.0,
+    requireNear(fleet->queuedOrders.front().projectedFuelRemaining,
+                fleet->currentFuel - fleet->queuedOrders.front().fuelCost,
                 "queued order summary includes projected fuel after queued move");
     require(fleet->queuedOrders.front().fuelAffordable,
             "queued order summary marks affordable queued movement");
-    require(fleet->totalRouteDurationDays == 10, "fleet summary exposes total route duration through the queue");
+    require(fleet->totalRouteDurationDays == fleet->daysRemaining + fleet->queuedOrders.front().etaDays,
+            "fleet summary exposes total route duration through the queue");
 
     const auto preview = queries.fleetMovePreview(fleetId, marsId);
     require(preview.has_value(), "fleet move preview is available for valid fleet and destination");
-    requireNear(preview->fuelAvailable, 760.0, "move preview uses current remaining fleet fuel");
-    requireNear(preview->queuedFuelRequired, 480.0,
+    requireNear(preview->fuelAvailable, fleet->currentFuel, "move preview uses current remaining fleet fuel");
+    require(preview->transitDistanceKm > 0.0, "move preview exposes planned transit distance");
+    require(preview->etaDays > 0, "move preview exposes sustained-burn ETA");
+    require(preview->burnAccelerationG > 0.0, "move preview exposes burn acceleration");
+    requireNear(preview->queuedFuelRequired, fleet->queuedOrders.front().fuelCost + preview->newMoveFuelCost,
                 "move preview accounts for existing queued moves plus the new move");
-    requireNear(preview->projectedFuelRemaining, 280.0,
+    requireNear(preview->projectedFuelRemaining, preview->fuelAvailable - preview->queuedFuelRequired,
                 "move preview exposes remaining fuel after queued route");
     require(preview->canAfford, "move preview marks affordable route as queueable");
 }
@@ -687,7 +702,7 @@ void test_body_system_overview_exposes_counts() {
     const deep::SimulationQueries queries{service};
     const auto bodies = queries.bodySystemOverview();
 
-    require(bodies.size() == 8, "home scenario exposes mature-system body overview rows");
+    require(bodies.size() == 9, "home scenario exposes mature-system body overview rows including the Sun");
     require(bodies.front().name == "Terra", "first body overview row resolves Terra");
     require(bodies.front().typeName == "Terrestrial", "body overview resolves body type name");
     require(bodies.front().strategicZoneName == "Inner Core", "body overview resolves strategic zone name");
@@ -702,8 +717,9 @@ void test_body_system_overview_exposes_counts() {
     require(bodies.at(1).colonyCount == 1, "Mars body overview counts the naval yard colony");
     require(bodies.at(1).mineralDepositCount == 4, "Mars body overview counts mineral deposits");
     require(bodies.at(1).fleetCount == 0, "Mars body overview has no fleets before movement");
-    require(bodies.back().strategicZoneName == "Deep Survey Frontier",
+    require(bodies.at(7).strategicZoneName == "Deep Survey Frontier",
             "remote body overview exposes the survey-frontier zone");
+    require(bodies.back().name == "Sun", "body overview includes the fixed central star");
 }
 
 void test_strategic_map_summaries_resolve_positions() {
@@ -724,21 +740,27 @@ void test_strategic_map_summaries_resolve_positions() {
     const auto bodies = queries.strategicBodies();
     const auto fleets = queries.strategicFleets();
 
-    require(bodies.size() == 8, "home scenario exposes mature-system strategic body summaries");
+    require(bodies.size() == 9, "home scenario exposes mature-system strategic body summaries including the Sun");
     require(bodies.front().name == "Terra", "strategic body summary includes body name");
     require(bodies.front().typeName == "Terrestrial", "strategic body summary includes body type name");
     require(bodies.front().strategicZoneName == "Inner Core", "strategic body summary includes zone name");
     require(bodies.front().ownerInstitutionName == "Strategic Continuity Office",
             "strategic body summary includes owner institution name where available");
-    require(bodies.front().x == 0.0 && bodies.front().y == 0.0, "strategic body summary includes coordinates");
+    require(bodies.front().x != 0.0 || bodies.front().y != 0.0,
+            "strategic body summary computes Terra's current rail position");
+    require(bodies.front().parentBodyName == "Sun", "strategic body summary resolves orbital parent name");
+    require(bodies.front().orbitalRadiusKm > 0.0, "strategic body summary exposes orbital radius");
     require(bodies.at(1).name == "Mars", "second strategic body summary includes Mars");
-    require(bodies.at(1).x == 240.0, "Mars strategic body summary preserves map x coordinate");
-    require(bodies.back().strategicZoneName == "Deep Survey Frontier",
+    require(bodies.at(1).orbitalPeriodDays > bodies.front().orbitalPeriodDays,
+            "Mars strategic body summary exposes slower orbital rail");
+    require(bodies.at(7).strategicZoneName == "Deep Survey Frontier",
             "strategic body summary includes survey-frontier body metadata");
+    require(bodies.back().name == "Sun", "strategic body summary includes central star");
 
     require(fleets.size() == 1, "completed ship creates one strategic fleet summary");
     require(fleets.front().name.find("Survey Cutter Fleet") != std::string::npos, "strategic fleet summary includes fleet name");
-    require(fleets.front().x == 0.0 && fleets.front().y == 0.0, "fleet marker resolves current body coordinates");
+    require(fleets.front().x == bodies.front().x && fleets.front().y == bodies.front().y,
+            "fleet marker resolves current body rail position");
 }
 
 void test_recent_events_returns_limited_chronological_tail() {

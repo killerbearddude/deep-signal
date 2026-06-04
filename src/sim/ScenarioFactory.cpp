@@ -41,6 +41,7 @@ GameState createHomeSystemScenario() {
     const BodyId pallasId{state.ids.nextBodyId++};
     const BodyId titanId{state.ids.nextBodyId++};
     const BodyId frontierObjectId{state.ids.nextBodyId++};
+    const BodyId sunId{state.ids.nextBodyId++};
 
     const ColonyId terraColonyId{state.ids.nextColonyId++};
     const ColonyId marsColonyId{state.ids.nextColonyId++};
@@ -197,15 +198,21 @@ GameState createHomeSystemScenario() {
         }
     });
 
-    // The mature home-system map is deliberately coarse. Coordinates are
-    // operational distances used by v1 fuel/range previews, not orbital physics.
+    // The mature home-system map is deliberately coarse but now uses simple
+    // circular rails. Rail positions are computed from date; x/y remain fallback
+    // positions for fixed objects and hand-authored display defaults.
     state.bodies.push_back(Body{
         .id = terraId,
         .systemId = solId,
         .name = "Terra",
         .type = BodyType::Terrestrial,
         .strategicZone = StrategicZone::InnerCore,
-        .x = 0.0,
+        .parentBodyId = sunId,
+        .orbitalRadiusKm = 149'600'000.0,
+        .orbitalPeriodDays = 365.25,
+        .phaseRadians = 0.0,
+        .displayRadius = 10.0,
+        .x = 149.6,
         .y = 0.0
     });
     state.bodies.push_back(Body{
@@ -214,8 +221,13 @@ GameState createHomeSystemScenario() {
         .name = "Mars",
         .type = BodyType::Terrestrial,
         .strategicZone = StrategicZone::MilitaryIndustrial,
-        .x = 240.0,
-        .y = 0.0
+        .parentBodyId = sunId,
+        .orbitalRadiusKm = 227'900'000.0,
+        .orbitalPeriodDays = 687.0,
+        .phaseRadians = 1.32,
+        .displayRadius = 8.0,
+        .x = 56.6,
+        .y = 220.7
     });
     state.bodies.push_back(Body{
         .id = lunaId,
@@ -223,8 +235,13 @@ GameState createHomeSystemScenario() {
         .name = "Luna Yard Complex",
         .type = BodyType::Moon,
         .strategicZone = StrategicZone::MilitaryIndustrial,
-        .x = 18.0,
-        .y = 6.0
+        .parentBodyId = terraId,
+        .orbitalRadiusKm = 384'400.0,
+        .orbitalPeriodDays = 27.3,
+        .phaseRadians = 0.75,
+        .displayRadius = 5.0,
+        .x = 150.0,
+        .y = 0.3
     });
     state.bodies.push_back(Body{
         .id = ceresId,
@@ -232,8 +249,13 @@ GameState createHomeSystemScenario() {
         .name = "Ceres Extraction Hub",
         .type = BodyType::Asteroid,
         .strategicZone = StrategicZone::BeltIndustrial,
-        .x = 520.0,
-        .y = 70.0
+        .parentBodyId = sunId,
+        .orbitalRadiusKm = 413'700'000.0,
+        .orbitalPeriodDays = 1682.0,
+        .phaseRadians = 2.05,
+        .displayRadius = 5.0,
+        .x = -190.1,
+        .y = 367.4
     });
     state.bodies.push_back(Body{
         .id = vestaId,
@@ -241,8 +263,13 @@ GameState createHomeSystemScenario() {
         .name = "Vesta Refinery Claim",
         .type = BodyType::Asteroid,
         .strategicZone = StrategicZone::BeltIndustrial,
-        .x = 620.0,
-        .y = -90.0
+        .parentBodyId = sunId,
+        .orbitalRadiusKm = 353'400'000.0,
+        .orbitalPeriodDays = 1325.0,
+        .phaseRadians = 3.10,
+        .displayRadius = 5.0,
+        .x = -353.1,
+        .y = 14.7
     });
     state.bodies.push_back(Body{
         .id = pallasId,
@@ -250,8 +277,13 @@ GameState createHomeSystemScenario() {
         .name = "Pallas Survey Claim",
         .type = BodyType::Asteroid,
         .strategicZone = StrategicZone::BeltIndustrial,
-        .x = 710.0,
-        .y = 145.0
+        .parentBodyId = sunId,
+        .orbitalRadiusKm = 414'500'000.0,
+        .orbitalPeriodDays = 1686.0,
+        .phaseRadians = 4.35,
+        .displayRadius = 5.0,
+        .x = -146.8,
+        .y = -387.6
     });
     state.bodies.push_back(Body{
         .id = titanId,
@@ -259,8 +291,13 @@ GameState createHomeSystemScenario() {
         .name = "Titan Fuel Depot",
         .type = BodyType::Moon,
         .strategicZone = StrategicZone::OuterLogistics,
-        .x = 1250.0,
-        .y = -160.0
+        .parentBodyId = sunId,
+        .orbitalRadiusKm = 1'433'500'000.0,
+        .orbitalPeriodDays = 10'759.0,
+        .phaseRadians = 5.20,
+        .displayRadius = 6.0,
+        .x = 672.0,
+        .y = -1266.5
     });
     state.bodies.push_back(Body{
         .id = frontierObjectId,
@@ -268,8 +305,27 @@ GameState createHomeSystemScenario() {
         .name = "Helios Far Survey Object",
         .type = BodyType::Asteroid,
         .strategicZone = StrategicZone::DeepSurveyFrontier,
-        .x = 1850.0,
-        .y = 420.0
+        .parentBodyId = sunId,
+        .orbitalRadiusKm = 2'600'000'000.0,
+        .orbitalPeriodDays = 20'000.0,
+        .phaseRadians = 0.95,
+        .displayRadius = 5.0,
+        .x = 1510.0,
+        .y = 2116.0
+    });
+    state.bodies.push_back(Body{
+        .id = sunId,
+        .systemId = solId,
+        .name = "Sun",
+        .type = BodyType::Star,
+        .strategicZone = StrategicZone::InnerCore,
+        .parentBodyId = std::nullopt,
+        .orbitalRadiusKm = 0.0,
+        .orbitalPeriodDays = 0.0,
+        .phaseRadians = 0.0,
+        .displayRadius = 14.0,
+        .x = 0.0,
+        .y = 0.0
     });
 
     MineralSet startingStockpile;

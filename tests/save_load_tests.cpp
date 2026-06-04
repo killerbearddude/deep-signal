@@ -205,6 +205,11 @@ void requireSameState(const deep::GameState& expected, const deep::GameState& ac
         require(left.name == right.name, "body name round-trips");
         require(left.type == right.type, "body type round-trips");
         require(left.strategicZone == right.strategicZone, "body strategic zone round-trips");
+        require(sameOptionalId(left.parentBodyId, right.parentBodyId), "body parent rail reference round-trips");
+        require(almostEqual(left.orbitalRadiusKm, right.orbitalRadiusKm), "body orbital radius round-trips");
+        require(almostEqual(left.orbitalPeriodDays, right.orbitalPeriodDays), "body orbital period round-trips");
+        require(almostEqual(left.phaseRadians, right.phaseRadians), "body orbital phase round-trips");
+        require(almostEqual(left.displayRadius, right.displayRadius), "body display radius round-trips");
         require(almostEqual(left.x, right.x), "body x coordinate round-trips");
         require(almostEqual(left.y, right.y), "body y coordinate round-trips");
     }
@@ -277,6 +282,26 @@ void requireSameState(const deep::GameState& expected, const deep::GameState& ac
         require(left.activeOrder.type == right.activeOrder.type, "fleet order type round-trips");
         require(sameOptionalId(left.activeOrder.targetBodyId, right.activeOrder.targetBodyId), "fleet order target round-trips");
         require(left.activeOrder.daysRemaining == right.activeOrder.daysRemaining, "fleet order days remaining round-trips");
+        require(sameOptionalId(left.activeOrder.departureBodyId, right.activeOrder.departureBodyId),
+                "fleet order departure body round-trips");
+        require(left.activeOrder.departureDay == right.activeOrder.departureDay, "fleet order departure day round-trips");
+        require(left.activeOrder.arrivalDay == right.activeOrder.arrivalDay, "fleet order arrival day round-trips");
+        require(almostEqual(left.activeOrder.departurePosition.x, right.activeOrder.departurePosition.x),
+                "fleet order departure x round-trips");
+        require(almostEqual(left.activeOrder.departurePosition.y, right.activeOrder.departurePosition.y),
+                "fleet order departure y round-trips");
+        require(almostEqual(left.activeOrder.projectedArrivalPosition.x, right.activeOrder.projectedArrivalPosition.x),
+                "fleet order projected arrival x round-trips");
+        require(almostEqual(left.activeOrder.projectedArrivalPosition.y, right.activeOrder.projectedArrivalPosition.y),
+                "fleet order projected arrival y round-trips");
+        require(almostEqual(left.activeOrder.transitDistanceKm, right.activeOrder.transitDistanceKm),
+                "fleet order transit distance round-trips");
+        require(almostEqual(left.activeOrder.burnAccelerationG, right.activeOrder.burnAccelerationG),
+                "fleet order burn acceleration round-trips");
+        require(almostEqual(left.activeOrder.routeCurveControlPoint.x, right.activeOrder.routeCurveControlPoint.x),
+                "fleet order curve control x round-trips");
+        require(almostEqual(left.activeOrder.routeCurveControlPoint.y, right.activeOrder.routeCurveControlPoint.y),
+                "fleet order curve control y round-trips");
         require(left.queuedOrders.size() == right.queuedOrders.size(), "fleet queued-order count round-trips");
         for (std::size_t j = 0; j < left.queuedOrders.size(); ++j) {
             require(left.queuedOrders.at(j).type == right.queuedOrders.at(j).type,
@@ -444,7 +469,8 @@ void test_sqlite_save_load_round_trip() {
     }).ok, "manual processing policy is set before save");
 
     const deep::GameState expected = service.state();
-    require(almostEqual(expected.ships.front().fuel, 760.0),
+    const double activeFuelCost = expected.fleets.front().activeOrder.transitDistanceKm / deep::kKilometersPerMapUnit;
+    require(almostEqual(expected.ships.front().fuel, 1000.0 - activeFuelCost),
             "active movement consumes fuel before save/load round-trip");
     const auto saveResult = service.saveGame(path);
     require(saveResult.ok, "service saves SQLite file");
@@ -459,29 +485,34 @@ void test_sqlite_save_load_round_trip() {
 
     // Continue the loaded simulation to prove that rehydrated active movement
     // state is not merely present but still valid for rule execution.
-    loadedService.advanceDays(3);
+    const int remainingActiveDays = loadedService.state().fleets.front().activeOrder.daysRemaining;
+    loadedService.advanceDays(remainingActiveDays);
     require(loadedService.state().fleets.front().currentBodyId == marsId, "loaded fleet arrives after remaining movement days");
-    require(almostEqual(loadedService.state().ships.front().fuel, 520.0),
+    const double fuelAfterFirstPromotion = loadedService.state().ships.front().fuel;
+    require(fuelAfterFirstPromotion < expected.ships.front().fuel,
             "loaded fleet consumes fuel when first queued order starts");
     require(loadedService.state().fleets.front().activeOrder.type == deep::FleetOrderType::MoveToBody,
             "loaded fleet starts persisted queued order after arrival");
     require(loadedService.state().fleets.front().activeOrder.targetBodyId == service.state().bodies.front().id,
             "persisted queued order keeps its destination after promotion");
 
-    loadedService.advanceDays(5);
+    const int firstPromotedDays = loadedService.state().fleets.front().activeOrder.daysRemaining;
+    loadedService.advanceDays(firstPromotedDays);
     require(loadedService.state().fleets.front().currentBodyId == service.state().bodies.front().id,
             "loaded fleet completes first promoted queued order");
-    require(almostEqual(loadedService.state().ships.front().fuel, 280.0),
+    const double fuelAfterSecondPromotion = loadedService.state().ships.front().fuel;
+    require(fuelAfterSecondPromotion < fuelAfterFirstPromotion,
             "loaded fleet consumes fuel when second queued order starts");
     require(loadedService.state().fleets.front().activeOrder.type == deep::FleetOrderType::MoveToBody,
             "loaded fleet starts second persisted queued order");
     require(loadedService.state().fleets.front().activeOrder.targetBodyId == marsId,
             "second persisted queued order keeps its destination after promotion");
 
-    loadedService.advanceDays(5);
+    const int secondPromotedDays = loadedService.state().fleets.front().activeOrder.daysRemaining;
+    loadedService.advanceDays(secondPromotedDays);
     require(loadedService.state().fleets.front().currentBodyId == marsId,
             "loaded fleet completes second promoted queued order");
-    require(almostEqual(loadedService.state().ships.front().fuel, 280.0),
+    require(almostEqual(loadedService.state().ships.front().fuel, fuelAfterSecondPromotion),
             "arriving does not consume additional fuel after start-of-move consumption");
     require(loadedService.state().fleets.front().activeOrder.type == deep::FleetOrderType::None,
             "loaded fleet clears movement order after queued route finishes");

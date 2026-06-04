@@ -195,6 +195,8 @@ struct FleetQueuedOrderSummary {
     std::optional<BodyId> destinationBodyId;
     std::string destinationBodyName;
     int etaDays = 0;
+    double transitDistanceKm = 0.0;
+    double burnAccelerationG = 0.0;
 
     // Absolute simulation days projected from the current snapshot. These are
     // preview values only; future movement/range rules may replace the fixed
@@ -234,6 +236,9 @@ struct FleetSummary {
     std::optional<int> activeOrderEtaDays;
     int totalRouteDurationDays = 0;
     std::int64_t activeOrderProjectedArrivalDay = 0;
+    double activeOrderTransitDistanceKm = 0.0;
+    double activeOrderBurnAccelerationG = 0.0;
+    std::string activeOrderBurnPhase;
     std::vector<FleetQueuedOrderSummary> queuedOrders;
 };
 
@@ -248,6 +253,9 @@ struct FleetMovePreview {
     double fuelAvailable = 0.0;
     double queuedFuelRequired = 0.0;
     double newMoveFuelCost = 0.0;
+    double transitDistanceKm = 0.0;
+    int etaDays = 0;
+    double burnAccelerationG = 0.0;
     double fuelEfficiencyModifierPercent = 0.0;
     double projectedFuelRemaining = 0.0;
     bool canAfford = false;
@@ -265,6 +273,11 @@ struct BodySystemSummary {
     std::string strategicZoneName;
     std::optional<InstitutionId> ownerInstitutionId;
     std::string ownerInstitutionName;
+    std::optional<BodyId> parentBodyId;
+    std::string parentBodyName;
+    double orbitalRadiusKm = 0.0;
+    double orbitalPeriodDays = 0.0;
+    double displayRadius = 0.0;
     std::size_t colonyCount = 0;
     std::size_t mineralDepositCount = 0;
     std::size_t fleetCount = 0;
@@ -281,6 +294,11 @@ struct StrategicBodySummary {
     std::string strategicZoneName;
     std::optional<InstitutionId> ownerInstitutionId;
     std::string ownerInstitutionName;
+    std::optional<BodyId> parentBodyId;
+    std::string parentBodyName;
+    double orbitalRadiusKm = 0.0;
+    double orbitalPeriodDays = 0.0;
+    double displayRadius = 0.0;
     double x = 0.0;
     double y = 0.0;
 };
@@ -293,11 +311,18 @@ struct StrategicFleetSummary {
     BodyId currentBodyId;
     double x = 0.0;
     double y = 0.0;
+    double departureX = 0.0;
+    double departureY = 0.0;
     std::optional<BodyId> destinationBodyId;
     double destinationX = 0.0;
     double destinationY = 0.0;
+    double controlX = 0.0;
+    double controlY = 0.0;
+    double projectedArrivalX = 0.0;
+    double projectedArrivalY = 0.0;
     bool moving = false;
     int daysRemaining = 0;
+    std::string burnPhase;
 };
 
 // Display-ready event log entry. The payload variant is flattened into type and

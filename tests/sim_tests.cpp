@@ -450,13 +450,17 @@ void test_fleet_movement() {
 
     require(sim.state().fleets.front().activeOrder.type == deep::FleetOrderType::MoveToBody,
             "fleet has active move order");
+    const int etaDays = sim.state().fleets.front().activeOrder.daysRemaining;
+    const double expectedFuelCost = sim.state().fleets.front().activeOrder.transitDistanceKm / deep::kKilometersPerMapUnit;
     requireNear(sim.state().ships.front().fuel,
-                startingFuel - 240.0,
-                "starting a Terra-to-Mars move consumes map-distance fuel immediately");
+                startingFuel - expectedFuelCost,
+                "starting a Terra-to-Mars move consumes planned transit fuel immediately");
+    require(sim.state().fleets.front().activeOrder.arrivalDay > sim.state().fleets.front().activeOrder.departureDay,
+            "movement stores a projected arrival day");
 
-    sim.advanceDays(5);
+    sim.advanceDays(etaDays);
 
-    require(sim.state().fleets.front().currentBodyId == marsId, "fleet arrives at Mars after fixed duration");
+    require(sim.state().fleets.front().currentBodyId == marsId, "fleet arrives at Mars after sustained-burn ETA");
     require(sim.state().fleets.front().activeOrder.type == deep::FleetOrderType::None,
             "fleet clears active order after arrival");
     require(std::holds_alternative<deep::FleetArrivedEvent>(sim.state().eventLog.back().payload),
@@ -531,9 +535,10 @@ void test_fleet_commander_reduces_move_fuel_cost_within_cap() {
         .destinationBodyId = marsId
     }).ok, "fleet move with appointed commander is accepted");
 
+    const double expectedFuelCost = sim.state().fleets.front().activeOrder.transitDistanceKm / deep::kKilometersPerMapUnit * 0.9;
     requireNear(sim.state().ships.front().fuel,
-                784.0,
-                "fleet commander capped modifier reduces 240 fuel cost to 216");
+                1000.0 - expectedFuelCost,
+                "fleet commander capped modifier reduces planned transit fuel cost");
 }
 
 void test_cancel_fleet_order() {
@@ -560,8 +565,9 @@ void test_cancel_fleet_order() {
         .destinationBodyId = marsId
     }).ok, "move order accepted before cancel test");
 
+    const int initialEtaDays = sim.state().fleets.front().activeOrder.daysRemaining;
     sim.advanceDays(2);
-    require(sim.state().fleets.front().activeOrder.daysRemaining == 3,
+    require(sim.state().fleets.front().activeOrder.daysRemaining == initialEtaDays - 2,
             "movement countdown advances before cancellation");
 
     const auto cancelResult = sim.execute(deep::CancelFleetOrderCommand{
@@ -578,7 +584,7 @@ void test_cancel_fleet_order() {
     require(sim.state().fleets.front().activeOrder.daysRemaining == 0,
             "cancelled fleet clears remaining order time");
 
-    sim.advanceDays(5);
+    sim.advanceDays(initialEtaDays);
     require(sim.state().fleets.front().currentBodyId == terraId,
             "cancelled fleet does not arrive after the old duration elapses");
 }
@@ -619,7 +625,8 @@ void test_fleet_order_queue_starts_next_order_after_arrival() {
             "follow-up move remains queued while current order is active");
 
     const std::size_t eventCountBeforeArrival = sim.state().eventLog.size();
-    sim.advanceDays(5);
+    const int firstEtaDays = sim.state().fleets.front().activeOrder.daysRemaining;
+    sim.advanceDays(firstEtaDays);
 
     require(sim.state().fleets.front().currentBodyId == marsId,
             "fleet reaches the first queued destination");
@@ -634,7 +641,8 @@ void test_fleet_order_queue_starts_next_order_after_arrival() {
     require(std::holds_alternative<deep::FleetOrderAssignedEvent>(sim.state().eventLog.back().payload),
             "queued order start is recorded as a fleet-order assignment event");
 
-    sim.advanceDays(5);
+    const int secondEtaDays = sim.state().fleets.front().activeOrder.daysRemaining;
+    sim.advanceDays(secondEtaDays);
     require(sim.state().fleets.front().currentBodyId == terraId,
             "fleet completes the follow-up queued move");
     require(sim.state().fleets.front().activeOrder.type == deep::FleetOrderType::None,
@@ -675,7 +683,8 @@ void test_clear_fleet_order_queue_preserves_current_order() {
     require(sim.state().fleets.front().activeOrder.type == deep::FleetOrderType::MoveToBody,
             "current order survives queue clearing");
 
-    sim.advanceDays(5);
+    const int activeEtaDays = sim.state().fleets.front().activeOrder.daysRemaining;
+    sim.advanceDays(activeEtaDays);
     require(sim.state().fleets.front().currentBodyId == marsId,
             "current order still completes after queue is cleared");
     require(sim.state().fleets.front().activeOrder.type == deep::FleetOrderType::None,

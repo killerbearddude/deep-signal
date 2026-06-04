@@ -4,6 +4,7 @@
 // This is deliberately simple: bodies and fleets are markers over abstract
 // scenario coordinates, not orbital mechanics or tactical rendering.
 
+#include <algorithm>
 #include <limits>
 #include <string>
 
@@ -33,8 +34,24 @@ constexpr float kGridSpacing = 80.0F;
     return MapPoint{.x = fleet.x, .y = fleet.y};
 }
 
+[[nodiscard]] MapPoint fleetDeparturePoint(const StrategicFleetSummary& fleet) noexcept {
+    return MapPoint{.x = fleet.departureX, .y = fleet.departureY};
+}
+
 [[nodiscard]] MapPoint fleetDestinationPoint(const StrategicFleetSummary& fleet) noexcept {
-    return MapPoint{.x = fleet.destinationX, .y = fleet.destinationY};
+    return MapPoint{.x = fleet.projectedArrivalX, .y = fleet.projectedArrivalY};
+}
+
+[[nodiscard]] MapPoint fleetControlPoint(const StrategicFleetSummary& fleet) noexcept {
+    return MapPoint{.x = fleet.controlX, .y = fleet.controlY};
+}
+
+[[nodiscard]] MapPoint quadraticBezier(const MapPoint p0, const MapPoint p1, const MapPoint p2, const double t) noexcept {
+    const double oneMinusT = 1.0 - t;
+    return MapPoint{
+        .x = (oneMinusT * oneMinusT * p0.x) + (2.0 * oneMinusT * t * p1.x) + (t * t * p2.x),
+        .y = (oneMinusT * oneMinusT * p0.y) + (2.0 * oneMinusT * t * p1.y) + (t * t * p2.y)
+    };
 }
 
 [[nodiscard]] double distanceSquared(const ImVec2 a, const ImVec2 b) noexcept {
@@ -59,13 +76,39 @@ void drawGrid(ImDrawList& drawList, const ImVec2 canvasMin, const ImVec2 canvasM
     }
 }
 
+void drawOrbitRail(ImDrawList& drawList,
+                   const MapCamera& camera,
+                   const MapPoint viewCenter,
+                   const StrategicBodySummary& body,
+                   const std::vector<StrategicBodySummary>& bodies) {
+    if (!body.parentBodyId.has_value() || body.orbitalRadiusKm <= 0.0) {
+        return;
+    }
+
+    const auto parentIt = std::find_if(bodies.begin(), bodies.end(), [body](const StrategicBodySummary& candidate) {
+        return candidate.id == *body.parentBodyId;
+    });
+    if (parentIt == bodies.end()) {
+        return;
+    }
+
+    const ImVec2 center = toImVec2(camera.worldToScreen(bodyPoint(*parentIt), viewCenter));
+    const float radius = static_cast<float>((body.orbitalRadiusKm / kKilometersPerMapUnit) * camera.zoom());
+    if (radius <= 1.0F) {
+        return;
+    }
+
+    drawList.AddCircle(center, radius, IM_COL32(80, 85, 100, 140), 96, 1.0F);
+}
+
 void drawBody(ImDrawList& drawList,
               const MapCamera& camera,
               const MapPoint viewCenter,
               const StrategicBodySummary& body,
               const bool selected) {
     const ImVec2 position = toImVec2(camera.worldToScreen(bodyPoint(body), viewCenter));
-    const float radius = selected ? kBodyRadius + 3.0F : kBodyRadius;
+    const float baseRadius = static_cast<float>(std::max(3.0, body.displayRadius));
+    const float radius = selected ? baseRadius + 3.0F : baseRadius;
 
     drawList.AddCircleFilled(position, radius, IM_COL32(120, 170, 255, 255), 24);
     drawList.AddCircle(position, radius + 1.0F, selected ? IM_COL32(255, 230, 120, 255) : IM_COL32(220, 220, 230, 255), 24, 2.0F);
@@ -81,8 +124,30 @@ void drawFleet(ImDrawList& drawList,
     const float radius = selected ? kFleetRadius + 3.0F : kFleetRadius;
 
     if (fleet.moving && fleet.destinationBodyId.has_value()) {
-        const ImVec2 destination = toImVec2(camera.worldToScreen(fleetDestinationPoint(fleet), viewCenter));
-        drawList.AddLine(position, destination, IM_COL32(120, 220, 150, 180), 1.5F);
+        const MapPoint departure = fleetDeparturePoint(fleet);
+        const MapPoint control = fleetControlPoint(fleet);
+        const MapPoint arrival = fleetDestinationPoint(fleet);
+        constexpr int kSegmentsPerHalf = 14;
+        for (int i = 0; i < kSegmentsPerHalf; ++i) {
+            const double t0 = 0.5 * static_cast<double>(i) / static_cast<double>(kSegmentsPerHalf);
+            const double t1 = 0.5 * static_cast<double>(i + 1) / static_cast<double>(kSegmentsPerHalf);
+            drawList.AddLine(toImVec2(camera.worldToScreen(quadraticBezier(departure, control, arrival, t0), viewCenter)),
+                             toImVec2(camera.worldToScreen(quadraticBezier(departure, control, arrival, t1), viewCenter)),
+                             IM_COL32(120, 220, 150, 190), 1.6F);
+        }
+        for (int i = 0; i < kSegmentsPerHalf; ++i) {
+            const double t0 = 0.5 + 0.5 * static_cast<double>(i) / static_cast<double>(kSegmentsPerHalf);
+            const double t1 = 0.5 + 0.5 * static_cast<double>(i + 1) / static_cast<double>(kSegmentsPerHalf);
+            drawList.AddLine(toImVec2(camera.worldToScreen(quadraticBezier(departure, control, arrival, t0), viewCenter)),
+                             toImVec2(camera.worldToScreen(quadraticBezier(departure, control, arrival, t1), viewCenter)),
+                             IM_COL32(120, 180, 255, 190), 1.6F);
+        }
+
+        const ImVec2 flip = toImVec2(camera.worldToScreen(quadraticBezier(departure, control, arrival, 0.5), viewCenter));
+        const ImVec2 projectedArrival = toImVec2(camera.worldToScreen(arrival, viewCenter));
+        drawList.AddCircleFilled(flip, 4.0F, IM_COL32(255, 210, 100, 230), 16);
+        drawList.AddCircle(projectedArrival, 7.0F, IM_COL32(160, 190, 255, 180), 20, 1.5F);
+        drawList.AddText(ImVec2{flip.x + 6.0F, flip.y - 8.0F}, IM_COL32(255, 220, 150, 230), "Flip");
     }
 
     drawList.AddRectFilled(ImVec2{position.x - radius, position.y - radius},
@@ -112,6 +177,10 @@ void StrategicMapView::draw(ImDrawList& drawList,
     // Clip map contents to the child canvas while still allowing labels to draw
     // near markers without interfering with surrounding docked panels.
     drawList.PushClipRect(canvasMin, canvasMax, true);
+    for (const StrategicBodySummary& body : bodies) {
+        drawOrbitRail(drawList, camera, viewCenter, body, bodies);
+    }
+
     for (const StrategicBodySummary& body : bodies) {
         drawBody(drawList, camera, viewCenter, body,
                  isSelected(selection, StrategicMapSelection::Kind::Body, body.id.value));

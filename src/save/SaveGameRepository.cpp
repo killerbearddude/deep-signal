@@ -1,6 +1,6 @@
 #include "save/SaveGameRepository.h"
 
-// Implements schema v8 save/load mapping for the headless simulation state.
+// Implements schema v9 save/load mapping for the headless simulation state.
 // The repository uses prepared statements and transactions throughout; raw SQL
 // execution is limited to static schema/table maintenance statements with no data.
 
@@ -42,7 +42,7 @@ template <typename EnumT>
     return static_cast<std::int64_t>(value);
 }
 
-// Returns true when a persisted enum ordinal is part of the current schema v8
+// Returns true when a persisted enum ordinal is part of the current schema v9
 // contract. Keep this explicit instead of raw-casting database values; SQLite
 // files are inspectable and may be hand-edited or corrupted.
 template <typename EnumT>
@@ -155,7 +155,7 @@ void reuse(Statement& stmt) {
 }
 
 void clearExistingSave(Database& db) {
-    // Delete child tables first because schema v8 intentionally uses explicit
+    // Delete child tables first because schema v9 intentionally uses explicit
     // foreign keys rather than ON DELETE CASCADE. This makes destructive save
     // behavior visible and easy to audit.
     db.execute(R"sql(
@@ -293,15 +293,25 @@ void saveAppointments(Database& db, const GameState& state) {
 }
 
 void saveBodies(Database& db, const GameState& state) {
-    Statement stmt{db, "INSERT INTO bodies(id, system_id, name, body_type, strategic_zone, x, y) VALUES (?, ?, ?, ?, ?, ?, ?);"};
+    Statement stmt{db, R"sql(
+        INSERT INTO bodies(
+            id, system_id, name, body_type, strategic_zone, parent_body_id,
+            orbital_radius_km, orbital_period_days, phase_radians, display_radius, x, y
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+    )sql"};
     for (const Body& body : state.bodies) {
         stmt.bindInt64(1, idValue(body.id));
         stmt.bindInt64(2, idValue(body.systemId));
         stmt.bindText(3, body.name);
         stmt.bindInt64(4, enumValue(body.type));
         stmt.bindInt64(5, enumValue(body.strategicZone));
-        stmt.bindDouble(6, body.x);
-        stmt.bindDouble(7, body.y);
+        bindOptionalId(stmt, 6, body.parentBodyId);
+        stmt.bindDouble(7, body.orbitalRadiusKm);
+        stmt.bindDouble(8, body.orbitalPeriodDays);
+        stmt.bindDouble(9, body.phaseRadians);
+        stmt.bindDouble(10, body.displayRadius);
+        stmt.bindDouble(11, body.x);
+        stmt.bindDouble(12, body.y);
         stmt.execute();
         reuse(stmt);
     }
@@ -425,8 +435,12 @@ void saveFleets(Database& db, const GameState& state) {
     Statement fleetStmt{db, R"sql(
         INSERT INTO fleets(
             id, name, owner_institution_id, current_body_id, destination_body_id,
-            order_type, order_target_body_id, order_days_remaining
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+            order_type, order_target_body_id, order_days_remaining,
+            order_departure_body_id, order_departure_day, order_arrival_day,
+            order_departure_x, order_departure_y, order_projected_arrival_x,
+            order_projected_arrival_y, order_transit_distance_km,
+            order_burn_acceleration_g, order_curve_control_x, order_curve_control_y
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
     )sql"};
     Statement queueStmt{db, R"sql(
         INSERT INTO fleet_order_queue(fleet_id, ordinal, order_type, target_body_id)
@@ -442,6 +456,17 @@ void saveFleets(Database& db, const GameState& state) {
         fleetStmt.bindInt64(6, enumValue(fleet.activeOrder.type));
         bindOptionalId(fleetStmt, 7, fleet.activeOrder.targetBodyId);
         fleetStmt.bindInt64(8, fleet.activeOrder.daysRemaining);
+        bindOptionalId(fleetStmt, 9, fleet.activeOrder.departureBodyId);
+        fleetStmt.bindInt64(10, fleet.activeOrder.departureDay);
+        fleetStmt.bindInt64(11, fleet.activeOrder.arrivalDay);
+        fleetStmt.bindDouble(12, fleet.activeOrder.departurePosition.x);
+        fleetStmt.bindDouble(13, fleet.activeOrder.departurePosition.y);
+        fleetStmt.bindDouble(14, fleet.activeOrder.projectedArrivalPosition.x);
+        fleetStmt.bindDouble(15, fleet.activeOrder.projectedArrivalPosition.y);
+        fleetStmt.bindDouble(16, fleet.activeOrder.transitDistanceKm);
+        fleetStmt.bindDouble(17, fleet.activeOrder.burnAccelerationG);
+        fleetStmt.bindDouble(18, fleet.activeOrder.routeCurveControlPoint.x);
+        fleetStmt.bindDouble(19, fleet.activeOrder.routeCurveControlPoint.y);
         fleetStmt.execute();
         reuse(fleetStmt);
 
@@ -616,7 +641,12 @@ void loadAppointments(Database& db, GameState& state) {
 }
 
 void loadBodies(Database& db, GameState& state) {
-    Statement stmt{db, "SELECT id, system_id, name, body_type, strategic_zone, x, y FROM bodies ORDER BY id;"};
+    Statement stmt{db, R"sql(
+        SELECT id, system_id, name, body_type, strategic_zone, parent_body_id,
+               orbital_radius_km, orbital_period_days, phase_radians, display_radius, x, y
+        FROM bodies
+        ORDER BY id;
+    )sql"};
     while (stmt.step()) {
         state.bodies.push_back(Body{
             .id = BodyId{stmt.columnInt64(0)},
@@ -624,8 +654,13 @@ void loadBodies(Database& db, GameState& state) {
             .name = stmt.columnText(2),
             .type = enumFromValue<BodyType>(stmt.columnInt64(3)),
             .strategicZone = enumFromValue<StrategicZone>(stmt.columnInt64(4)),
-            .x = stmt.columnDouble(5),
-            .y = stmt.columnDouble(6)
+            .parentBodyId = optionalIdFromColumn<BodyId>(stmt, 5),
+            .orbitalRadiusKm = stmt.columnDouble(6),
+            .orbitalPeriodDays = stmt.columnDouble(7),
+            .phaseRadians = stmt.columnDouble(8),
+            .displayRadius = stmt.columnDouble(9),
+            .x = stmt.columnDouble(10),
+            .y = stmt.columnDouble(11)
         });
     }
 }
@@ -755,7 +790,11 @@ void loadShipyardOrders(Database& db, GameState& state) {
 void loadFleets(Database& db, GameState& state) {
     Statement stmt{db, R"sql(
         SELECT id, name, owner_institution_id, current_body_id, destination_body_id,
-               order_type, order_target_body_id, order_days_remaining
+               order_type, order_target_body_id, order_days_remaining,
+               order_departure_body_id, order_departure_day, order_arrival_day,
+               order_departure_x, order_departure_y, order_projected_arrival_x,
+               order_projected_arrival_y, order_transit_distance_km,
+               order_burn_acceleration_g, order_curve_control_x, order_curve_control_y
         FROM fleets
         ORDER BY id;
     )sql"};
@@ -769,7 +808,15 @@ void loadFleets(Database& db, GameState& state) {
             .activeOrder = FleetOrder{
                 .type = enumFromValue<FleetOrderType>(stmt.columnInt64(5)),
                 .targetBodyId = optionalIdFromColumn<BodyId>(stmt, 6),
-                .daysRemaining = checkedIntFromSql(stmt.columnInt64(7), "fleets.order_days_remaining")
+                .daysRemaining = checkedIntFromSql(stmt.columnInt64(7), "fleets.order_days_remaining"),
+                .departureBodyId = optionalIdFromColumn<BodyId>(stmt, 8),
+                .departureDay = stmt.columnInt64(9),
+                .arrivalDay = stmt.columnInt64(10),
+                .departurePosition = MapPosition{.x = stmt.columnDouble(11), .y = stmt.columnDouble(12)},
+                .projectedArrivalPosition = MapPosition{.x = stmt.columnDouble(13), .y = stmt.columnDouble(14)},
+                .transitDistanceKm = stmt.columnDouble(15),
+                .burnAccelerationG = stmt.columnDouble(16),
+                .routeCurveControlPoint = MapPosition{.x = stmt.columnDouble(17), .y = stmt.columnDouble(18)}
             },
             .queuedOrders = {},
             .ownerInstitutionId = optionalIdFromColumn<InstitutionId>(stmt, 2)
@@ -889,7 +936,7 @@ GameState SaveGameRepository::load(const std::filesystem::path& path) {
     loadEvents(db, state);
 
     // There is intentionally no load step for dailyEconomySnapshots. Economy
-    // telemetry is transient runtime data in schema v8 and remains empty until
+    // telemetry is transient runtime data in schema v9 and remains empty until
     // the loaded simulation advances new days.
 
     // SQLite constraints are first-line protection only. The authoritative pass

@@ -49,6 +49,9 @@ void drawCurrentOrder(const FleetSummary& fleet) {
     ImGui::Text("Destination: %s", fleet.destinationBodyName.empty() ? "-" : fleet.destinationBodyName.c_str());
     ImGui::Text("ETA: %d day(s)", fleet.activeOrderEtaDays.value_or(fleet.daysRemaining));
     ImGui::Text("Projected arrival day: %lld", static_cast<long long>(fleet.activeOrderProjectedArrivalDay));
+    ImGui::Text("Transit distance: %.1f million km", fleet.activeOrderTransitDistanceKm / 1'000'000.0);
+    ImGui::Text("Burn acceleration: %.3f g", fleet.activeOrderBurnAccelerationG);
+    ImGui::Text("Burn phase: %s", fleet.activeOrderBurnPhase.empty() ? "-" : fleet.activeOrderBurnPhase.c_str());
 }
 
 void drawTimelinePreview(const FleetSummary& fleet) {
@@ -65,7 +68,7 @@ void drawTimelinePreview(const FleetSummary& fleet) {
 
     ImGui::Text("Total route duration: %d day(s)", fleet.totalRouteDurationDays);
 
-    if (ImGui::BeginTable("fleet_order_timeline", 8, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
+    if (ImGui::BeginTable("fleet_order_timeline", 9, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg |
                            ImGuiTableFlags_Resizable | ImGuiTableFlags_SizingStretchProp)) {
         ImGui::TableSetupColumn("Step");
         ImGui::TableSetupColumn("Order");
@@ -73,6 +76,7 @@ void drawTimelinePreview(const FleetSummary& fleet) {
         ImGui::TableSetupColumn("Start Day");
         ImGui::TableSetupColumn("Arrival Day");
         ImGui::TableSetupColumn("ETA");
+        ImGui::TableSetupColumn("Distance");
         ImGui::TableSetupColumn("Fuel Cost");
         ImGui::TableSetupColumn("Fuel After");
         ImGui::TableHeadersRow();
@@ -92,8 +96,10 @@ void drawTimelinePreview(const FleetSummary& fleet) {
             ImGui::TableSetColumnIndex(5);
             ImGui::Text("%d day(s)", fleet.activeOrderEtaDays.value_or(fleet.daysRemaining));
             ImGui::TableSetColumnIndex(6);
-            ImGui::TextUnformatted("spent");
+            ImGui::Text("%.1fM km", fleet.activeOrderTransitDistanceKm / 1'000'000.0);
             ImGui::TableSetColumnIndex(7);
+            ImGui::TextUnformatted("spent");
+            ImGui::TableSetColumnIndex(8);
             ImGui::Text("%.1f", fleet.currentFuel);
         }
 
@@ -112,8 +118,10 @@ void drawTimelinePreview(const FleetSummary& fleet) {
             ImGui::TableSetColumnIndex(5);
             ImGui::Text("%d day(s)", queuedOrder.etaDays);
             ImGui::TableSetColumnIndex(6);
-            ImGui::Text("%.1f", queuedOrder.fuelCost);
+            ImGui::Text("%.1fM km", queuedOrder.transitDistanceKm / 1'000'000.0);
             ImGui::TableSetColumnIndex(7);
+            ImGui::Text("%.1f", queuedOrder.fuelCost);
+            ImGui::TableSetColumnIndex(8);
             ImGui::Text("%.1f%s", queuedOrder.projectedFuelRemaining, queuedOrder.fuelAffordable ? "" : " !");
         }
 
@@ -175,6 +183,8 @@ void FleetOrdersPanel::render(const SimulationQueries& queries,
 
     if (movePreview.has_value()) {
         ImGui::Text("Move fuel cost: %.1f", movePreview->newMoveFuelCost);
+        ImGui::Text("Transit distance: %.1f million km | ETA: %d day(s) | Accel: %.3f g",
+                    movePreview->transitDistanceKm / 1'000'000.0, movePreview->etaDays, movePreview->burnAccelerationG);
         ImGui::Text("Queued route fuel required: %.1f / available %.1f",
                     movePreview->queuedFuelRequired, movePreview->fuelAvailable);
         if (!movePreview->canAfford) {

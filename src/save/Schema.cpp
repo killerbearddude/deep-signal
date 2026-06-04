@@ -1,6 +1,6 @@
 #include "save/Schema.h"
 
-// Implements schema v8 for Prototype 0.1 saves.
+// Implements schema v9 for Prototype 0.1 saves.
 // The schema mirrors GameState-owned records and keeps event payloads as typed
 // JSON text for inspectable, forward-migratable audit history. CHECK constraints
 // intentionally duplicate core invariants so hand-edited save files fail early.
@@ -36,7 +36,7 @@ void initializeSchema(Database& db) {
 
         CREATE TABLE IF NOT EXISTS schema_version (
             id INTEGER PRIMARY KEY CHECK(id = 1),
-            version INTEGER NOT NULL CHECK(version = 8)
+            version INTEGER NOT NULL CHECK(version = 9)
         );
 
         CREATE TABLE IF NOT EXISTS game_meta (
@@ -97,8 +97,14 @@ void initializeSchema(Database& db) {
             name TEXT NOT NULL CHECK(length(name) > 0),
             body_type INTEGER NOT NULL CHECK(body_type BETWEEN 0 AND 4),
             strategic_zone INTEGER NOT NULL CHECK(strategic_zone BETWEEN 0 AND 4),
+            parent_body_id INTEGER NULL CHECK(parent_body_id IS NULL OR parent_body_id > 0),
+            orbital_radius_km REAL NOT NULL CHECK(orbital_radius_km >= 0.0),
+            orbital_period_days REAL NOT NULL CHECK(orbital_period_days >= 0.0),
+            phase_radians REAL NOT NULL,
+            display_radius REAL NOT NULL CHECK(display_radius > 0.0),
             x REAL NOT NULL,
             y REAL NOT NULL,
+            CHECK(parent_body_id IS NULL OR parent_body_id != id),
             FOREIGN KEY(system_id) REFERENCES star_systems(id)
         );
 
@@ -194,15 +200,33 @@ void initializeSchema(Database& db) {
             order_type INTEGER NOT NULL CHECK(order_type BETWEEN 0 AND 1),
             order_target_body_id INTEGER NULL CHECK(order_target_body_id IS NULL OR order_target_body_id > 0),
             order_days_remaining INTEGER NOT NULL CHECK(order_days_remaining >= 0),
+            order_departure_body_id INTEGER NULL CHECK(order_departure_body_id IS NULL OR order_departure_body_id > 0),
+            order_departure_day INTEGER NOT NULL CHECK(order_departure_day >= 0),
+            order_arrival_day INTEGER NOT NULL CHECK(order_arrival_day >= 0),
+            order_departure_x REAL NOT NULL,
+            order_departure_y REAL NOT NULL,
+            order_projected_arrival_x REAL NOT NULL,
+            order_projected_arrival_y REAL NOT NULL,
+            order_transit_distance_km REAL NOT NULL CHECK(order_transit_distance_km >= 0.0),
+            order_burn_acceleration_g REAL NOT NULL CHECK(order_burn_acceleration_g >= 0.0),
+            order_curve_control_x REAL NOT NULL,
+            order_curve_control_y REAL NOT NULL,
             CHECK(
                 (order_type = 0 AND destination_body_id IS NULL AND
-                 order_target_body_id IS NULL AND order_days_remaining = 0)
+                 order_target_body_id IS NULL AND order_days_remaining = 0 AND
+                 order_departure_body_id IS NULL AND order_departure_day = 0 AND
+                 order_arrival_day = 0 AND order_transit_distance_km = 0.0 AND
+                 order_burn_acceleration_g = 0.0)
                 OR
                 (order_type = 1 AND destination_body_id IS NOT NULL AND
                  order_target_body_id IS NOT NULL AND
+                 order_departure_body_id IS NOT NULL AND
                  destination_body_id = order_target_body_id AND
                  destination_body_id != current_body_id AND
-                 order_days_remaining > 0)
+                 order_days_remaining > 0 AND
+                 order_arrival_day > order_departure_day AND
+                 order_transit_distance_km > 0.0 AND
+                 order_burn_acceleration_g > 0.0)
             ),
             FOREIGN KEY(owner_institution_id) REFERENCES institutions(id),
             FOREIGN KEY(current_body_id) REFERENCES bodies(id),

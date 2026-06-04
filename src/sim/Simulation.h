@@ -39,9 +39,8 @@ public:
     std::vector<SimEvent> advanceDays(int days);
 
 private:
-    // TEMP: Movement is fixed-duration until the map model has real distances,
-    // speeds, and fuel costs. Keep this value deterministic for test stability.
-    static constexpr int kPrototypeMoveDurationDays = 5;
+    // Movement duration is computed from deterministic sustained-burn transit
+    // planning when each active order starts.
 
     GameState state_;
 

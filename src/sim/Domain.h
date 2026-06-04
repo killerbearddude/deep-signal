@@ -7,6 +7,7 @@
 #include "sim/IdTypes.h"
 #include "sim/Minerals.h"
 
+#include <cmath>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -17,6 +18,17 @@ namespace deep {
 // Prototype v1 fuel cost. Map coordinates remain abstract, so one unit of
 // body-to-body distance consumes one unit of ship propellant capacity.
 inline constexpr double kPrototypeFuelPerMapUnit = 1.0;
+
+// One rendered map unit represents this many kilometers. Orbit rails store
+// physical-ish kilometers while the UI consumes scaled map coordinates.
+inline constexpr double kKilometersPerMapUnit = 1'000'000.0;
+
+// Sustained-burn transit constants. The acceleration is intentionally modest so
+// prototype trips take days rather than hours while remaining deterministic.
+inline constexpr double kSecondsPerGameDay = 86'400.0;
+inline constexpr double kStandardGravityMetersPerSecondSquared = 9.80665;
+inline constexpr double kPrototypeBurnAccelerationG = 0.05;
+inline constexpr int kTransitPlanningIterations = 5;
 
 // Shared tolerance for fleet fuel affordability and post-consumption clamping.
 inline constexpr double kFuelComparisonEpsilon = 1.0e-6;
@@ -221,6 +233,13 @@ struct StarSystem {
     std::string name;
 };
 
+// Two-dimensional map-space point used for projected rails and fleet transit
+// plans. Coordinates are scaled display units, not mutable orbital state.
+struct MapPosition {
+    double x = 0.0;
+    double y = 0.0;
+};
+
 // Coarse body classification for map display and future rule branching.
 enum class BodyType {
     Star,
@@ -241,14 +260,23 @@ enum class StrategicZone {
     DeepSurveyFrontier
 };
 
-// A body in a star system. Coordinates are abstract map coordinates, not orbital
-// mechanics; this keeps movement deterministic for the first vertical slice.
+// A body in a star system. Bodies may sit on simple circular rails around an
+// optional parent body. Positions are computed from date and rail metadata rather
+// than mutated each simulation day, giving the map a live solar-system feel
+// without gravity or transfer-window mechanics.
 struct Body {
     BodyId id;
     StarSystemId systemId;
     std::string name;
     BodyType type = BodyType::Terrestrial;
     StrategicZone strategicZone = StrategicZone::InnerCore;
+    std::optional<BodyId> parentBodyId;
+    double orbitalRadiusKm = 0.0;
+    double orbitalPeriodDays = 0.0;
+    double phaseRadians = 0.0;
+    double displayRadius = 8.0;
+    // Fixed/fallback map position. Stars and non-railed prototype bodies use
+    // this directly; railed bodies use it only when orbital metadata is absent.
     double x = 0.0;
     double y = 0.0;
 };
@@ -363,11 +391,21 @@ enum class FleetOrderType {
 };
 
 // Active fleet order state. targetBodyId is optional so invalid or cleared orders
-// can be represented explicitly during validation and save/load repair.
+// can be represented explicitly during validation and save/load repair. Movement
+// orders also carry the planned sustained-burn route so save/load, map rendering,
+// and event inspection agree on the projected destination position.
 struct FleetOrder {
     FleetOrderType type = FleetOrderType::None;
     std::optional<BodyId> targetBodyId;
     int daysRemaining = 0;
+    std::optional<BodyId> departureBodyId;
+    std::int64_t departureDay = 0;
+    std::int64_t arrivalDay = 0;
+    MapPosition departurePosition;
+    MapPosition projectedArrivalPosition;
+    double transitDistanceKm = 0.0;
+    double burnAccelerationG = 0.0;
+    MapPosition routeCurveControlPoint;
 };
 
 // Queued fleet order state for the small v1 command queue. Queued orders do not
