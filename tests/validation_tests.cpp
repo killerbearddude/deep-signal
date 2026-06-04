@@ -224,6 +224,22 @@ void test_invalid_appointment_records_are_rejected() {
     });
 }
 
+void test_invalid_deposit_confidence_is_rejected() {
+    // Deposit confidence is a trust-boundary value because it controls whether
+    // a deposit is shown as known, estimated, or unknown in forecast/UI output.
+    expectInvalidState("deposit confidence below zero", [](deep::GameState& state) {
+        state.mineralDeposits.front().confidence = -0.01;
+    });
+
+    expectInvalidState("deposit confidence above one", [](deep::GameState& state) {
+        state.mineralDeposits.front().confidence = 1.01;
+    });
+
+    expectInvalidState("non-finite deposit quantity", [](deep::GameState& state) {
+        state.mineralDeposits.front().remaining = std::numeric_limits<double>::infinity();
+    });
+}
+
 void test_ship_missing_from_owning_fleet_is_rejected() {
     // Ship and fleet references must be bidirectional. A ship whose fleet does
     // not list it would disappear from fleet-level views and order resolution.
@@ -356,6 +372,7 @@ int main() {
         test_invalid_institution_references_are_rejected();
         test_invalid_personnel_records_are_rejected();
         test_invalid_appointment_records_are_rejected();
+        test_invalid_deposit_confidence_is_rejected();
         test_ship_missing_from_owning_fleet_is_rejected();
         test_fleet_listing_nonexistent_ship_is_rejected();
         test_ship_claimed_by_multiple_fleets_is_rejected();

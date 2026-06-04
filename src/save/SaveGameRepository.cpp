@@ -372,12 +372,13 @@ void saveColonies(Database& db, const GameState& state) {
 }
 
 void saveMineralDeposits(Database& db, const GameState& state) {
-    Statement stmt{db, "INSERT INTO mineral_deposits(body_id, mineral, remaining, accessibility) VALUES (?, ?, ?, ?);"};
+    Statement stmt{db, "INSERT INTO mineral_deposits(body_id, mineral, remaining, accessibility, confidence) VALUES (?, ?, ?, ?, ?);"};
     for (const MineralDeposit& deposit : state.mineralDeposits) {
         stmt.bindInt64(1, idValue(deposit.bodyId));
         stmt.bindInt64(2, enumValue(deposit.mineral));
         stmt.bindDouble(3, deposit.remaining);
         stmt.bindDouble(4, deposit.accessibility);
+        stmt.bindDouble(5, deposit.confidence);
         stmt.execute();
         reuse(stmt);
     }
@@ -727,13 +728,14 @@ void loadColonies(Database& db, GameState& state) {
 }
 
 void loadMineralDeposits(Database& db, GameState& state) {
-    Statement stmt{db, "SELECT body_id, mineral, remaining, accessibility FROM mineral_deposits ORDER BY body_id, mineral;"};
+    Statement stmt{db, "SELECT body_id, mineral, remaining, accessibility, confidence FROM mineral_deposits ORDER BY body_id, mineral;"};
     while (stmt.step()) {
         state.mineralDeposits.push_back(MineralDeposit{
             .bodyId = BodyId{stmt.columnInt64(0)},
             .mineral = enumFromValue<Mineral>(stmt.columnInt64(1)),
             .remaining = stmt.columnDouble(2),
-            .accessibility = stmt.columnDouble(3)
+            .accessibility = stmt.columnDouble(3),
+            .confidence = stmt.columnDouble(4)
         });
     }
 }

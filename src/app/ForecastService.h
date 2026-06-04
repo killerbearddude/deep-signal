@@ -32,6 +32,11 @@ struct MineralIncomeForecast {
     std::string colonyName;
     std::string bodyName;
     std::string mineralName;
+    double confidence = 1.0;
+    std::string surveyStateName;
+    double confirmedQuantity = 0.0;
+    double estimatedQuantity = 0.0;
+    double uncertainQuantity = 0.0;
     double incomePerDay = 0.0;
     std::string explanation;
 };
@@ -51,6 +56,8 @@ struct MineralForecastCauseChain {
     Mineral mineral = Mineral::Iron;
     std::string mineralName;
     double stockpile = 0.0;
+    double confirmedDepositQuantity = 0.0;
+    double uncertainDepositQuantity = 0.0;
     double miningIncomePerDay = 0.0;
     double committedDemandPerDay = 0.0;
     double netPerDay = 0.0;
@@ -79,7 +86,12 @@ struct DepositExhaustionForecast {
     Mineral mineral = Mineral::Iron;
     std::string bodyName;
     std::string mineralName;
+    double confidence = 1.0;
+    std::string surveyStateName;
     double remainingDeposit = 0.0;
+    double confirmedDeposit = 0.0;
+    double estimatedDeposit = 0.0;
+    double uncertainDeposit = 0.0;
     double incomePerDay = 0.0;
     std::optional<int> exhaustionDays;
     std::string explanation;

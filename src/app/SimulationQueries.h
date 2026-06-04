@@ -280,7 +280,30 @@ struct BodySystemSummary {
     double displayRadius = 0.0;
     std::size_t colonyCount = 0;
     std::size_t mineralDepositCount = 0;
+    std::size_t knownDepositCount = 0;
+    std::size_t estimatedDepositCount = 0;
+    std::size_t unknownDepositCount = 0;
+    double confirmedDepositQuantity = 0.0;
+    double estimatedDepositQuantity = 0.0;
+    double uncertainDepositQuantity = 0.0;
     std::size_t fleetCount = 0;
+};
+
+// Display-ready mineral deposit row. Quantity fields separate confirmed supply
+// from low-confidence future supply so exploration pressure is visible before
+// survey commands exist.
+struct BodyDepositSummary {
+    BodyId bodyId;
+    std::string bodyName;
+    Mineral mineral = Mineral::Iron;
+    std::string mineralName;
+    double confidence = 1.0;
+    DepositSurveyState surveyState = DepositSurveyState::Known;
+    std::string surveyStateName;
+    double confirmedQuantity = 0.0;
+    double estimatedQuantity = 0.0;
+    double uncertainQuantity = 0.0;
+    double accessibility = 1.0;
 };
 
 // Map-ready body row with coarse simulation coordinates copied from GameState.
@@ -387,6 +410,10 @@ public:
 
     // Returns one overview row per body with colony, deposit, and fleet counts.
     [[nodiscard]] std::vector<BodySystemSummary> bodySystemOverview() const;
+
+    // Returns display-ready deposit rows for a body. Unknown rows intentionally
+    // hide estimated quantity until future survey commands improve confidence.
+    [[nodiscard]] std::vector<BodyDepositSummary> bodyDeposits(BodyId bodyId) const;
 
     // Returns one map row per body, including abstract prototype coordinates.
     [[nodiscard]] std::vector<StrategicBodySummary> strategicBodies() const;

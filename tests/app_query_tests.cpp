@@ -7,6 +7,7 @@
 // These tests protect the future UI boundary from drifting back toward direct
 // raw GameState vector inspection.
 
+#include <algorithm>
 #include <cstdlib>
 #include <exception>
 #include <cmath>
@@ -763,6 +764,32 @@ void test_strategic_map_summaries_resolve_positions() {
             "fleet marker resolves current body rail position");
 }
 
+void test_body_deposit_queries_expose_confidence_status() {
+    // Body deposit rows separate confirmed and estimated reserves so UI panels
+    // can show exploration uncertainty without reaching into raw GameState.
+    const deep::SimulationService service;
+    const deep::SimulationQueries queries{service};
+    const auto bodies = queries.bodySystemOverview();
+
+    const auto frontierBody = std::find_if(bodies.begin(), bodies.end(), [](const deep::BodySystemSummary& body) {
+        return body.name == "Helios Far Survey Object";
+    });
+    require(frontierBody != bodies.end(), "frontier body appears in body overview");
+    require(frontierBody->estimatedDepositCount == 2, "frontier body counts estimated deposits");
+    require(frontierBody->unknownDepositCount == 1, "frontier body counts hidden unknown deposits");
+    require(frontierBody->knownDepositCount == 0, "frontier body has no fully known deposits");
+    require(frontierBody->confirmedDepositQuantity < frontierBody->estimatedDepositQuantity,
+            "frontier overview separates confirmed supply from reserve estimates");
+
+    const auto deposits = queries.bodyDeposits(frontierBody->id);
+    require(deposits.size() == 3, "frontier body exposes deposit detail rows");
+    require(deposits.front().surveyStateName == "Estimated", "low-confidence deposits are displayed as estimates");
+    require(deposits.front().confidence > 0.0 && deposits.front().confidence < 1.0,
+            "deposit detail exposes partial confidence");
+    require(deposits.front().confirmedQuantity < deposits.front().estimatedQuantity,
+            "deposit detail separates confirmed and estimated quantities");
+}
+
 void test_recent_events_returns_limited_chronological_tail() {
     // Verifies that recentEvents(limit) returns the newest audit entries but
     // preserves log order inside that returned window. Routine mining telemetry
@@ -823,6 +850,7 @@ int main() {
         test_single_record_queries_return_matching_summaries();
         test_body_system_overview_exposes_counts();
         test_strategic_map_summaries_resolve_positions();
+        test_body_deposit_queries_expose_confidence_status();
         test_recent_events_returns_limited_chronological_tail();
     } catch (const std::exception& ex) {
         std::cerr << "Test failure: " << ex.what() << '\n';

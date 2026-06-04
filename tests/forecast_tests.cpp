@@ -163,10 +163,14 @@ void test_mineral_forecast_cause_chains_report_processing_demand() {
     requireNear(iron.committedDemandPerDay, expectedIronDemand, "cause chain includes policy-weighted processing raw demand");
     requireNear(iron.netPerDay, expectedIronIncome - expectedIronDemand, "cause chain computes net raw mineral flow");
     require(!iron.stockpileRunoutDays.has_value(), "positive net flow has no stockpile runout");
-    require(iron.causes.size() == 2, "cause chain contains the v1 explanation rows");
-    require(iron.causes.front().label == "Mining", "first cause row explains mining");
-    require(iron.causes.at(1).label == "Processing recipes", "second cause row explains processing demand");
-    requireNear(iron.causes.at(1).amountPerDay, -expectedIronDemand, "processing cause row reports demand as a negative contribution");
+    require(iron.confirmedDepositQuantity > 0.0, "cause chain separates confirmed deposit quantity");
+    require(iron.uncertainDepositQuantity >= 0.0, "cause chain separates uncertain deposit quantity");
+    require(iron.causes.size() == 4, "cause chain contains deposit certainty plus flow explanation rows");
+    require(iron.causes.front().label == "Confirmed deposits", "first cause row explains confirmed reserves");
+    require(iron.causes.at(1).label == "Uncertain deposits", "second cause row explains uncertain reserves");
+    require(iron.causes.at(2).label == "Mining", "third cause row explains mining");
+    require(iron.causes.at(3).label == "Processing recipes", "fourth cause row explains processing demand");
+    requireNear(iron.causes.at(3).amountPerDay, -expectedIronDemand, "processing cause row reports demand as a negative contribution");
 }
 
 void test_processed_material_forecast_cause_chains_report_shipyard_demand() {
@@ -263,6 +267,26 @@ void test_mineral_forecast_cause_chains_include_processing_demand() {
     requireNear(iron.committedDemandPerDay, balancedAlloyOutput, "surplus forecast includes policy-weighted processing demand");
     requireNear(iron.netPerDay, expectedIronIncome - balancedAlloyOutput, "raw forecast includes processing demand");
     require(!iron.stockpileRunoutDays.has_value(), "positive raw flow has no runout day");
+}
+
+void test_deposit_forecasts_expose_confidence_and_uncertainty() {
+    // Deposit forecasts distinguish confirmed reserves from survey estimates so
+    // future exploration orders can explain what uncertainty they are reducing.
+    const deep::SimulationService service;
+    const deep::ForecastService forecasts{service};
+    const auto deposits = forecasts.depositExhaustionEstimates();
+
+    const auto frontierIt = std::find_if(deposits.begin(), deposits.end(), [](const deep::DepositExhaustionForecast& row) {
+        return row.bodyName == "Helios Far Survey Object" && row.mineral == deep::Mineral::Lithium;
+    });
+
+    require(frontierIt != deposits.end(), "frontier rare-earth deposit forecast exists");
+    requireNear(frontierIt->confidence, 0.15, "frontier deposit preserves low confidence");
+    require(frontierIt->surveyStateName == "Estimated", "low-confidence frontier deposit is marked estimated");
+    requireNear(frontierIt->confirmedDeposit, frontierIt->remainingDeposit * frontierIt->confidence,
+                "confirmed deposit equals confidence-weighted reserve");
+    requireNear(frontierIt->uncertainDeposit, frontierIt->remainingDeposit - frontierIt->confirmedDeposit,
+                "uncertain deposit is the unconfirmed reserve remainder");
 }
 
 void test_deposit_exhaustion_estimate_uses_current_income_rate() {
@@ -500,6 +524,7 @@ int main() {
         test_processed_material_forecast_respects_processing_policy();
         test_processed_material_forecast_normalizes_manual_weights();
         test_mineral_forecast_cause_chains_include_processing_demand();
+        test_deposit_forecasts_expose_confidence_and_uncertainty();
         test_deposit_exhaustion_estimate_uses_current_income_rate();
         test_shipyard_order_eta_uses_capacity_and_accumulated_progress();
         test_production_backlog_uses_fifo_colony_capacity();

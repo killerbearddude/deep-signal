@@ -54,6 +54,39 @@ void drawBodyDetails(const SimulationQueries& queries, const BodyId bodyId) {
     ImGui::Text("Owner / institution: %s", body->ownerInstitutionName.empty() ? "-" : body->ownerInstitutionName.c_str());
     ImGui::Text("Position: %.2f, %.2f", body->x, body->y);
 
+    const std::vector<BodyDepositSummary> deposits = queries.bodyDeposits(bodyId);
+    if (!deposits.empty()) {
+        ImGui::Separator();
+        ImGui::Text("Deposits");
+        if (ImGui::BeginTable("InspectorBodyDeposits", 6, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
+            ImGui::TableSetupColumn("Mineral");
+            ImGui::TableSetupColumn("Status");
+            ImGui::TableSetupColumn("Confidence");
+            ImGui::TableSetupColumn("Confirmed");
+            ImGui::TableSetupColumn("Estimated");
+            ImGui::TableSetupColumn("Accessibility");
+            ImGui::TableHeadersRow();
+
+            for (const BodyDepositSummary& deposit : deposits) {
+                ImGui::TableNextRow();
+                ImGui::TableSetColumnIndex(0);
+                ImGui::TextUnformatted(deposit.mineralName.c_str());
+                ImGui::TableSetColumnIndex(1);
+                ImGui::TextUnformatted(deposit.surveyStateName.c_str());
+                ImGui::TableSetColumnIndex(2);
+                ImGui::Text("%.0f%%", deposit.confidence * 100.0);
+                ImGui::TableSetColumnIndex(3);
+                ImGui::Text("%.0f", deposit.confirmedQuantity);
+                ImGui::TableSetColumnIndex(4);
+                ImGui::Text("%.0f", deposit.estimatedQuantity);
+                ImGui::TableSetColumnIndex(5);
+                ImGui::Text("%.2f", deposit.accessibility);
+            }
+
+            ImGui::EndTable();
+        }
+    }
+
     // Surface the first colony tied to the selected body as navigation context;
     // this is read-only and does not imply body-owned colony lifetime.
     const std::vector<ColonySummary> colonies = queries.colonies();

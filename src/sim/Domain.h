@@ -281,14 +281,57 @@ struct Body {
     double y = 0.0;
 };
 
+// Coarse survey knowledge state for one mineral deposit. The simulation stores a
+// confidence value and derives this display state so future survey commands can
+// improve confidence without migrating save data again.
+enum class DepositSurveyState {
+    Unknown,
+    Estimated,
+    Known
+};
+
 // A mineable deposit on a body. Accessibility is a multiplier in [0, 1+] for now;
 // values above 1.0 can model unusually rich deposits in later scenario data.
+// confidence models survey knowledge: 0.0 is hidden/unknown, partial values are
+// estimates, and 1.0 is fully confirmed. The physical remaining amount is still
+// stored so deterministic saves can reveal it later without procedural rolls.
 struct MineralDeposit {
     BodyId bodyId;
     Mineral mineral = Mineral::Iron;
     double remaining = 0.0;
     double accessibility = 1.0;
+    double confidence = 1.0;
 };
+
+[[nodiscard]] inline bool isDepositSurveyed(const MineralDeposit& deposit) noexcept {
+    return deposit.confidence > 0.0;
+}
+
+[[nodiscard]] inline bool isDepositKnown(const MineralDeposit& deposit) noexcept {
+    return deposit.confidence >= 1.0;
+}
+
+[[nodiscard]] inline DepositSurveyState depositSurveyState(const MineralDeposit& deposit) noexcept {
+    if (!isDepositSurveyed(deposit)) {
+        return DepositSurveyState::Unknown;
+    }
+    if (isDepositKnown(deposit)) {
+        return DepositSurveyState::Known;
+    }
+    return DepositSurveyState::Estimated;
+}
+
+[[nodiscard]] inline double confirmedDepositQuantity(const MineralDeposit& deposit) noexcept {
+    return deposit.remaining * deposit.confidence;
+}
+
+[[nodiscard]] inline double uncertainDepositQuantity(const MineralDeposit& deposit) noexcept {
+    return deposit.remaining - confirmedDepositQuantity(deposit);
+}
+
+[[nodiscard]] inline double estimatedDepositQuantity(const MineralDeposit& deposit) noexcept {
+    return isDepositSurveyed(deposit) ? deposit.remaining : 0.0;
+}
 
 
 // High-level policy used to distribute one colony's daily processing capacity

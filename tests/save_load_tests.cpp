@@ -241,6 +241,7 @@ void requireSameState(const deep::GameState& expected, const deep::GameState& ac
         require(left.mineral == right.mineral, "deposit mineral round-trips");
         require(almostEqual(left.remaining, right.remaining), "deposit remaining amount round-trips");
         require(almostEqual(left.accessibility, right.accessibility), "deposit accessibility round-trips");
+        require(almostEqual(left.confidence, right.confidence), "deposit confidence round-trips");
     }
 
     require(expected.shipClasses.size() == actual.shipClasses.size(), "ship-class row count round-trips");

@@ -36,7 +36,7 @@ void initializeSchema(Database& db) {
 
         CREATE TABLE IF NOT EXISTS schema_version (
             id INTEGER PRIMARY KEY CHECK(id = 1),
-            version INTEGER NOT NULL CHECK(version = 9)
+            version INTEGER NOT NULL CHECK(version = 10)
         );
 
         CREATE TABLE IF NOT EXISTS game_meta (
@@ -151,6 +151,7 @@ void initializeSchema(Database& db) {
             mineral INTEGER NOT NULL CHECK(mineral BETWEEN 0 AND 13),
             remaining REAL NOT NULL CHECK(remaining >= 0.0),
             accessibility REAL NOT NULL CHECK(accessibility >= 0.0),
+            confidence REAL NOT NULL CHECK(confidence >= 0.0 AND confidence <= 1.0),
             PRIMARY KEY(body_id, mineral),
             FOREIGN KEY(body_id) REFERENCES bodies(id)
         );

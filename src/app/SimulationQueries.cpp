@@ -87,6 +87,23 @@ template <typename T, typename IdT>
     return "Unknown";
 }
 
+[[nodiscard]] std::string mineralDisplayName(const Mineral mineral) {
+    return std::string{toString(mineral)};
+}
+
+[[nodiscard]] std::string depositSurveyStateName(const DepositSurveyState state) {
+    switch (state) {
+    case DepositSurveyState::Unknown:
+        return "Unknown";
+    case DepositSurveyState::Estimated:
+        return "Estimated";
+    case DepositSurveyState::Known:
+        return "Known";
+    }
+
+    return "Unknown";
+}
+
 [[nodiscard]] std::optional<InstitutionId> bodyOwnerInstitutionId(const GameState& state, const BodyId bodyId) noexcept {
     const auto colonyIt = std::find_if(state.colonies.begin(), state.colonies.end(), [bodyId](const Colony& colony) {
         return colony.bodyId == bodyId && colony.ownerInstitutionId.has_value();
@@ -1366,6 +1383,33 @@ std::vector<BodySystemSummary> SimulationQueries::bodySystemOverview() const {
             return fleet.currentBodyId == body.id;
         };
 
+        std::size_t knownDepositCount = 0;
+        std::size_t estimatedDepositCount = 0;
+        std::size_t unknownDepositCount = 0;
+        double confirmedDepositTotal = 0.0;
+        double estimatedDepositTotal = 0.0;
+        double uncertainDepositTotal = 0.0;
+        for (const MineralDeposit& deposit : state.mineralDeposits) {
+            if (deposit.bodyId != body.id) {
+                continue;
+            }
+
+            switch (depositSurveyState(deposit)) {
+            case DepositSurveyState::Known:
+                ++knownDepositCount;
+                break;
+            case DepositSurveyState::Estimated:
+                ++estimatedDepositCount;
+                break;
+            case DepositSurveyState::Unknown:
+                ++unknownDepositCount;
+                break;
+            }
+            confirmedDepositTotal += confirmedDepositQuantity(deposit);
+            estimatedDepositTotal += estimatedDepositQuantity(deposit);
+            uncertainDepositTotal += uncertainDepositQuantity(deposit);
+        }
+
         // Counts are derived here rather than in the UI so the Bodies/System
         // panel remains a read-only projection over stable app DTOs.
         const std::optional<InstitutionId> ownerInstitutionId = bodyOwnerInstitutionId(state, body.id);
@@ -1385,7 +1429,41 @@ std::vector<BodySystemSummary> SimulationQueries::bodySystemOverview() const {
             .displayRadius = body.displayRadius,
             .colonyCount = static_cast<std::size_t>(std::count_if(state.colonies.begin(), state.colonies.end(), onBody)),
             .mineralDepositCount = static_cast<std::size_t>(std::count_if(state.mineralDeposits.begin(), state.mineralDeposits.end(), onBody)),
+            .knownDepositCount = knownDepositCount,
+            .estimatedDepositCount = estimatedDepositCount,
+            .unknownDepositCount = unknownDepositCount,
+            .confirmedDepositQuantity = confirmedDepositTotal,
+            .estimatedDepositQuantity = estimatedDepositTotal,
+            .uncertainDepositQuantity = uncertainDepositTotal,
             .fleetCount = static_cast<std::size_t>(std::count_if(state.fleets.begin(), state.fleets.end(), fleetAtBody))
+        });
+    }
+
+    return summaries;
+}
+
+std::vector<BodyDepositSummary> SimulationQueries::bodyDeposits(const BodyId bodyId) const {
+    const GameState& state = service_.state();
+    std::vector<BodyDepositSummary> summaries;
+
+    for (const MineralDeposit& deposit : state.mineralDeposits) {
+        if (deposit.bodyId != bodyId) {
+            continue;
+        }
+
+        const DepositSurveyState stateName = depositSurveyState(deposit);
+        summaries.push_back(BodyDepositSummary{
+            .bodyId = deposit.bodyId,
+            .bodyName = bodyName(state, deposit.bodyId),
+            .mineral = deposit.mineral,
+            .mineralName = mineralDisplayName(deposit.mineral),
+            .confidence = deposit.confidence,
+            .surveyState = stateName,
+            .surveyStateName = depositSurveyStateName(stateName),
+            .confirmedQuantity = confirmedDepositQuantity(deposit),
+            .estimatedQuantity = estimatedDepositQuantity(deposit),
+            .uncertainQuantity = uncertainDepositQuantity(deposit),
+            .accessibility = deposit.accessibility
         });
     }
 

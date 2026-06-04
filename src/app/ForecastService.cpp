@@ -45,6 +45,19 @@ template <typename T, typename IdT>
     return std::string{toString(mineral)};
 }
 
+[[nodiscard]] std::string depositSurveyStateName(const DepositSurveyState state) {
+    switch (state) {
+    case DepositSurveyState::Unknown:
+        return "Unknown";
+    case DepositSurveyState::Estimated:
+        return "Estimated";
+    case DepositSurveyState::Known:
+        return "Known";
+    }
+
+    return "Unknown";
+}
+
 [[nodiscard]] std::string materialName(const ProcessedMaterial material) {
     return std::string{toString(material)};
 }
@@ -297,6 +310,21 @@ void addProcessedMaterialSet(ProcessedMaterialAmountTotals& totals, const Proces
     MineralAmountTotals totals{};
     for (const MineralIncomeForecast& row : incomeRows) {
         totals[mineralIndex(row.mineral)] += row.incomePerDay;
+    }
+    return totals;
+}
+
+struct DepositQuantityTotals {
+    MineralAmountTotals confirmed{};
+    MineralAmountTotals uncertain{};
+};
+
+[[nodiscard]] DepositQuantityTotals depositQuantityTotals(const GameState& state) noexcept {
+    DepositQuantityTotals totals{};
+    for (const MineralDeposit& deposit : state.mineralDeposits) {
+        const std::size_t index = mineralIndex(deposit.mineral);
+        totals.confirmed[index] += confirmedDepositQuantity(deposit);
+        totals.uncertain[index] += uncertainDepositQuantity(deposit);
     }
     return totals;
 }
@@ -709,6 +737,7 @@ std::vector<MineralIncomeForecast> ForecastService::mineralIncomePerDay() const 
             const double income = dailyExtraction(colony, deposit, remainingByDeposit[depositIndex]);
             remainingByDeposit[depositIndex] -= income;
 
+            const DepositSurveyState surveyState = depositSurveyState(deposit);
             forecasts.push_back(MineralIncomeForecast{
                 .colonyId = colony.id,
                 .bodyId = colony.bodyId,
@@ -716,6 +745,11 @@ std::vector<MineralIncomeForecast> ForecastService::mineralIncomePerDay() const 
                 .colonyName = colony.name,
                 .bodyName = bodyName(state, colony.bodyId),
                 .mineralName = mineralName(deposit.mineral),
+                .confidence = deposit.confidence,
+                .surveyStateName = depositSurveyStateName(surveyState),
+                .confirmedQuantity = confirmedDepositQuantity(deposit),
+                .estimatedQuantity = estimatedDepositQuantity(deposit),
+                .uncertainQuantity = uncertainDepositQuantity(deposit),
                 .incomePerDay = income,
                 .explanation = mineralIncomeExplanation(colony, deposit, income)
             });
@@ -729,6 +763,7 @@ std::vector<MineralForecastCauseChain> ForecastService::mineralForecastCauseChai
     const GameState& state = service_.state();
     const MineralAmountTotals stockpiles = totalColonyStockpiles(state);
     const MineralAmountTotals miningIncome = miningIncomeByMineral(mineralIncomePerDay());
+    const DepositQuantityTotals depositQuantities = depositQuantityTotals(state);
     const ProcessingForecastTotals processing = processingTotals(state);
 
     std::vector<MineralForecastCauseChain> forecasts;
@@ -742,11 +777,23 @@ std::vector<MineralForecastCauseChain> ForecastService::mineralForecastCauseChai
             .mineral = mineral,
             .mineralName = mineralName(mineral),
             .stockpile = stockpiles[i],
+            .confirmedDepositQuantity = depositQuantities.confirmed[i],
+            .uncertainDepositQuantity = depositQuantities.uncertain[i],
             .miningIncomePerDay = miningIncome[i],
             .committedDemandPerDay = processing.rawDemand[i],
             .netPerDay = netPerDay,
             .stockpileRunoutDays = stockpileRunoutDays(stockpiles[i], netPerDay),
             .causes = {
+                MineralForecastCauseRow{
+                    .label = "Confirmed deposits",
+                    .amountPerDay = depositQuantities.confirmed[i],
+                    .explanation = "Confirmed quantity from deposit confidence; uncertain reserves are tracked separately"
+                },
+                MineralForecastCauseRow{
+                    .label = "Uncertain deposits",
+                    .amountPerDay = depositQuantities.uncertain[i],
+                    .explanation = "Unconfirmed reserve estimate that should be resolved by future survey work"
+                },
                 MineralForecastCauseRow{
                     .label = "Mining",
                     .amountPerDay = miningIncome[i],
@@ -814,12 +861,18 @@ std::vector<DepositExhaustionForecast> ForecastService::depositExhaustionEstimat
         const double income = totalDailyExtraction(state, deposit);
         const std::optional<int> eta = exhaustionDays(deposit, income);
 
+        const DepositSurveyState surveyState = depositSurveyState(deposit);
         forecasts.push_back(DepositExhaustionForecast{
             .bodyId = deposit.bodyId,
             .mineral = deposit.mineral,
             .bodyName = bodyName(state, deposit.bodyId),
             .mineralName = mineralName(deposit.mineral),
+            .confidence = deposit.confidence,
+            .surveyStateName = depositSurveyStateName(surveyState),
             .remainingDeposit = deposit.remaining,
+            .confirmedDeposit = confirmedDepositQuantity(deposit),
+            .estimatedDeposit = estimatedDepositQuantity(deposit),
+            .uncertainDeposit = uncertainDepositQuantity(deposit),
             .incomePerDay = income,
             .exhaustionDays = eta,
             .explanation = exhaustionExplanation(deposit, income, eta)

@@ -38,7 +38,7 @@ void BodiesPanel::render(const SimulationQueries& queries, SelectionState& selec
     const std::vector<BodySystemSummary> bodies = queries.bodySystemOverview();
     ImGui::Text("Bodies: %zu", bodies.size());
 
-    if (ImGui::BeginTable("BodySystemTable", 10, kBodyTableFlags)) {
+    if (ImGui::BeginTable("BodySystemTable", 12, kBodyTableFlags)) {
         ImGui::TableSetupColumn("Body");
         ImGui::TableSetupColumn("Type");
         ImGui::TableSetupColumn("Zone");
@@ -47,7 +47,9 @@ void BodiesPanel::render(const SimulationQueries& queries, SelectionState& selec
         ImGui::TableSetupColumn("Period");
         ImGui::TableSetupColumn("Owner / Institution");
         ImGui::TableSetupColumn("Colonies");
-        ImGui::TableSetupColumn("Mineral Deposits");
+        ImGui::TableSetupColumn("Deposits");
+        ImGui::TableSetupColumn("Known / Est / Unknown");
+        ImGui::TableSetupColumn("Confirmed Qty");
         ImGui::TableSetupColumn("Fleets");
         ImGui::TableHeadersRow();
 
@@ -79,6 +81,10 @@ void BodiesPanel::render(const SimulationQueries& queries, SelectionState& selec
             ImGui::TableSetColumnIndex(8);
             ImGui::Text("%zu", body.mineralDepositCount);
             ImGui::TableSetColumnIndex(9);
+            ImGui::Text("%zu / %zu / %zu", body.knownDepositCount, body.estimatedDepositCount, body.unknownDepositCount);
+            ImGui::TableSetColumnIndex(10);
+            ImGui::Text("%.0f / %.0f", body.confirmedDepositQuantity, body.estimatedDepositQuantity);
+            ImGui::TableSetColumnIndex(11);
             ImGui::Text("%zu", body.fleetCount);
         }
 

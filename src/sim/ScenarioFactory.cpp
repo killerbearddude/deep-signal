@@ -13,12 +13,14 @@ void addDeposit(GameState& state,
                 const BodyId bodyId,
                 const Mineral mineral,
                 const double remaining,
-                const double accessibility) {
+                const double accessibility,
+                const double confidence = 1.0) {
     state.mineralDeposits.push_back(MineralDeposit{
         .bodyId = bodyId,
         .mineral = mineral,
         .remaining = remaining,
-        .accessibility = accessibility
+        .accessibility = accessibility,
+        .confidence = confidence
     });
 }
 
@@ -493,7 +495,7 @@ GameState createHomeSystemScenario() {
 
     addDeposit(state, lunaId, Mineral::Aluminum, 120'000.0, 0.35);
     addDeposit(state, lunaId, Mineral::Silicon, 150'000.0, 0.4);
-    addDeposit(state, lunaId, Mineral::PlatinumGroupMetals, 30'000.0, 0.25);
+    addDeposit(state, lunaId, Mineral::PlatinumGroupMetals, 30'000.0, 0.25, 0.70);
 
     addDeposit(state, ceresId, Mineral::Iron, 1'400'000.0, 0.95);
     addDeposit(state, ceresId, Mineral::Nickel, 900'000.0, 0.85);
@@ -503,19 +505,19 @@ GameState createHomeSystemScenario() {
 
     addDeposit(state, vestaId, Mineral::Iron, 700'000.0, 0.8);
     addDeposit(state, vestaId, Mineral::Titanium, 600'000.0, 0.7);
-    addDeposit(state, vestaId, Mineral::RareEarthElements, 90'000.0, 0.45);
+    addDeposit(state, vestaId, Mineral::RareEarthElements, 90'000.0, 0.45, 0.65);
 
-    addDeposit(state, pallasId, Mineral::Uranium, 80'000.0, 0.35);
-    addDeposit(state, pallasId, Mineral::Thorium, 95'000.0, 0.4);
-    addDeposit(state, pallasId, Mineral::RareEarthElements, 120'000.0, 0.5);
+    addDeposit(state, pallasId, Mineral::Uranium, 80'000.0, 0.35, 0.45);
+    addDeposit(state, pallasId, Mineral::Thorium, 95'000.0, 0.4, 0.40);
+    addDeposit(state, pallasId, Mineral::RareEarthElements, 120'000.0, 0.5, 0.35);
 
     addDeposit(state, titanId, Mineral::WaterIce, 4'500'000.0, 0.95);
     addDeposit(state, titanId, Mineral::CarbonCompounds, 1'000'000.0, 0.75);
     addDeposit(state, titanId, Mineral::Volatiles, 3'200'000.0, 0.9);
 
-    addDeposit(state, frontierObjectId, Mineral::Lithium, 160'000.0, 0.25);
-    addDeposit(state, frontierObjectId, Mineral::RareEarthElements, 110'000.0, 0.2);
-    addDeposit(state, frontierObjectId, Mineral::Volatiles, 600'000.0, 0.3);
+    addDeposit(state, frontierObjectId, Mineral::Lithium, 160'000.0, 0.25, 0.15);
+    addDeposit(state, frontierObjectId, Mineral::RareEarthElements, 110'000.0, 0.2, 0.0);
+    addDeposit(state, frontierObjectId, Mineral::Volatiles, 600'000.0, 0.3, 0.20);
 
     ProcessedMaterialSet surveyCutterCost;
     surveyCutterCost.set(ProcessedMaterial::StructuralAlloys, 250.0);

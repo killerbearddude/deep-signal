@@ -439,6 +439,8 @@ void validateGameState(const GameState& state) {
                      "deposit remaining must be finite and non-negative");
         requireState(isFinite(deposit.accessibility) && deposit.accessibility >= 0.0,
                      "deposit accessibility must be finite and non-negative");
+        requireState(isFinite(deposit.confidence) && deposit.confidence >= 0.0 && deposit.confidence <= 1.0,
+                     "deposit confidence must be finite and between zero and one");
         const std::string key = std::to_string(deposit.bodyId.value) + ":" +
                                 std::to_string(static_cast<std::size_t>(deposit.mineral));
         requireState(depositKeys.insert(key).second, "duplicate mineral deposit rows are invalid");
