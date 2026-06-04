@@ -187,8 +187,8 @@ struct FleetFuelTotals {
     }
     const double bend = length * 0.18;
     return MapPosition{
-        .x = (departure.x + arrival.x) * 0.5 - (dy / length) * bend,
-        .y = (departure.y + arrival.y) * 0.5 + (dx / length) * bend
+        .x = (departure.x + arrival.x) * 0.5 + (dy / length) * bend,
+        .y = (departure.y + arrival.y) * 0.5 - (dx / length) * bend
     };
 }
 
@@ -1450,8 +1450,11 @@ std::vector<StrategicFleetSummary> SimulationQueries::strategicFleets() const {
             const double elapsed = std::clamp(static_cast<double>(state.date.day - fleet.activeOrder.departureDay), 0.0, total);
             const double t = elapsed / total;
             const MapPosition p0 = fleet.activeOrder.departurePosition;
-            const MapPosition p1 = fleet.activeOrder.routeCurveControlPoint;
             const MapPosition p2 = fleet.activeOrder.projectedArrivalPosition;
+            // Recompute the presentation control point from the route endpoints
+            // so older active saves with the previous curve orientation render
+            // consistently after the UI direction correction.
+            const MapPosition p1 = routeCurveControlPoint(p0, p2);
             position = MapPosition{
                 .x = ((1.0 - t) * (1.0 - t) * p0.x) + (2.0 * (1.0 - t) * t * p1.x) + (t * t * p2.x),
                 .y = ((1.0 - t) * (1.0 - t) * p0.y) + (2.0 * (1.0 - t) * t * p1.y) + (t * t * p2.y)

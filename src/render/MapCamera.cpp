@@ -1,22 +1,23 @@
 #include "render/MapCamera.h"
 
 // Implements simple pan/zoom math for the ImGui strategic map.
-// There is intentionally no orbital model here; world coordinates come directly
-// from the deterministic prototype scenario.
+// World coordinates may come from fixed scenario positions or deterministic
+// on-rails body positions; the camera only handles presentation scale.
 
 #include <algorithm>
 
 namespace deep::render {
 namespace {
 
-constexpr double kMinimumZoom = 0.25;
-constexpr double kMaximumZoom = 20.0;
+constexpr double kMinimumZoom = 0.035;
+constexpr double kMaximumZoom = 240.0;
 
 } // namespace
 
 MapCamera::MapCamera() noexcept
-    // Center between Terra at x=0 and Mars at x=240 in the home scenario.
-    : center_{.x = 120.0, .y = 0.0}, zoom_{2.0} {}
+    // Start with a system-scale view. The expanded home system spans thousands
+    // of map units, so the default favors orientation over close inspection.
+    : center_{.x = 0.0, .y = 0.0}, zoom_{0.20} {}
 
 MapPoint MapCamera::worldToScreen(const MapPoint world, const MapPoint viewportCenter) const noexcept {
     return MapPoint{
@@ -52,6 +53,10 @@ void MapCamera::zoomAt(const MapPoint worldAnchor, const double zoomFactor) noex
     const double anchorWeight = 1.0 - (previousZoom / zoom_);
     center_.x += (worldAnchor.x - center_.x) * anchorWeight;
     center_.y += (worldAnchor.y - center_.y) * anchorWeight;
+}
+
+void MapCamera::centerOn(const MapPoint worldCenter) noexcept {
+    center_ = worldCenter;
 }
 
 double MapCamera::zoom() const noexcept {

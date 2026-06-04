@@ -291,8 +291,8 @@ void addProcessingWeight(ProcessingShares& weights, const ProcessedMaterial mate
     // as a planned sustained-burn transit rather than a straight targeting ray.
     const double bend = length * 0.18;
     return MapPosition{
-        .x = (departure.x + arrival.x) * 0.5 - (dy / length) * bend,
-        .y = (departure.y + arrival.y) * 0.5 + (dx / length) * bend
+        .x = (departure.x + arrival.x) * 0.5 + (dy / length) * bend,
+        .y = (departure.y + arrival.y) * 0.5 - (dx / length) * bend
     };
 }
 

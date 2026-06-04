@@ -468,6 +468,40 @@ void test_fleet_movement() {
 }
 
 
+void test_fleet_transit_curve_bends_on_expected_display_side() {
+    // Verifies that planned sustained-burn routes bend on the UI-selected side
+    // of the departure-to-arrival chord. This prevents regression to the visually
+    // inverted curve that made interplanetary travel arc the wrong way.
+    deep::Simulation sim{deep::createHomeSystemScenario()};
+
+    const deep::ColonyId colonyId = sim.state().colonies.front().id;
+    const deep::ShipClassId shipClassId = sim.state().shipClasses.front().id;
+    const deep::BodyId marsId = sim.state().bodies.at(1).id;
+
+    require(sim.execute(deep::AssignShipyardBuildCommand{
+        .colonyId = colonyId,
+        .shipClassId = shipClassId,
+        .quantity = 1
+    }).ok, "build order accepted before route-curve test");
+    sim.advanceDays(5);
+
+    require(sim.execute(deep::MoveFleetCommand{
+        .fleetId = sim.state().fleets.front().id,
+        .destinationBodyId = marsId
+    }).ok, "move order accepted before route-curve test");
+
+    const deep::FleetOrder& order = sim.state().fleets.front().activeOrder;
+    const double chordX = order.projectedArrivalPosition.x - order.departurePosition.x;
+    const double chordY = order.projectedArrivalPosition.y - order.departurePosition.y;
+    const double midX = (order.departurePosition.x + order.projectedArrivalPosition.x) * 0.5;
+    const double midY = (order.departurePosition.y + order.projectedArrivalPosition.y) * 0.5;
+    const double offsetX = order.routeCurveControlPoint.x - midX;
+    const double offsetY = order.routeCurveControlPoint.y - midY;
+    const double cross = (chordX * offsetY) - (chordY * offsetX);
+
+    require(cross < 0.0, "route curve bends on the expected display side of the chord");
+}
+
 void test_fleet_movement_rejects_insufficient_fuel() {
     // Verifies movement is now an operational fuel decision. A fleet with no
     // propellant cannot start a move, and the rejected command leaves order and
@@ -786,6 +820,7 @@ int main() {
         test_shipyard_capacity_is_shared_by_fifo_orders();
         test_shipyard_temporary_processed_material_shortage_recovers();
         test_fleet_movement();
+        test_fleet_transit_curve_bends_on_expected_display_side();
         test_fleet_movement_rejects_insufficient_fuel();
         test_fleet_commander_reduces_move_fuel_cost_within_cap();
         test_cancel_fleet_order();

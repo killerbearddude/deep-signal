@@ -15,8 +15,10 @@ namespace {
 
 constexpr float kMinimumCanvasWidth = 320.0F;
 constexpr float kMinimumCanvasHeight = 240.0F;
-constexpr double kWheelZoomIn = 1.12;
+constexpr double kWheelZoomIn = 1.20;
 constexpr double kWheelZoomOut = 1.0 / kWheelZoomIn;
+constexpr double kButtonZoomIn = 1.50;
+constexpr double kButtonZoomOut = 1.0 / kButtonZoomIn;
 
 [[nodiscard]] render::MapPoint toMapPoint(const ImVec2 value) noexcept {
     return render::MapPoint{.x = static_cast<double>(value.x), .y = static_cast<double>(value.y)};
@@ -64,6 +66,33 @@ constexpr double kWheelZoomOut = 1.0 / kWheelZoomIn;
     return std::nullopt;
 }
 
+[[nodiscard]] std::optional<render::MapPoint> selectedMapAnchor(
+    const SelectionState& selection,
+    const std::vector<StrategicBodySummary>& bodies,
+    const std::vector<StrategicFleetSummary>& fleets) {
+    if (selection.type() == SelectedObjectType::Body) {
+        const BodyId bodyId = selection.bodyId();
+        const auto it = std::find_if(bodies.begin(), bodies.end(), [bodyId](const StrategicBodySummary& body) {
+            return body.id == bodyId;
+        });
+        if (it != bodies.end()) {
+            return render::MapPoint{.x = it->x, .y = it->y};
+        }
+    }
+
+    if (selection.type() == SelectedObjectType::Fleet) {
+        const FleetId fleetId = selection.fleetId();
+        const auto it = std::find_if(fleets.begin(), fleets.end(), [fleetId](const StrategicFleetSummary& fleet) {
+            return fleet.id == fleetId;
+        });
+        if (it != fleets.end()) {
+            return render::MapPoint{.x = it->x, .y = it->y};
+        }
+    }
+
+    return std::nullopt;
+}
+
 void applyMapSelection(const std::optional<render::StrategicMapSelection>& picked, SelectionState& selection) noexcept {
     if (!picked.has_value()) {
         selection.clear();
@@ -92,10 +121,32 @@ void StrategicMapPanel::render(const SimulationQueries& queries, SelectionState&
         return;
     }
     ImGui::TextUnformatted("Right-drag to pan. Mouse wheel to zoom. Left-click a marker to inspect or choose a move destination.");
+    const std::optional<render::MapPoint> selectedAnchor = selectedMapAnchor(selection, bodies, fleets);
+    if (ImGui::Button("Zoom Out")) {
+        // Toolbar zoom has no cursor anchor. When a map object is selected, keep
+        // it centered so zooming in/out preserves operational context.
+        if (selectedAnchor.has_value()) {
+            camera_.centerOn(*selectedAnchor);
+        }
+        camera_.zoomAt(camera_.center(), kButtonZoomOut);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Zoom In")) {
+        if (selectedAnchor.has_value()) {
+            camera_.centerOn(*selectedAnchor);
+        }
+        camera_.zoomAt(camera_.center(), kButtonZoomIn);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Reset View")) {
+        camera_ = render::MapCamera{};
+    }
+    ImGui::SameLine();
+    ImGui::Text("Zoom %.3fx", camera_.zoom());
 
     ImVec2 available = ImGui::GetContentRegionAvail();
     available.x = std::max(available.x, kMinimumCanvasWidth);
-    available.y = std::max(available.y - 48.0F, kMinimumCanvasHeight);
+    available.y = std::max(available.y - 72.0F, kMinimumCanvasHeight);
 
     const ImVec2 canvasMin = ImGui::GetCursorScreenPos();
     ImGui::InvisibleButton("strategic-map-canvas", available,
@@ -109,9 +160,17 @@ void StrategicMapPanel::render(const SimulationQueries& queries, SelectionState&
     }
 
     if (hovered && ImGui::GetIO().MouseWheel != 0.0F) {
-        const ImVec2 mouse = ImGui::GetIO().MousePos;
-        const render::MapPoint anchor = camera_.screenToWorld(toMapPoint(mouse), viewportCenter(canvasMin, available));
-        camera_.zoomAt(anchor, ImGui::GetIO().MouseWheel > 0.0F ? kWheelZoomIn : kWheelZoomOut);
+        if (selectedAnchor.has_value()) {
+            // Selected markers become the zoom focus. This makes close inspection
+            // predictable on the wide on-rails map where cursor-centered zooming
+            // can otherwise push the selected fleet or body out of view.
+            camera_.centerOn(*selectedAnchor);
+            camera_.zoomAt(camera_.center(), ImGui::GetIO().MouseWheel > 0.0F ? kWheelZoomIn : kWheelZoomOut);
+        } else {
+            const ImVec2 mouse = ImGui::GetIO().MousePos;
+            const render::MapPoint anchor = camera_.screenToWorld(toMapPoint(mouse), viewportCenter(canvasMin, available));
+            camera_.zoomAt(anchor, ImGui::GetIO().MouseWheel > 0.0F ? kWheelZoomIn : kWheelZoomOut);
+        }
     }
 
     if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {

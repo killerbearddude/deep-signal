@@ -17,7 +17,7 @@ struct MapPoint {
 class MapCamera {
 public:
     // Creates a camera centered on the home system with a conservative zoom that
-    // keeps Terra/Mars visible in the first prototype scenario.
+    // keeps the expanded on-rails scenario visible by default.
     MapCamera() noexcept;
 
     // Converts a world-space point into screen-space pixels relative to the
@@ -35,12 +35,17 @@ public:
     // the cursor visually stable while the wheel changes scale.
     void zoomAt(MapPoint worldAnchor, double zoomFactor) noexcept;
 
+    // Recenters the camera on a world-space object. Toolbar and wheel zoom use
+    // this for selected markers so repeated zooming keeps the selected object
+    // in the middle of the map instead of drifting off-screen.
+    void centerOn(MapPoint worldCenter) noexcept;
+
     [[nodiscard]] double zoom() const noexcept;
     [[nodiscard]] MapPoint center() const noexcept;
 
 private:
     MapPoint center_{};
-    double zoom_ = 2.0;
+    double zoom_ = 0.20;
 };
 
 } // namespace deep::render
