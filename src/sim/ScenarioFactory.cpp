@@ -61,9 +61,9 @@ GameState createHomeSystemScenario() {
         .type = InstitutionType::SurveyOffice
     });
 
-    // Starter personnel are durable identity records only. They provide early
-    // anchors for future appointment and merit systems without applying any
-    // command, production, or political modifiers in this patch.
+    // Starter personnel are durable identity records. Their competencies feed
+    // appointment merit and small operational modifiers, but not politics or
+    // autonomous decision-making.
     state.people.push_back(Person{
         .id = continuityDirectorId,
         .name = "Director Mara Chen",
@@ -211,7 +211,8 @@ GameState createHomeSystemScenario() {
 
 
     // Starter appointments name who is responsible for current operational
-    // areas, but do not apply competency modifiers or political effects.
+    // areas. A later app/sim layer applies only small deterministic modifiers,
+    // leaving political effects and trust systems out of the scenario data.
     state.appointments.push_back(Appointment{
         .role = AppointmentRole::InstitutionHead,
         .scopeType = AppointmentScopeType::Institution,

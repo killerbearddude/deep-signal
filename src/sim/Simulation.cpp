@@ -248,6 +248,54 @@ void addProcessingWeight(ProcessingShares& weights, const ProcessedMaterial mate
     return std::max(1.0, bodyDistance(*origin, *destination) * kPrototypeFuelPerMapUnit);
 }
 
+[[nodiscard]] const Appointment* activeAppointmentFor(const GameState& state,
+                                                      const AppointmentRole role,
+                                                      const AppointmentScopeType scopeType,
+                                                      const std::int64_t scopeId) noexcept {
+    const auto it = std::find_if(state.appointments.begin(), state.appointments.end(), [role, scopeType, scopeId](const Appointment& appointment) {
+        return appointment.role == role && appointment.scopeType == scopeType && appointment.scopeId == scopeId;
+    });
+    return it == state.appointments.end() ? nullptr : &(*it);
+}
+
+[[nodiscard]] const Person* appointedPersonFor(const GameState& state,
+                                               const AppointmentRole role,
+                                               const AppointmentScopeType scopeType,
+                                               const std::int64_t scopeId) noexcept {
+    const Appointment* appointment = activeAppointmentFor(state, role, scopeType, scopeId);
+    return appointment == nullptr ? nullptr : findById(state.people, appointment->personId);
+}
+
+[[nodiscard]] double appointmentModifierFor(const GameState& state,
+                                            const AppointmentRole role,
+                                            const AppointmentScopeType scopeType,
+                                            const std::int64_t scopeId) noexcept {
+    const Person* person = appointedPersonFor(state, role, scopeType, scopeId);
+    return person == nullptr ? 0.0 : appointmentOperationalModifier(*person, role);
+}
+
+[[nodiscard]] double effectiveShipyardCapacity(const GameState& state, const Colony& colony) noexcept {
+    const double baseCapacity = std::max(0.0, colony.shipyardCapacity);
+    const double modifier = appointmentModifierFor(state, AppointmentRole::ShipyardDirector, AppointmentScopeType::Colony, colony.id.value);
+    return std::max(0.0, baseCapacity * (1.0 + modifier));
+}
+
+[[nodiscard]] double adjustedMoveFuelCost(const GameState& state,
+                                          const Fleet& fleet,
+                                          const BodyId originBodyId,
+                                          const BodyId destinationBodyId) noexcept {
+    const double baseCost = moveFuelCost(state, originBodyId, destinationBodyId);
+    if (!std::isfinite(baseCost)) {
+        return baseCost;
+    }
+
+    // Positive FleetCommander modifiers improve fuel efficiency, so they reduce
+    // the fuel consumed by starting a movement order. Negative modifiers increase
+    // cost slightly within the shared appointment cap.
+    const double modifier = appointmentModifierFor(state, AppointmentRole::FleetCommander, AppointmentScopeType::Fleet, fleet.id.value);
+    return std::max(0.0, baseCost * (1.0 - modifier));
+}
+
 [[nodiscard]] double fleetCurrentFuel(const GameState& state, const Fleet& fleet) noexcept {
     double total = 0.0;
     for (const ShipId shipId : fleet.shipIds) {
@@ -269,7 +317,7 @@ void addProcessingWeight(ProcessingShares& weights, const ProcessedMaterial mate
 
     double requiredFuel = 0.0;
     const auto addProjectedMove = [&](const BodyId destinationBodyId) {
-        const double cost = moveFuelCost(state, projectedOrigin, destinationBodyId);
+        const double cost = adjustedMoveFuelCost(state, fleet, projectedOrigin, destinationBodyId);
         requiredFuel += cost;
         projectedOrigin = destinationBodyId;
     };
@@ -448,7 +496,7 @@ CommandResult Simulation::moveFleet(const MoveFleetCommand& command) {
         return CommandResult::failure("Fleet already has an active order");
     }
 
-    const double fuelCost = moveFuelCost(state_, fleet->currentBodyId, command.destinationBodyId);
+    const double fuelCost = adjustedMoveFuelCost(state_, *fleet, fleet->currentBodyId, command.destinationBodyId);
     if (!fleetHasFuelFor(state_, *fleet, fuelCost)) {
         appendEvent(EventSeverity::Warning, CommandRejectedEvent{"Fleet has insufficient fuel for move"});
         return CommandResult::failure("Fleet has insufficient fuel for move");
@@ -701,7 +749,7 @@ bool Simulation::startNextQueuedFleetOrder(Fleet& fleet, std::vector<SimEvent>* 
             continue;
         }
 
-        const double fuelCost = moveFuelCost(state_, fleet.currentBodyId, destinationBodyId);
+        const double fuelCost = adjustedMoveFuelCost(state_, fleet, fleet.currentBodyId, destinationBodyId);
         if (!consumeFleetFuel(state_, fleet, fuelCost)) {
             const CommandRejectedEvent rejected{"Queued fleet order lacked sufficient fuel"};
             if (emitted == nullptr) {
@@ -830,7 +878,7 @@ void Simulation::simulateShipyards(std::vector<SimEvent>& emitted) {
         // behavior without adding a separate production-queue type yet.
         capacityPools.push_back(ShipyardCapacityPool{
             .colonyId = colony.id,
-            .remainingBuildPoints = std::max(0.0, colony.shipyardCapacity)
+            .remainingBuildPoints = effectiveShipyardCapacity(state_, colony)
         });
     }
 

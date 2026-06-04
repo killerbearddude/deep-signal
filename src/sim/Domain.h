@@ -46,8 +46,8 @@ struct Institution {
 };
 
 // Areas of professional capability recorded for durable personnel identity.
-// V1 stores values only; no gameplay modifiers or merit calculations consume
-// these competencies yet.
+// Merit scoring and small appointment modifiers consume these values, while
+// personnel records themselves remain durable data with no behavior methods.
 struct PersonCompetencies {
     int logistics = 0;
     int industry = 0;
@@ -59,8 +59,8 @@ struct PersonCompetencies {
     int crisisManagement = 0;
 };
 
-// Lightweight service-history counters for future appointment and merit systems.
-// Counters are non-negative audit inputs only in v1.
+// Lightweight service-history counters for appointment merit and operational
+// modifier calculations. Counters remain non-negative audit inputs, not events.
 struct PersonServiceRecord {
     int successfulAssignments = 0;
     int failedAssignments = 0;
@@ -81,9 +81,9 @@ struct Person {
 };
 
 
-// Operational roles that can be assigned to durable personnel records. These
-// appointments are responsibility/audit links only in v1; they do not apply any
-// production, movement, morale, trust, or competence modifiers.
+// Operational roles that can be assigned to durable personnel records. Current
+// appointments may apply small deterministic operational modifiers, but still do
+// not model morale, politics, trust, or approval mechanics.
 enum class AppointmentRole {
     FleetCommander,
     ColonyAdministrator,
@@ -111,6 +111,109 @@ struct Appointment {
     PersonId personId;
     std::int64_t appointedDay = 0;
 };
+
+// Personnel competencies used by appointment effects. Keeping this selector in
+// the sim domain lets sim, app queries, and forecasts use the same deterministic
+// role profile without exposing appointment scoring as mutable game state.
+enum class PersonnelCompetency {
+    Logistics,
+    Industry,
+    Survey,
+    Command,
+    Administration,
+    Engineering,
+    Intelligence,
+    CrisisManagement
+};
+
+// Pair of competencies that drive a role's small operational modifier. The
+// values intentionally match the merit-scoring role profile so UI advice and
+// simulation effects remain legible to the player.
+struct AppointmentEffectProfile {
+    PersonnelCompetency primary = PersonnelCompetency::Administration;
+    PersonnelCompetency secondary = PersonnelCompetency::CrisisManagement;
+};
+
+// Tight caps prevent personnel from becoming hero bonuses. A +10% effect is a
+// useful operational nudge; a -5% effect makes poor appointments visible without
+// crippling the prototype economy or fleet movement.
+inline constexpr double kAppointmentModifierMinimum = -0.05;
+inline constexpr double kAppointmentModifierMaximum = 0.10;
+inline constexpr double kAppointmentPrimaryCompetencyWeight = 0.015;
+inline constexpr double kAppointmentSecondaryCompetencyWeight = 0.0075;
+inline constexpr double kAppointmentSeniorityWeight = 0.0025;
+inline constexpr double kAppointmentSuccessWeight = 0.0020;
+inline constexpr double kAppointmentFailurePenalty = -0.0060;
+inline constexpr double kAppointmentCommendationWeight = 0.0030;
+inline constexpr double kAppointmentControversyPenalty = -0.0050;
+
+[[nodiscard]] inline int competencyValue(const PersonCompetencies& competencies,
+                                         const PersonnelCompetency competency) noexcept {
+    switch (competency) {
+    case PersonnelCompetency::Logistics:
+        return competencies.logistics;
+    case PersonnelCompetency::Industry:
+        return competencies.industry;
+    case PersonnelCompetency::Survey:
+        return competencies.survey;
+    case PersonnelCompetency::Command:
+        return competencies.command;
+    case PersonnelCompetency::Administration:
+        return competencies.administration;
+    case PersonnelCompetency::Engineering:
+        return competencies.engineering;
+    case PersonnelCompetency::Intelligence:
+        return competencies.intelligence;
+    case PersonnelCompetency::CrisisManagement:
+        return competencies.crisisManagement;
+    }
+
+    return 0;
+}
+
+[[nodiscard]] inline AppointmentEffectProfile appointmentEffectProfile(const AppointmentRole role) noexcept {
+    switch (role) {
+    case AppointmentRole::FleetCommander:
+        return AppointmentEffectProfile{.primary = PersonnelCompetency::Command, .secondary = PersonnelCompetency::Logistics};
+    case AppointmentRole::ColonyAdministrator:
+        return AppointmentEffectProfile{.primary = PersonnelCompetency::Administration, .secondary = PersonnelCompetency::CrisisManagement};
+    case AppointmentRole::ShipyardDirector:
+        return AppointmentEffectProfile{.primary = PersonnelCompetency::Industry, .secondary = PersonnelCompetency::Engineering};
+    case AppointmentRole::SurveyChief:
+        return AppointmentEffectProfile{.primary = PersonnelCompetency::Survey, .secondary = PersonnelCompetency::Intelligence};
+    case AppointmentRole::LogisticsCoordinator:
+        return AppointmentEffectProfile{.primary = PersonnelCompetency::Logistics, .secondary = PersonnelCompetency::Administration};
+    case AppointmentRole::InstitutionHead:
+        return AppointmentEffectProfile{.primary = PersonnelCompetency::Administration, .secondary = PersonnelCompetency::CrisisManagement};
+    }
+
+    return AppointmentEffectProfile{};
+}
+
+[[nodiscard]] inline double clampAppointmentModifier(const double rawModifier) noexcept {
+    if (rawModifier < kAppointmentModifierMinimum) {
+        return kAppointmentModifierMinimum;
+    }
+    if (rawModifier > kAppointmentModifierMaximum) {
+        return kAppointmentModifierMaximum;
+    }
+    return rawModifier;
+}
+
+[[nodiscard]] inline double appointmentOperationalModifier(const Person& person,
+                                                           const AppointmentRole role) noexcept {
+    const AppointmentEffectProfile profile = appointmentEffectProfile(role);
+    const double rawModifier =
+        static_cast<double>(competencyValue(person.competencies, profile.primary)) * kAppointmentPrimaryCompetencyWeight +
+        static_cast<double>(competencyValue(person.competencies, profile.secondary)) * kAppointmentSecondaryCompetencyWeight +
+        static_cast<double>(person.seniorityLevel) * kAppointmentSeniorityWeight +
+        static_cast<double>(person.serviceRecord.successfulAssignments) * kAppointmentSuccessWeight +
+        static_cast<double>(person.serviceRecord.failedAssignments) * kAppointmentFailurePenalty +
+        static_cast<double>(person.serviceRecord.commendations) * kAppointmentCommendationWeight +
+        static_cast<double>(person.serviceRecord.controversies) * kAppointmentControversyPenalty;
+
+    return clampAppointmentModifier(rawModifier);
+}
 
 // A star system container. Prototype 0.1 starts with a single Sol system.
 struct StarSystem {

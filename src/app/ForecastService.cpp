@@ -382,16 +382,111 @@ void addProcessedMaterialSet(ProcessedMaterialAmountTotals& totals, const Proces
     return std::max(0.0, remaining);
 }
 
-[[nodiscard]] std::optional<int> shipyardEtaDays(const ShipyardOrder& order, const ShipClass& shipClass, const Colony& colony) {
+struct ForecastModifierDetails {
+    double modifier = 0.0;
+    std::vector<ForecastModifierBreakdownRow> breakdown;
+};
+
+[[nodiscard]] const Appointment* activeAppointmentFor(const GameState& state,
+                                                      const AppointmentRole role,
+                                                      const AppointmentScopeType scopeType,
+                                                      const std::int64_t scopeId) noexcept {
+    const auto it = std::find_if(state.appointments.begin(), state.appointments.end(), [role, scopeType, scopeId](const Appointment& appointment) {
+        return appointment.role == role && appointment.scopeType == scopeType && appointment.scopeId == scopeId;
+    });
+    return it == state.appointments.end() ? nullptr : &(*it);
+}
+
+[[nodiscard]] std::string competencyName(const PersonnelCompetency competency) {
+    switch (competency) {
+    case PersonnelCompetency::Logistics:
+        return "Logistics";
+    case PersonnelCompetency::Industry:
+        return "Industry";
+    case PersonnelCompetency::Survey:
+        return "Survey";
+    case PersonnelCompetency::Command:
+        return "Command";
+    case PersonnelCompetency::Administration:
+        return "Administration";
+    case PersonnelCompetency::Engineering:
+        return "Engineering";
+    case PersonnelCompetency::Intelligence:
+        return "Intelligence";
+    case PersonnelCompetency::CrisisManagement:
+        return "Crisis Management";
+    }
+
+    return "Unknown";
+}
+
+void addModifierRow(std::vector<ForecastModifierBreakdownRow>& rows, const std::string& label, const double fraction) {
+    rows.push_back(ForecastModifierBreakdownRow{.label = label, .percent = fraction * 100.0});
+}
+
+[[nodiscard]] ForecastModifierDetails appointmentModifierDetailsFor(const GameState& state,
+                                                                    const AppointmentRole role,
+                                                                    const AppointmentScopeType scopeType,
+                                                                    const std::int64_t scopeId) {
+    const Appointment* appointment = activeAppointmentFor(state, role, scopeType, scopeId);
+    if (appointment == nullptr) {
+        return ForecastModifierDetails{};
+    }
+
+    const Person* person = findById(state.people, appointment->personId);
+    if (person == nullptr) {
+        return ForecastModifierDetails{};
+    }
+
+    const AppointmentEffectProfile profile = appointmentEffectProfile(role);
+    const double primary = static_cast<double>(competencyValue(person->competencies, profile.primary)) * kAppointmentPrimaryCompetencyWeight;
+    const double secondary = static_cast<double>(competencyValue(person->competencies, profile.secondary)) * kAppointmentSecondaryCompetencyWeight;
+    const double seniority = static_cast<double>(person->seniorityLevel) * kAppointmentSeniorityWeight;
+    const double successes = static_cast<double>(person->serviceRecord.successfulAssignments) * kAppointmentSuccessWeight;
+    const double failures = static_cast<double>(person->serviceRecord.failedAssignments) * kAppointmentFailurePenalty;
+    const double commendations = static_cast<double>(person->serviceRecord.commendations) * kAppointmentCommendationWeight;
+    const double controversies = static_cast<double>(person->serviceRecord.controversies) * kAppointmentControversyPenalty;
+
+    std::vector<ForecastModifierBreakdownRow> breakdown;
+    breakdown.reserve(8);
+    addModifierRow(breakdown, competencyName(profile.primary) + " primary competency", primary);
+    addModifierRow(breakdown, competencyName(profile.secondary) + " secondary competency", secondary);
+    addModifierRow(breakdown, "Seniority", seniority);
+    addModifierRow(breakdown, "Successful assignments", successes);
+    addModifierRow(breakdown, "Failed assignments", failures);
+    addModifierRow(breakdown, "Commendations", commendations);
+    addModifierRow(breakdown, "Controversies", controversies);
+
+    const double rawModifier = primary + secondary + seniority + successes + failures + commendations + controversies;
+    const double modifier = clampAppointmentModifier(rawModifier);
+    addModifierRow(breakdown, "Cap adjustment", modifier - rawModifier);
+
+    return ForecastModifierDetails{.modifier = modifier, .breakdown = std::move(breakdown)};
+}
+
+[[nodiscard]] double effectiveShipyardCapacity(const GameState& state, const Colony& colony) {
+    return std::max(0.0, colony.shipyardCapacity * (1.0 + appointmentModifierDetailsFor(
+        state, AppointmentRole::ShipyardDirector, AppointmentScopeType::Colony, colony.id.value).modifier));
+}
+
+[[nodiscard]] double effectiveFuelRange(const double currentFuel, const double fuelEfficiencyModifier) noexcept {
+    const double costMultiplier = std::max(kFuelComparisonEpsilon, 1.0 - fuelEfficiencyModifier);
+    return currentFuel / (kPrototypeFuelPerMapUnit * costMultiplier);
+}
+
+[[nodiscard]] std::optional<int> shipyardEtaDays(const ShipyardOrder& order,
+                                                 const ShipClass& shipClass,
+                                                 const Colony&,
+                                                 const double effectiveCapacity) {
     if (order.status == ShipyardOrderStatus::Completed || order.quantityCompleted >= order.quantityRequested) {
         return 0;
     }
 
-    if (shipClass.buildPoints <= 0.0 || colony.shipyardCapacity <= 0.0) {
+    if (shipClass.buildPoints <= 0.0 || effectiveCapacity <= 0.0) {
         return std::nullopt;
     }
 
-    return ceilToNonNegativeDays(totalBuildPointsRemaining(order, shipClass) / colony.shipyardCapacity);
+    return ceilToNonNegativeDays(totalBuildPointsRemaining(order, shipClass) / effectiveCapacity);
 }
 
 [[nodiscard]] ProcessedMaterialAmountTotals activeShipyardDemandByMaterial(const GameState& state) {
@@ -408,7 +503,7 @@ void addProcessedMaterialSet(ProcessedMaterialAmountTotals& totals, const Proces
             continue;
         }
 
-        const std::optional<int> etaDays = shipyardEtaDays(order, *shipClass, *colony);
+        const std::optional<int> etaDays = shipyardEtaDays(order, *shipClass, *colony, effectiveShipyardCapacity(state, *colony));
         if (!etaDays.has_value() || *etaDays <= 0) {
             continue;
         }
@@ -498,6 +593,8 @@ void addProcessedMaterialSet(ProcessedMaterialAmountTotals& totals, const Proces
 [[nodiscard]] std::string shipyardEtaExplanation(const ShipyardOrder& order,
                                                  const ShipClass* shipClass,
                                                  const Colony* colony,
+                                                 const double effectiveCapacity,
+                                                 const double modifierPercent,
                                                  const std::optional<int> etaDays) {
     if (shipClass == nullptr || colony == nullptr) {
         return "Order references missing colony or ship class; ETA cannot be estimated";
@@ -513,8 +610,9 @@ void addProcessedMaterialSet(ProcessedMaterialAmountTotals& totals, const Proces
 
     std::ostringstream out;
     out << totalBuildPointsRemaining(order, *shipClass) << " build points remaining / "
-        << colony->shipyardCapacity << " capacity per day = " << *etaDays
-        << " day(s); processed material shortages may pause completion";
+        << effectiveCapacity << " effective capacity per day = " << *etaDays
+        << " day(s); shipyard appointment modifier " << modifierPercent
+        << "% ; processed material shortages may pause completion";
     return out.str();
 }
 
@@ -571,11 +669,13 @@ void addProcessedMaterialSet(ProcessedMaterialAmountTotals& totals, const Proces
     return total;
 }
 
-[[nodiscard]] std::string fleetFuelExplanation(const double currentFuel, const double fuelCapacity) {
+[[nodiscard]] std::string fleetFuelExplanation(const double currentFuel,
+                                                const double fuelCapacity,
+                                                const double fuelEfficiencyModifierPercent) {
     std::ostringstream out;
     out << currentFuel << " / " << fuelCapacity
-        << " propellant; v1 range is current fuel / " << kPrototypeFuelPerMapUnit
-        << " fuel per map unit";
+        << " propellant; fleet commander fuel-efficiency modifier "
+        << fuelEfficiencyModifierPercent << "%";
     return out.str();
 }
 
@@ -739,9 +839,13 @@ std::vector<ShipyardOrderEtaForecast> ForecastService::shipyardOrderEtas() const
         const ShipClass* shipClass = findById(state.shipClasses, order.shipClassId);
         const int shipsRemaining = std::max(0, order.quantityRequested - order.quantityCompleted);
         const double remainingBuildPoints = shipClass == nullptr ? 0.0 : totalBuildPointsRemaining(order, *shipClass);
+        const ForecastModifierDetails modifier = colony == nullptr
+            ? ForecastModifierDetails{}
+            : appointmentModifierDetailsFor(state, AppointmentRole::ShipyardDirector, AppointmentScopeType::Colony, colony->id.value);
+        const double effectiveCapacity = colony == nullptr ? 0.0 : effectiveShipyardCapacity(state, *colony);
         const std::optional<int> eta = (colony == nullptr || shipClass == nullptr)
             ? std::nullopt
-            : shipyardEtaDays(order, *shipClass, *colony);
+            : shipyardEtaDays(order, *shipClass, *colony, effectiveCapacity);
 
         forecasts.push_back(ShipyardOrderEtaForecast{
             .orderId = order.id,
@@ -751,8 +855,11 @@ std::vector<ShipyardOrderEtaForecast> ForecastService::shipyardOrderEtas() const
             .shipClassName = shipClassName(state, order.shipClassId),
             .shipsRemaining = shipsRemaining,
             .buildPointsRemaining = remainingBuildPoints,
+            .effectiveShipyardCapacity = effectiveCapacity,
+            .shipyardModifierPercent = modifier.modifier * 100.0,
+            .shipyardModifierBreakdown = modifier.breakdown,
             .etaDays = eta,
-            .explanation = shipyardEtaExplanation(order, shipClass, colony, eta)
+            .explanation = shipyardEtaExplanation(order, shipClass, colony, effectiveCapacity, modifier.modifier * 100.0, eta)
         });
     }
 
@@ -792,7 +899,10 @@ std::vector<ProductionBacklogForecast> ForecastService::productionBacklog() cons
 
         int queuePosition = 0;
         double buildPointsAhead = 0.0;
-        double colonyCapacity = colony == nullptr ? 0.0 : std::max(0.0, colony->shipyardCapacity);
+        const ForecastModifierDetails modifier = colony == nullptr
+            ? ForecastModifierDetails{}
+            : appointmentModifierDetailsFor(state, AppointmentRole::ShipyardDirector, AppointmentScopeType::Colony, colony->id.value);
+        double colonyCapacity = colony == nullptr ? 0.0 : effectiveShipyardCapacity(state, *colony);
         std::optional<int> etaDays;
 
         if (order.status == ShipyardOrderStatus::Completed || shipsRemaining == 0) {
@@ -833,7 +943,10 @@ std::vector<ProductionBacklogForecast> ForecastService::productionBacklog() cons
             .quantityCompleted = order.quantityCompleted,
             .shipsRemaining = shipsRemaining,
             .queuePosition = queuePosition,
-            .colonyShipyardCapacity = colonyCapacity,
+            .colonyShipyardCapacity = colony == nullptr ? 0.0 : std::max(0.0, colony->shipyardCapacity),
+            .effectiveShipyardCapacity = colonyCapacity,
+            .shipyardModifierPercent = modifier.modifier * 100.0,
+            .shipyardModifierBreakdown = modifier.breakdown,
             .accumulatedBuildPoints = order.accumulatedBuildPoints,
             .buildPointsRemaining = buildPointsRemaining,
             .requiredMaterialsRemaining = requiredMaterials,
@@ -888,14 +1001,18 @@ std::vector<FleetFuelForecast> ForecastService::fleetFuelForecasts() const {
     for (const Fleet& fleet : state.fleets) {
         const double currentFuel = fleetCurrentFuel(state, fleet);
         const double capacity = fleetFuelCapacity(state, fleet);
+        const ForecastModifierDetails modifier = appointmentModifierDetailsFor(
+            state, AppointmentRole::FleetCommander, AppointmentScopeType::Fleet, fleet.id.value);
         forecasts.push_back(FleetFuelForecast{
             .fleetId = fleet.id,
             .fleetName = fleet.name,
             .currentFuel = currentFuel,
             .fuelCapacity = capacity,
             .fuelPercent = capacity <= kFuelComparisonEpsilon ? 0.0 : (currentFuel * 100.0 / capacity),
-            .currentRange = currentFuel / kPrototypeFuelPerMapUnit,
-            .explanation = fleetFuelExplanation(currentFuel, capacity)
+            .currentRange = effectiveFuelRange(currentFuel, modifier.modifier),
+            .fuelEfficiencyModifierPercent = modifier.modifier * 100.0,
+            .fuelModifierBreakdown = modifier.breakdown,
+            .explanation = fleetFuelExplanation(currentFuel, capacity, modifier.modifier * 100.0)
         });
     }
 

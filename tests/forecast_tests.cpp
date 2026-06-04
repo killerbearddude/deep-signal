@@ -39,6 +39,17 @@ void requireNear(const double actual, const double expected, const std::string_v
     }
 }
 
+
+
+deep::PersonId personIdByName(const deep::GameState& state, const std::string_view name) {
+    for (const deep::Person& person : state.people) {
+        if (person.name == name) {
+            return person.id;
+        }
+    }
+    throw TestFailure{"expected person was not present in scenario"};
+}
+
 const deep::MineralForecastCauseChain& requireCauseChain(const std::vector<deep::MineralForecastCauseChain>& chains,
                                                          const deep::Mineral mineral) {
     const auto it = std::find_if(chains.begin(), chains.end(), [mineral](const deep::MineralForecastCauseChain& chain) {
@@ -290,9 +301,12 @@ void test_shipyard_order_eta_uses_capacity_and_accumulated_progress() {
     require(orders.front().colonyName == "Terra Directorate", "shipyard ETA resolves colony name");
     require(orders.front().shipClassName == "Survey Cutter", "shipyard ETA resolves ship-class name");
     require(orders.front().shipsRemaining == 2, "order still has two ships remaining after two days");
-    requireNear(orders.front().buildPointsRemaining, 800.0, "ETA accounts for accumulated build points");
+    requireNear(orders.front().buildPointsRemaining, 780.0, "ETA accounts for appointment-modified accumulated build points");
     require(orders.front().etaDays.has_value(), "positive capacity yields shipyard ETA");
-    require(*orders.front().etaDays == 8, "shipyard ETA rounds remaining build points over capacity");
+    require(*orders.front().etaDays == 8, "shipyard ETA rounds remaining build points over effective capacity");
+    requireNear(orders.front().effectiveShipyardCapacity, 110.0, "shipyard ETA exposes appointment-modified capacity");
+    requireNear(orders.front().shipyardModifierPercent, 10.0, "shipyard ETA exposes capped appointment modifier");
+    require(!orders.front().shipyardModifierBreakdown.empty(), "shipyard ETA exposes modifier breakdown rows");
     require(orders.front().explanation.find("processed material shortages") != std::string::npos,
             "shipyard ETA explains capacity-only limitation");
 }
@@ -432,6 +446,44 @@ void test_fleet_fuel_forecast_reports_range_after_move_start() {
     require(!fuels.front().explanation.empty(), "fuel forecast includes explanation text");
 }
 
+
+void test_fleet_fuel_forecast_exposes_commander_modifier() {
+    // Forecasts should explain appointment-driven fuel efficiency using the same
+    // capped modifier that movement consumes in the simulation layer.
+    deep::SimulationService service;
+    const deep::ColonyId colonyId = service.state().colonies.front().id;
+    const deep::ShipClassId shipClassId = service.state().shipClasses.front().id;
+    const deep::BodyId marsId = service.state().bodies.at(1).id;
+    const deep::PersonId commanderId = personIdByName(service.state(), "Commodore Elias Voss");
+
+    require(service.execute(deep::AssignShipyardBuildCommand{
+        .colonyId = colonyId,
+        .shipClassId = shipClassId,
+        .quantity = 1
+    }).ok, "build order is accepted before commander fuel forecast setup");
+    static_cast<void>(service.advanceDays(5));
+
+    const deep::FleetId fleetId = service.state().fleets.front().id;
+    require(service.execute(deep::AssignAppointmentCommand{
+        .role = deep::AppointmentRole::FleetCommander,
+        .scopeType = deep::AppointmentScopeType::Fleet,
+        .scopeId = fleetId.value,
+        .personId = commanderId
+    }).ok, "fleet commander appointment is accepted before fuel forecast");
+    require(service.execute(deep::MoveFleetCommand{
+        .fleetId = fleetId,
+        .destinationBodyId = marsId
+    }).ok, "commander-modified move is accepted before fuel forecast");
+
+    const deep::ForecastService forecasts{service};
+    const auto fuels = forecasts.fleetFuelForecasts();
+
+    requireNear(fuels.front().currentFuel, 784.0, "forecast reflects commander-reduced movement fuel cost");
+    requireNear(fuels.front().fuelEfficiencyModifierPercent, 10.0, "forecast exposes capped commander fuel modifier");
+    requireNear(fuels.front().currentRange, 784.0 / 0.9, "forecast range uses effective fuel cost multiplier");
+    require(!fuels.front().fuelModifierBreakdown.empty(), "forecast exposes commander fuel modifier breakdown");
+}
+
 } // namespace
 
 int main() {
@@ -449,6 +501,7 @@ int main() {
         test_production_backlog_reports_blocking_material();
         test_fleet_arrival_eta_reports_active_move_order();
         test_fleet_fuel_forecast_reports_range_after_move_start();
+        test_fleet_fuel_forecast_exposes_commander_modifier();
     } catch (const std::exception& ex) {
         std::cerr << "Test failure: " << ex.what() << '\n';
         return EXIT_FAILURE;

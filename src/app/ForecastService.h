@@ -15,6 +15,13 @@
 
 namespace deep {
 
+// Appointment effect contribution row used by forecasts. Values are percentage
+// points and include a cap-adjustment row when the raw modifier exceeds v1 caps.
+struct ForecastModifierBreakdownRow {
+    std::string label;
+    double percent = 0.0;
+};
+
 // Next-day mineral production forecast for one colony/deposit pair.
 // incomePerDay uses the same prototype mining formula and shared-deposit
 // consumption order as Simulation::simulateMining.
@@ -89,6 +96,9 @@ struct ShipyardOrderEtaForecast {
     std::string shipClassName;
     int shipsRemaining = 0;
     double buildPointsRemaining = 0.0;
+    double effectiveShipyardCapacity = 0.0;
+    double shipyardModifierPercent = 0.0;
+    std::vector<ForecastModifierBreakdownRow> shipyardModifierBreakdown;
     std::optional<int> etaDays;
     std::string explanation;
 };
@@ -108,6 +118,9 @@ struct ProductionBacklogForecast {
     int shipsRemaining = 0;
     int queuePosition = 0;
     double colonyShipyardCapacity = 0.0;
+    double effectiveShipyardCapacity = 0.0;
+    double shipyardModifierPercent = 0.0;
+    std::vector<ForecastModifierBreakdownRow> shipyardModifierBreakdown;
     double accumulatedBuildPoints = 0.0;
     double buildPointsRemaining = 0.0;
     ProcessedMaterialSet requiredMaterialsRemaining;
@@ -141,6 +154,8 @@ struct FleetFuelForecast {
     double fuelCapacity = 0.0;
     double fuelPercent = 0.0;
     double currentRange = 0.0;
+    double fuelEfficiencyModifierPercent = 0.0;
+    std::vector<ForecastModifierBreakdownRow> fuelModifierBreakdown;
     std::string explanation;
 };
 

@@ -434,6 +434,122 @@ void addScoreRow(std::vector<AppointmentScoreBreakdownRow>& rows, const std::str
     };
 }
 
+struct AppointmentModifierDetails {
+    double modifier = 0.0;
+    PersonId personId{};
+    std::string personName;
+    std::vector<AppointmentModifierBreakdownRow> breakdown;
+};
+
+[[nodiscard]] std::string competencyName(const PersonnelCompetency competency) {
+    switch (competency) {
+    case PersonnelCompetency::Logistics:
+        return "Logistics";
+    case PersonnelCompetency::Industry:
+        return "Industry";
+    case PersonnelCompetency::Survey:
+        return "Survey";
+    case PersonnelCompetency::Command:
+        return "Command";
+    case PersonnelCompetency::Administration:
+        return "Administration";
+    case PersonnelCompetency::Engineering:
+        return "Engineering";
+    case PersonnelCompetency::Intelligence:
+        return "Intelligence";
+    case PersonnelCompetency::CrisisManagement:
+        return "Crisis Management";
+    }
+
+    return "Unknown";
+}
+
+void addModifierRow(std::vector<AppointmentModifierBreakdownRow>& rows, const std::string& label, const double fraction) {
+    rows.push_back(AppointmentModifierBreakdownRow{.label = label, .percent = fraction * 100.0});
+}
+
+[[nodiscard]] const Appointment* activeAppointmentFor(const GameState& state,
+                                                      const AppointmentRole role,
+                                                      const AppointmentScopeType scopeType,
+                                                      const std::int64_t scopeId) noexcept {
+    const auto it = std::find_if(state.appointments.begin(), state.appointments.end(), [role, scopeType, scopeId](const Appointment& appointment) {
+        return appointment.role == role && appointment.scopeType == scopeType && appointment.scopeId == scopeId;
+    });
+    return it == state.appointments.end() ? nullptr : &(*it);
+}
+
+[[nodiscard]] std::optional<AppointmentModifierDetails> appointmentModifierDetailsFor(const GameState& state,
+                                                                                      const AppointmentRole role,
+                                                                                      const AppointmentScopeType scopeType,
+                                                                                      const std::int64_t scopeId) {
+    const Appointment* appointment = activeAppointmentFor(state, role, scopeType, scopeId);
+    if (appointment == nullptr) {
+        return std::nullopt;
+    }
+
+    const Person* person = findById(state.people, appointment->personId);
+    if (person == nullptr) {
+        return std::nullopt;
+    }
+
+    const AppointmentEffectProfile profile = appointmentEffectProfile(role);
+    std::vector<AppointmentModifierBreakdownRow> breakdown;
+    breakdown.reserve(8);
+
+    const double primary = static_cast<double>(competencyValue(person->competencies, profile.primary)) * kAppointmentPrimaryCompetencyWeight;
+    const double secondary = static_cast<double>(competencyValue(person->competencies, profile.secondary)) * kAppointmentSecondaryCompetencyWeight;
+    const double seniority = static_cast<double>(person->seniorityLevel) * kAppointmentSeniorityWeight;
+    const double successes = static_cast<double>(person->serviceRecord.successfulAssignments) * kAppointmentSuccessWeight;
+    const double failures = static_cast<double>(person->serviceRecord.failedAssignments) * kAppointmentFailurePenalty;
+    const double commendations = static_cast<double>(person->serviceRecord.commendations) * kAppointmentCommendationWeight;
+    const double controversies = static_cast<double>(person->serviceRecord.controversies) * kAppointmentControversyPenalty;
+
+    addModifierRow(breakdown, competencyName(profile.primary) + " primary competency", primary);
+    addModifierRow(breakdown, competencyName(profile.secondary) + " secondary competency", secondary);
+    addModifierRow(breakdown, "Seniority", seniority);
+    addModifierRow(breakdown, "Successful assignments", successes);
+    addModifierRow(breakdown, "Failed assignments", failures);
+    addModifierRow(breakdown, "Commendations", commendations);
+    addModifierRow(breakdown, "Controversies", controversies);
+
+    const double rawModifier = primary + secondary + seniority + successes + failures + commendations + controversies;
+    const double modifier = clampAppointmentModifier(rawModifier);
+    addModifierRow(breakdown, "Cap adjustment", modifier - rawModifier);
+
+    return AppointmentModifierDetails{
+        .modifier = modifier,
+        .personId = person->id,
+        .personName = person->name,
+        .breakdown = std::move(breakdown)
+    };
+}
+
+[[nodiscard]] double appointmentModifierFor(const GameState& state,
+                                            const AppointmentRole role,
+                                            const AppointmentScopeType scopeType,
+                                            const std::int64_t scopeId) {
+    const std::optional<AppointmentModifierDetails> details = appointmentModifierDetailsFor(state, role, scopeType, scopeId);
+    return details.has_value() ? details->modifier : 0.0;
+}
+
+[[nodiscard]] double effectiveShipyardCapacity(const GameState& state, const Colony& colony) {
+    return std::max(0.0, colony.shipyardCapacity * (1.0 + appointmentModifierFor(
+        state, AppointmentRole::ShipyardDirector, AppointmentScopeType::Colony, colony.id.value)));
+}
+
+[[nodiscard]] double adjustedMoveFuelCost(const GameState& state,
+                                          const Fleet& fleet,
+                                          const BodyId originBodyId,
+                                          const BodyId destinationBodyId) {
+    const double modifier = appointmentModifierFor(state, AppointmentRole::FleetCommander, AppointmentScopeType::Fleet, fleet.id.value);
+    return std::max(0.0, moveFuelCost(state, originBodyId, destinationBodyId) * (1.0 - modifier));
+}
+
+[[nodiscard]] double effectiveFuelRange(const double currentFuel, const double fuelEfficiencyModifier) noexcept {
+    const double costMultiplier = std::max(kFuelComparisonEpsilon, 1.0 - fuelEfficiencyModifier);
+    return currentFuel / (kPrototypeFuelPerMapUnit * costMultiplier);
+}
+
 [[nodiscard]] std::string processingPolicyName(const ProcessingPolicy policy) {
     switch (policy) {
     case ProcessingPolicy::Balanced:
@@ -563,6 +679,16 @@ void addProcessingWeight(ProcessingShares& weights, const ProcessedMaterial mate
         });
     }
 
+    return summaries;
+}
+
+[[nodiscard]] std::vector<AppointmentModifierBreakdownRow> summarizeForecastModifierBreakdown(
+    const std::vector<ForecastModifierBreakdownRow>& rows) {
+    std::vector<AppointmentModifierBreakdownRow> summaries;
+    summaries.reserve(rows.size());
+    for (const ForecastModifierBreakdownRow& row : rows) {
+        summaries.push_back(AppointmentModifierBreakdownRow{.label = row.label, .percent = row.percent});
+    }
     return summaries;
 }
 
@@ -706,6 +832,12 @@ std::vector<ColonySummary> SimulationQueries::colonies() const {
             .effectiveProcessingAllocations = summarizeProcessingWeights(processingWeightsForPolicy(colony, colony.processingPolicy)),
             .processedStockpiles = summarizeProcessedStockpiles(colony),
             .shipyardCapacity = colony.shipyardCapacity,
+            .effectiveShipyardCapacity = effectiveShipyardCapacity(state, colony),
+            .shipyardModifierPercent = appointmentModifierFor(
+                state, AppointmentRole::ShipyardDirector, AppointmentScopeType::Colony, colony.id.value) * 100.0,
+            .shipyardModifierBreakdown = appointmentModifierDetailsFor(
+                state, AppointmentRole::ShipyardDirector, AppointmentScopeType::Colony, colony.id.value)
+                .value_or(AppointmentModifierDetails{}).breakdown,
             .totalRawStockpile = totalMinerals(colony.stockpile),
             .totalProcessedStockpile = totalProcessedMaterials(colony.processedStockpile)
         });
@@ -757,6 +889,9 @@ std::vector<ProductionBacklogSummary> SimulationQueries::productionBacklog() con
             .shipsRemaining = row.shipsRemaining,
             .accumulatedBuildPoints = row.accumulatedBuildPoints,
             .buildPointsRemaining = row.buildPointsRemaining,
+            .effectiveShipyardCapacity = row.effectiveShipyardCapacity,
+            .shipyardModifierPercent = row.shipyardModifierPercent,
+            .shipyardModifierBreakdown = summarizeForecastModifierBreakdown(row.shipyardModifierBreakdown),
             .requiredMaterialsRemaining = summarizeMaterialRequirements(row.requiredMaterialsRemaining),
             .etaDays = row.etaDays,
             .blockingMaterialName = row.blockingMaterialName,
@@ -806,7 +941,7 @@ std::vector<FleetSummary> SimulationQueries::fleets() const {
             const std::int64_t startDay = nextStartDay;
             const std::int64_t arrivalDay = startDay + kPrototypeQueuedMoveDurationDays;
             const double fuelCost = order.targetBodyId.has_value()
-                ? moveFuelCost(state, projectedOrigin, *order.targetBodyId)
+                ? adjustedMoveFuelCost(state, fleet, projectedOrigin, *order.targetBodyId)
                 : 0.0;
             projectedFuelRemaining -= fuelCost;
 
@@ -836,6 +971,9 @@ std::vector<FleetSummary> SimulationQueries::fleets() const {
 
         const int totalRouteDurationDays = static_cast<int>(std::max<std::int64_t>(0, nextStartDay - currentDay));
         const std::int64_t activeArrivalDay = hasActiveOrder ? currentDay + activeOrderEtaDays : currentDay;
+        const std::optional<AppointmentModifierDetails> fleetCommanderModifier = appointmentModifierDetailsFor(
+            state, AppointmentRole::FleetCommander, AppointmentScopeType::Fleet, fleet.id.value);
+        const double fuelEfficiencyModifier = fleetCommanderModifier.has_value() ? fleetCommanderModifier->modifier : 0.0;
 
         summaries.push_back(FleetSummary{
             .id = fleet.id,
@@ -856,7 +994,11 @@ std::vector<FleetSummary> SimulationQueries::fleets() const {
             .currentFuel = fuel.currentFuel,
             .fuelCapacity = fuel.fuelCapacity,
             .fuelPercent = fuel.fuelCapacity <= kFuelComparisonEpsilon ? 0.0 : (fuel.currentFuel * 100.0 / fuel.fuelCapacity),
-            .currentRange = fuel.currentFuel / kPrototypeFuelPerMapUnit,
+            .currentRange = effectiveFuelRange(fuel.currentFuel, fuelEfficiencyModifier),
+            .fuelEfficiencyModifierPercent = fuelEfficiencyModifier * 100.0,
+            .fuelModifierBreakdown = fleetCommanderModifier.has_value()
+                ? fleetCommanderModifier->breakdown
+                : std::vector<AppointmentModifierBreakdownRow>{},
             .activeOrderEtaDays = hasActiveOrder ? std::optional<int>{activeOrderEtaDays} : std::optional<int>{},
             .totalRouteDurationDays = totalRouteDurationDays,
             .activeOrderProjectedArrivalDay = activeArrivalDay,
@@ -961,6 +1103,46 @@ std::vector<AppointmentCandidateScore> SimulationQueries::appointmentCandidatesF
     return candidates;
 }
 
+std::vector<AppointmentOperationalEffectSummary> SimulationQueries::appointmentOperationalEffects() const {
+    const GameState& state = service_.state();
+    std::vector<AppointmentOperationalEffectSummary> summaries;
+
+    const auto addEffect = [&](const Appointment& appointment, const std::string& operationName, const std::string& explanation) {
+        const std::optional<AppointmentModifierDetails> details = appointmentModifierDetailsFor(
+            state, appointment.role, appointment.scopeType, appointment.scopeId);
+        if (!details.has_value()) {
+            return;
+        }
+
+        summaries.push_back(AppointmentOperationalEffectSummary{
+            .role = appointment.role,
+            .roleName = appointmentRoleName(appointment.role),
+            .scopeType = appointment.scopeType,
+            .scopeTypeName = appointmentScopeTypeName(appointment.scopeType),
+            .scopeId = appointment.scopeId,
+            .scopeName = appointmentScopeName(state, appointment.scopeType, appointment.scopeId),
+            .personId = details->personId,
+            .personName = details->personName,
+            .operationName = operationName,
+            .modifierPercent = details->modifier * 100.0,
+            .modifierBreakdown = details->breakdown,
+            .explanation = explanation
+        });
+    };
+
+    for (const Appointment& appointment : state.appointments) {
+        if (appointment.role == AppointmentRole::ShipyardDirector && appointment.scopeType == AppointmentScopeType::Colony) {
+            addEffect(appointment, "Shipyard BP/day", "Modifier applies to effective colony shipyard build points per day.");
+        } else if (appointment.role == AppointmentRole::FleetCommander && appointment.scopeType == AppointmentScopeType::Fleet) {
+            addEffect(appointment, "Fleet fuel cost", "Positive modifier reduces v1 fleet movement fuel cost.");
+        } else if (appointment.role == AppointmentRole::SurveyChief) {
+            addEffect(appointment, "Survey duration estimate", "Positive modifier is reserved for survey-duration estimates once survey operations exist.");
+        }
+    }
+
+    return summaries;
+}
+
 std::string SimulationQueries::institutionDisplayName(const InstitutionId id) const {
     return institutionName(service_.state(), id);
 }
@@ -990,11 +1172,14 @@ std::optional<FleetMovePreview> SimulationQueries::fleetMovePreview(const FleetI
         if (queuedOrder.type != FleetOrderType::MoveToBody || !queuedOrder.targetBodyId.has_value()) {
             return std::nullopt;
         }
-        queuedFuelRequired += moveFuelCost(state, projectedOrigin, *queuedOrder.targetBodyId);
+        queuedFuelRequired += adjustedMoveFuelCost(state, *fleet, projectedOrigin, *queuedOrder.targetBodyId);
         projectedOrigin = *queuedOrder.targetBodyId;
     }
 
-    const double newMoveCost = moveFuelCost(state, projectedOrigin, destinationBodyId);
+    const std::optional<AppointmentModifierDetails> fleetCommanderModifier = appointmentModifierDetailsFor(
+        state, AppointmentRole::FleetCommander, AppointmentScopeType::Fleet, fleet->id.value);
+    const double fuelEfficiencyModifier = fleetCommanderModifier.has_value() ? fleetCommanderModifier->modifier : 0.0;
+    const double newMoveCost = adjustedMoveFuelCost(state, *fleet, projectedOrigin, destinationBodyId);
     queuedFuelRequired += newMoveCost;
     const double projectedRemaining = fuel.currentFuel - queuedFuelRequired;
     const bool canAfford = projectedRemaining + kFuelComparisonEpsilon >= 0.0;
@@ -1013,6 +1198,7 @@ std::optional<FleetMovePreview> SimulationQueries::fleetMovePreview(const FleetI
         .fuelAvailable = fuel.currentFuel,
         .queuedFuelRequired = queuedFuelRequired,
         .newMoveFuelCost = newMoveCost,
+        .fuelEfficiencyModifierPercent = fuelEfficiencyModifier * 100.0,
         .projectedFuelRemaining = std::max(0.0, projectedRemaining),
         .canAfford = canAfford,
         .warningText = std::move(warning)

@@ -70,6 +70,15 @@ const deep::AppointmentScoreBreakdownRow& scoreRowByLabel(
     throw TestFailure{"expected score breakdown row was not present"};
 }
 
+
+double sumModifierRows(const std::vector<deep::AppointmentModifierBreakdownRow>& rows) {
+    double total = 0.0;
+    for (const deep::AppointmentModifierBreakdownRow& row : rows) {
+        total += row.percent;
+    }
+    return total;
+}
+
 void test_colony_summaries_resolve_body_context() {
     // Verifies that colony queries return UI-useful copies with resolved body
     // names. Prevents future panels from needing raw GameState::colonies access.
@@ -309,12 +318,11 @@ void test_appointment_candidate_service_risks_lower_score() {
 
     const deep::SimulationService riskService{std::move(baselineState)};
     const deep::SimulationQueries riskQueries{riskService};
-    const deep::AppointmentCandidateScore& riskyCandidate = candidateByName(
-        riskQueries.appointmentCandidatesFor(
-            deep::AppointmentRole::SurveyChief,
-            deep::AppointmentScopeType::Institution,
-            surveyOfficeId.value),
-        "Dr. Nia Okafor");
+    const auto riskyCandidates = riskQueries.appointmentCandidatesFor(
+        deep::AppointmentRole::SurveyChief,
+        deep::AppointmentScopeType::Institution,
+        surveyOfficeId.value);
+    const deep::AppointmentCandidateScore& riskyCandidate = candidateByName(riskyCandidates, "Dr. Nia Okafor");
 
     require(riskyCandidate.totalScore < baselineScore, "bad service record lowers candidate score");
     require(riskyCandidate.riskNotes.size() >= 2, "bad service record produces visible risk notes");
@@ -407,6 +415,73 @@ void test_appointment_candidate_tie_ordering_is_deterministic() {
     require(candidates.at(0).personName == "Alpha Senior", "equal seniority tie sorts by name");
     require(candidates.at(1).personName == "Beta Senior", "second senior candidate follows by name");
     require(candidates.at(2).personName == "Aardvark Junior", "lower seniority comes after higher seniority on tied score");
+}
+
+void test_appointment_operational_effects_are_visible_and_deterministic() {
+    // Operational-effect queries expose the same small capped modifier the sim
+    // uses, including rows that sum to the visible percentage for UI audit.
+    const deep::SimulationService service;
+    const deep::SimulationQueries queries{service};
+
+    const auto effects = queries.appointmentOperationalEffects();
+
+    bool foundShipyardDirector = false;
+    bool foundSurveyChief = false;
+    for (const deep::AppointmentOperationalEffectSummary& effect : effects) {
+        if (effect.role == deep::AppointmentRole::ShipyardDirector) {
+            foundShipyardDirector = true;
+            require(effect.operationName == "Shipyard BP/day", "shipyard director effect names the affected operation");
+            requireNear(effect.modifierPercent, 10.0, "strong shipyard director is capped at +10 percent");
+            require(!effect.modifierBreakdown.empty(), "shipyard director effect exposes breakdown rows");
+            requireNear(sumModifierRows(effect.modifierBreakdown), effect.modifierPercent,
+                        "shipyard modifier breakdown rows sum to capped modifier");
+        }
+        if (effect.role == deep::AppointmentRole::SurveyChief) {
+            foundSurveyChief = true;
+            require(effect.operationName == "Survey duration estimate", "survey chief effect is visible for future survey estimates");
+        }
+    }
+
+    require(foundShipyardDirector, "operational effects include the colony shipyard director");
+    require(foundSurveyChief, "operational effects include the survey chief estimate hook");
+}
+
+void test_weak_appointee_can_apply_small_negative_modifier() {
+    // Poorly matched service history should be visible as a small capped penalty,
+    // not a hidden or unbounded leader malus.
+    deep::GameState state = deep::createHomeSystemScenario();
+    const deep::InstitutionId continuityOfficeId = institutionIdByName(state, "Strategic Continuity Office");
+    const deep::PersonId weakPersonId{state.ids.nextPersonId++};
+    state.people.push_back(deep::Person{
+        .id = weakPersonId,
+        .name = "Temporary Clerk",
+        .institutionId = continuityOfficeId,
+        .competencies = deep::PersonCompetencies{},
+        .seniorityLevel = 0,
+        .serviceRecord = deep::PersonServiceRecord{
+            .successfulAssignments = 0,
+            .failedAssignments = 5,
+            .commendations = 0,
+            .controversies = 4
+        }
+    });
+
+    deep::SimulationService service{std::move(state)};
+    const deep::ColonyId colonyId = service.state().colonies.front().id;
+    require(service.execute(deep::AssignAppointmentCommand{
+        .role = deep::AppointmentRole::ShipyardDirector,
+        .scopeType = deep::AppointmentScopeType::Colony,
+        .scopeId = colonyId.value,
+        .personId = weakPersonId
+    }).ok, "weak shipyard director appointment is accepted before query");
+
+    const deep::SimulationQueries queries{service};
+    const auto colonies = queries.colonies();
+
+    requireNear(colonies.front().shipyardModifierPercent, -5.0, "weak appointee penalty is capped at -5 percent");
+    requireNear(colonies.front().effectiveShipyardCapacity, 95.0, "negative modifier lowers effective shipyard capacity slightly");
+    requireNear(sumModifierRows(colonies.front().shipyardModifierBreakdown), -5.0,
+                "negative modifier breakdown rows sum to capped penalty");
 }
 
 void test_ship_class_summaries_expose_build_targets() {
@@ -705,6 +780,8 @@ int main() {
         test_appointment_candidate_owner_match_breakdown_visible();
         test_appointment_candidate_breakdown_sums_to_total();
         test_appointment_candidate_tie_ordering_is_deterministic();
+        test_appointment_operational_effects_are_visible_and_deterministic();
+        test_weak_appointee_can_apply_small_negative_modifier();
         test_ship_class_summaries_expose_build_targets();
         test_fleet_summaries_resolve_location_and_order();
         test_fleet_summaries_include_queued_orders();

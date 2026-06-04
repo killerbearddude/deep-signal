@@ -17,6 +17,14 @@
 
 namespace deep {
 
+// Small appointment effect contribution row. Values are percentage points and
+// sum to the visible modifier after cap adjustment, keeping operational effects
+// auditable in UI and tests.
+struct AppointmentModifierBreakdownRow {
+    std::string label;
+    double percent = 0.0;
+};
+
 // Display-ready processing allocation row. Weights are relative and are
 // normalized by the simulation when daily processor capacity is spent.
 struct ProcessingAllocationSummary {
@@ -52,6 +60,9 @@ struct ColonySummary {
     std::vector<ProcessingAllocationSummary> effectiveProcessingAllocations;
     std::vector<ProcessedMaterialStockpileSummary> processedStockpiles;
     double shipyardCapacity = 0.0;
+    double effectiveShipyardCapacity = 0.0;
+    double shipyardModifierPercent = 0.0;
+    std::vector<AppointmentModifierBreakdownRow> shipyardModifierBreakdown;
     double totalRawStockpile = 0.0;
     double totalProcessedStockpile = 0.0;
 };
@@ -86,6 +97,9 @@ struct ProductionBacklogSummary {
     int shipsRemaining = 0;
     double accumulatedBuildPoints = 0.0;
     double buildPointsRemaining = 0.0;
+    double effectiveShipyardCapacity = 0.0;
+    double shipyardModifierPercent = 0.0;
+    std::vector<AppointmentModifierBreakdownRow> shipyardModifierBreakdown;
     // Nonzero remaining processed-material requirements for the incomplete
     // portion of this order, suitable for direct display in production tables.
     std::vector<ProcessedMaterialStockpileSummary> requiredMaterialsRemaining;
@@ -155,6 +169,23 @@ struct AppointmentCandidateScore {
     std::vector<std::string> tradeoffNotes;
 };
 
+// Read-only effect row for current appointments that have v1 operational impact.
+// It explains the small capped modifier without applying any automatic changes.
+struct AppointmentOperationalEffectSummary {
+    AppointmentRole role = AppointmentRole::InstitutionHead;
+    std::string roleName;
+    AppointmentScopeType scopeType = AppointmentScopeType::Institution;
+    std::string scopeTypeName;
+    std::int64_t scopeId = 0;
+    std::string scopeName;
+    PersonId personId;
+    std::string personName;
+    std::string operationName;
+    double modifierPercent = 0.0;
+    std::vector<AppointmentModifierBreakdownRow> modifierBreakdown;
+    std::string explanation;
+};
+
 // Display-ready queued fleet order row. The queue position is one-based so UI
 // tables can present the same ordering players expect from command queues.
 struct FleetQueuedOrderSummary {
@@ -195,6 +226,8 @@ struct FleetSummary {
     double fuelCapacity = 0.0;
     double fuelPercent = 0.0;
     double currentRange = 0.0;
+    double fuelEfficiencyModifierPercent = 0.0;
+    std::vector<AppointmentModifierBreakdownRow> fuelModifierBreakdown;
 
     // ETA fields summarize the active order plus queued moves from the current
     // simulation day. They are zero when the fleet has no active/queued orders.
@@ -215,6 +248,7 @@ struct FleetMovePreview {
     double fuelAvailable = 0.0;
     double queuedFuelRequired = 0.0;
     double newMoveFuelCost = 0.0;
+    double fuelEfficiencyModifierPercent = 0.0;
     double projectedFuelRemaining = 0.0;
     bool canAfford = false;
     std::string warningText;
@@ -307,6 +341,9 @@ public:
         AppointmentRole role,
         AppointmentScopeType scopeType,
         std::int64_t scopeId) const;
+
+    // Returns current appointment effects as explainable, capped modifiers.
+    [[nodiscard]] std::vector<AppointmentOperationalEffectSummary> appointmentOperationalEffects() const;
 
     // Returns a display name for an institution reference. Unknown IDs produce a
     // stable placeholder so UI/tests can show broken references clearly.
