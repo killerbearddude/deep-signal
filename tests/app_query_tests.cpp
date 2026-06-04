@@ -1,6 +1,7 @@
 #include "app/SimulationQueries.h"
 #include "app/SimulationService.h"
 #include "sim/Commands.h"
+#include "sim/ScenarioFactory.h"
 
 // Self-contained regression tests for app-layer read-only query DTOs.
 // These tests protect the future UI boundary from drifting back toward direct
@@ -13,6 +14,8 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <utility>
+#include <vector>
 
 namespace {
 
@@ -32,6 +35,39 @@ void requireNear(const double actual, const double expected, const std::string_v
     if (std::abs(actual - expected) > 1.0e-6) {
         throw TestFailure{message};
     }
+}
+
+
+
+deep::InstitutionId institutionIdByName(const deep::GameState& state, const std::string_view name) {
+    for (const deep::Institution& institution : state.institutions) {
+        if (institution.name == name) {
+            return institution.id;
+        }
+    }
+    throw TestFailure{"expected institution was not present in scenario"};
+}
+
+const deep::AppointmentCandidateScore& candidateByName(
+    const std::vector<deep::AppointmentCandidateScore>& candidates,
+    const std::string_view name) {
+    for (const deep::AppointmentCandidateScore& candidate : candidates) {
+        if (candidate.personName == name) {
+            return candidate;
+        }
+    }
+    throw TestFailure{"expected appointment candidate was not present"};
+}
+
+const deep::AppointmentScoreBreakdownRow& scoreRowByLabel(
+    const deep::AppointmentCandidateScore& candidate,
+    const std::string_view label) {
+    for (const deep::AppointmentScoreBreakdownRow& row : candidate.scoreBreakdown) {
+        if (row.label == label) {
+            return row;
+        }
+    }
+    throw TestFailure{"expected score breakdown row was not present"};
 }
 
 void test_colony_summaries_resolve_body_context() {
@@ -224,6 +260,153 @@ void test_appointment_summaries_resolve_people_and_scopes() {
 
     require(foundShipyardDirector, "appointment summaries include reassigned shipyard director slot");
     require(foundInstitutionHead, "appointment summaries include starter institution-head slot");
+}
+
+
+
+void test_appointment_candidates_rank_matching_competency_first() {
+    // Survey-chief scoring should favor the role's primary/secondary
+    // competencies without mutating appointment state or auto-selecting anyone.
+    deep::GameState state = deep::createHomeSystemScenario();
+    const deep::InstitutionId surveyOfficeId = institutionIdByName(state, "Survey Office");
+    const deep::SimulationService service{std::move(state)};
+    const deep::SimulationQueries queries{service};
+
+    const auto candidates = queries.appointmentCandidatesFor(
+        deep::AppointmentRole::SurveyChief,
+        deep::AppointmentScopeType::Institution,
+        surveyOfficeId.value);
+
+    require(!candidates.empty(), "survey-chief candidate query returns personnel rows");
+    require(candidates.front().personName == "Dr. Nia Okafor",
+            "best survey-chief candidate ranks first for matching competencies");
+    require(candidates.front().role == deep::AppointmentRole::SurveyChief,
+            "candidate score preserves requested role enum");
+    require(candidates.front().roleName == "Survey Chief", "candidate score resolves role display name");
+    require(!candidates.front().scoreBreakdown.empty(), "candidate score exposes explainable breakdown rows");
+}
+
+void test_appointment_candidate_service_risks_lower_score() {
+    // A poor service record should reduce the same person's score and expose
+    // visible risk notes rather than hiding penalties in a single opaque number.
+    deep::GameState baselineState = deep::createHomeSystemScenario();
+    const deep::InstitutionId surveyOfficeId = institutionIdByName(baselineState, "Survey Office");
+    const deep::SimulationService baselineService{baselineState};
+    const deep::SimulationQueries baselineQueries{baselineService};
+    const double baselineScore = candidateByName(
+        baselineQueries.appointmentCandidatesFor(
+            deep::AppointmentRole::SurveyChief,
+            deep::AppointmentScopeType::Institution,
+            surveyOfficeId.value),
+        "Dr. Nia Okafor").totalScore;
+
+    for (deep::Person& person : baselineState.people) {
+        if (person.name == "Dr. Nia Okafor") {
+            person.serviceRecord.failedAssignments += 30;
+            person.serviceRecord.controversies += 20;
+        }
+    }
+
+    const deep::SimulationService riskService{std::move(baselineState)};
+    const deep::SimulationQueries riskQueries{riskService};
+    const deep::AppointmentCandidateScore& riskyCandidate = candidateByName(
+        riskQueries.appointmentCandidatesFor(
+            deep::AppointmentRole::SurveyChief,
+            deep::AppointmentScopeType::Institution,
+            surveyOfficeId.value),
+        "Dr. Nia Okafor");
+
+    require(riskyCandidate.totalScore < baselineScore, "bad service record lowers candidate score");
+    require(riskyCandidate.riskNotes.size() >= 2, "bad service record produces visible risk notes");
+}
+
+void test_appointment_candidate_owner_match_breakdown_visible() {
+    // Institution fit is deliberately a visible score component so the UI can
+    // explain why a local institutional candidate is preferred or penalized.
+    const deep::SimulationService service;
+    const deep::SimulationQueries queries{service};
+    const deep::ColonyId terraColonyId = service.state().colonies.front().id;
+
+    const auto candidates = queries.appointmentCandidatesFor(
+        deep::AppointmentRole::ColonyAdministrator,
+        deep::AppointmentScopeType::Colony,
+        terraColonyId.value);
+    const deep::AppointmentCandidateScore& mara = candidateByName(candidates, "Director Mara Chen");
+    const deep::AppointmentScoreBreakdownRow& ownerMatch = scoreRowByLabel(mara, "Institution owner match");
+
+    requireNear(ownerMatch.value, 10.0, "owner institution match adds a visible score component");
+}
+
+void test_appointment_candidate_breakdown_sums_to_total() {
+    // The breakdown must be auditable: summing the displayed rows should produce
+    // the same total used for sorting candidates.
+    const deep::SimulationService service;
+    const deep::SimulationQueries queries{service};
+    const deep::InstitutionId continuityOfficeId = institutionIdByName(service.state(), "Strategic Continuity Office");
+
+    const auto candidates = queries.appointmentCandidatesFor(
+        deep::AppointmentRole::InstitutionHead,
+        deep::AppointmentScopeType::Institution,
+        continuityOfficeId.value);
+
+    double displayedTotal = 0.0;
+    for (const deep::AppointmentScoreBreakdownRow& row : candidates.front().scoreBreakdown) {
+        displayedTotal += row.value;
+    }
+
+    requireNear(displayedTotal, candidates.front().totalScore, "score breakdown rows sum to total score");
+}
+
+void test_appointment_candidate_tie_ordering_is_deterministic() {
+    // Candidates with equal totals sort by seniority first, then name and ID.
+    // The junior candidate has an extra success to tie the total, so this test
+    // would fail if sorting used only score and name.
+    deep::GameState state;
+    const deep::InstitutionId institutionId{state.ids.nextInstitutionId++};
+    state.institutions.push_back(deep::Institution{
+        .id = institutionId,
+        .name = "Test Institution",
+        .type = deep::InstitutionType::ContinuityOffice
+    });
+
+    state.people.push_back(deep::Person{
+        .id = deep::PersonId{state.ids.nextPersonId++},
+        .name = "Beta Senior",
+        .institutionId = institutionId,
+        .competencies = deep::PersonCompetencies{},
+        .seniorityLevel = 2,
+        .serviceRecord = deep::PersonServiceRecord{}
+    });
+    state.people.push_back(deep::Person{
+        .id = deep::PersonId{state.ids.nextPersonId++},
+        .name = "Alpha Senior",
+        .institutionId = institutionId,
+        .competencies = deep::PersonCompetencies{},
+        .seniorityLevel = 2,
+        .serviceRecord = deep::PersonServiceRecord{}
+    });
+    state.people.push_back(deep::Person{
+        .id = deep::PersonId{state.ids.nextPersonId++},
+        .name = "Aardvark Junior",
+        .institutionId = institutionId,
+        .competencies = deep::PersonCompetencies{},
+        .seniorityLevel = 1,
+        .serviceRecord = deep::PersonServiceRecord{.successfulAssignments = 1}
+    });
+
+    const deep::SimulationService service{std::move(state)};
+    const deep::SimulationQueries queries{service};
+    const auto candidates = queries.appointmentCandidatesFor(
+        deep::AppointmentRole::InstitutionHead,
+        deep::AppointmentScopeType::Institution,
+        institutionId.value);
+
+    require(candidates.size() == 3, "tie-ordering fixture returns all candidates");
+    requireNear(candidates.at(0).totalScore, candidates.at(1).totalScore, "senior candidates tie on total score");
+    requireNear(candidates.at(1).totalScore, candidates.at(2).totalScore, "junior candidate ties on total score");
+    require(candidates.at(0).personName == "Alpha Senior", "equal seniority tie sorts by name");
+    require(candidates.at(1).personName == "Beta Senior", "second senior candidate follows by name");
+    require(candidates.at(2).personName == "Aardvark Junior", "lower seniority comes after higher seniority on tied score");
 }
 
 void test_ship_class_summaries_expose_build_targets() {
@@ -517,6 +700,11 @@ int main() {
         test_production_backlog_summaries_expose_queue_eta();
         test_personnel_summaries_resolve_institution_context();
         test_appointment_summaries_resolve_people_and_scopes();
+        test_appointment_candidates_rank_matching_competency_first();
+        test_appointment_candidate_service_risks_lower_score();
+        test_appointment_candidate_owner_match_breakdown_visible();
+        test_appointment_candidate_breakdown_sums_to_total();
+        test_appointment_candidate_tie_ordering_is_deterministic();
         test_ship_class_summaries_expose_build_targets();
         test_fleet_summaries_resolve_location_and_order();
         test_fleet_summaries_include_queued_orders();

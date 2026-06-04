@@ -223,6 +223,217 @@ struct FleetFuelTotals {
     return "<unknown scope>";
 }
 
+
+// Internal competency labels keep appointment scoring role weights explicit while
+// preserving the public PersonCompetencies aggregate as simple saved data.
+enum class CandidateCompetency {
+    Logistics,
+    Industry,
+    Survey,
+    Command,
+    Administration,
+    Engineering,
+    Intelligence,
+    CrisisManagement
+};
+
+struct AppointmentRoleWeights {
+    CandidateCompetency primary = CandidateCompetency::Administration;
+    CandidateCompetency secondary = CandidateCompetency::CrisisManagement;
+};
+
+[[nodiscard]] std::string competencyName(const CandidateCompetency competency) {
+    switch (competency) {
+    case CandidateCompetency::Logistics:
+        return "Logistics";
+    case CandidateCompetency::Industry:
+        return "Industry";
+    case CandidateCompetency::Survey:
+        return "Survey";
+    case CandidateCompetency::Command:
+        return "Command";
+    case CandidateCompetency::Administration:
+        return "Administration";
+    case CandidateCompetency::Engineering:
+        return "Engineering";
+    case CandidateCompetency::Intelligence:
+        return "Intelligence";
+    case CandidateCompetency::CrisisManagement:
+        return "Crisis Management";
+    }
+
+    return "Unknown";
+}
+
+[[nodiscard]] int competencyValue(const PersonCompetencies& competencies, const CandidateCompetency competency) noexcept {
+    switch (competency) {
+    case CandidateCompetency::Logistics:
+        return competencies.logistics;
+    case CandidateCompetency::Industry:
+        return competencies.industry;
+    case CandidateCompetency::Survey:
+        return competencies.survey;
+    case CandidateCompetency::Command:
+        return competencies.command;
+    case CandidateCompetency::Administration:
+        return competencies.administration;
+    case CandidateCompetency::Engineering:
+        return competencies.engineering;
+    case CandidateCompetency::Intelligence:
+        return competencies.intelligence;
+    case CandidateCompetency::CrisisManagement:
+        return competencies.crisisManagement;
+    }
+
+    return 0;
+}
+
+[[nodiscard]] AppointmentRoleWeights roleWeights(const AppointmentRole role) noexcept {
+    switch (role) {
+    case AppointmentRole::FleetCommander:
+        return AppointmentRoleWeights{.primary = CandidateCompetency::Command, .secondary = CandidateCompetency::Logistics};
+    case AppointmentRole::ColonyAdministrator:
+        return AppointmentRoleWeights{.primary = CandidateCompetency::Administration, .secondary = CandidateCompetency::CrisisManagement};
+    case AppointmentRole::ShipyardDirector:
+        return AppointmentRoleWeights{.primary = CandidateCompetency::Industry, .secondary = CandidateCompetency::Engineering};
+    case AppointmentRole::SurveyChief:
+        return AppointmentRoleWeights{.primary = CandidateCompetency::Survey, .secondary = CandidateCompetency::Intelligence};
+    case AppointmentRole::LogisticsCoordinator:
+        return AppointmentRoleWeights{.primary = CandidateCompetency::Logistics, .secondary = CandidateCompetency::Administration};
+    case AppointmentRole::InstitutionHead:
+        return AppointmentRoleWeights{.primary = CandidateCompetency::Administration, .secondary = CandidateCompetency::CrisisManagement};
+    }
+
+    return AppointmentRoleWeights{};
+}
+
+[[nodiscard]] std::optional<InstitutionId> appointmentOwnerInstitution(
+    const GameState& state,
+    const AppointmentScopeType scopeType,
+    const std::int64_t scopeId) {
+    switch (scopeType) {
+    case AppointmentScopeType::Fleet:
+        if (const Fleet* fleet = findById(state.fleets, FleetId{scopeId}); fleet != nullptr) {
+            return fleet->ownerInstitutionId;
+        }
+        return std::nullopt;
+    case AppointmentScopeType::Colony:
+        if (const Colony* colony = findById(state.colonies, ColonyId{scopeId}); colony != nullptr) {
+            return colony->ownerInstitutionId;
+        }
+        return std::nullopt;
+    case AppointmentScopeType::Institution:
+        if (findById(state.institutions, InstitutionId{scopeId}) != nullptr) {
+            return InstitutionId{scopeId};
+        }
+        return std::nullopt;
+    }
+
+    return std::nullopt;
+}
+
+[[nodiscard]] bool appointmentScopeExists(
+    const GameState& state,
+    const AppointmentScopeType scopeType,
+    const std::int64_t scopeId) noexcept {
+    switch (scopeType) {
+    case AppointmentScopeType::Fleet:
+        return findById(state.fleets, FleetId{scopeId}) != nullptr;
+    case AppointmentScopeType::Colony:
+        return findById(state.colonies, ColonyId{scopeId}) != nullptr;
+    case AppointmentScopeType::Institution:
+        return findById(state.institutions, InstitutionId{scopeId}) != nullptr;
+    }
+
+    return false;
+}
+
+void addScoreRow(std::vector<AppointmentScoreBreakdownRow>& rows, const std::string& label, const double value) {
+    rows.push_back(AppointmentScoreBreakdownRow{.label = label, .value = value});
+}
+
+[[nodiscard]] double sumScoreRows(const std::vector<AppointmentScoreBreakdownRow>& rows) noexcept {
+    double total = 0.0;
+    for (const AppointmentScoreBreakdownRow& row : rows) {
+        total += row.value;
+    }
+    return total;
+}
+
+[[nodiscard]] AppointmentCandidateScore scoreAppointmentCandidate(
+    const GameState& state,
+    const Person& person,
+    const AppointmentRole role,
+    const std::optional<InstitutionId> ownerInstitutionId) {
+    constexpr double kPrimaryCompetencyWeight = 10.0;
+    constexpr double kSecondaryCompetencyWeight = 5.0;
+    constexpr double kSeniorityWeight = 2.0;
+    constexpr double kSuccessfulAssignmentWeight = 2.0;
+    constexpr double kFailedAssignmentPenalty = -4.0;
+    constexpr double kCommendationWeight = 3.0;
+    constexpr double kControversyPenalty = -3.0;
+    constexpr double kInstitutionOwnerMatchBonus = 10.0;
+
+    const AppointmentRoleWeights weights = roleWeights(role);
+    std::vector<AppointmentScoreBreakdownRow> breakdown;
+    breakdown.reserve(8);
+
+    addScoreRow(
+        breakdown,
+        competencyName(weights.primary) + " primary competency",
+        static_cast<double>(competencyValue(person.competencies, weights.primary)) * kPrimaryCompetencyWeight);
+    addScoreRow(
+        breakdown,
+        competencyName(weights.secondary) + " secondary competency",
+        static_cast<double>(competencyValue(person.competencies, weights.secondary)) * kSecondaryCompetencyWeight);
+    addScoreRow(breakdown, "Seniority", static_cast<double>(person.seniorityLevel) * kSeniorityWeight);
+    addScoreRow(
+        breakdown,
+        "Successful assignments",
+        static_cast<double>(person.serviceRecord.successfulAssignments) * kSuccessfulAssignmentWeight);
+    addScoreRow(
+        breakdown,
+        "Failed assignments",
+        static_cast<double>(person.serviceRecord.failedAssignments) * kFailedAssignmentPenalty);
+    addScoreRow(breakdown, "Commendations", static_cast<double>(person.serviceRecord.commendations) * kCommendationWeight);
+    addScoreRow(breakdown, "Controversies", static_cast<double>(person.serviceRecord.controversies) * kControversyPenalty);
+
+    std::vector<std::string> riskNotes;
+    std::vector<std::string> tradeoffNotes;
+
+    if (ownerInstitutionId.has_value() && person.institutionId == *ownerInstitutionId) {
+        addScoreRow(breakdown, "Institution owner match", kInstitutionOwnerMatchBonus);
+    } else {
+        addScoreRow(breakdown, "Institution owner match", 0.0);
+        if (ownerInstitutionId.has_value()) {
+            tradeoffNotes.push_back(
+                "Institution mismatch: " + institutionName(state, person.institutionId) +
+                " vs " + institutionName(state, *ownerInstitutionId));
+        } else {
+            tradeoffNotes.push_back("No owner institution context for this appointment scope");
+        }
+    }
+
+    if (person.serviceRecord.failedAssignments > 0) {
+        riskNotes.push_back("Failed assignments: " + std::to_string(person.serviceRecord.failedAssignments));
+    }
+    if (person.serviceRecord.controversies > 0) {
+        riskNotes.push_back("Controversies: " + std::to_string(person.serviceRecord.controversies));
+    }
+
+    return AppointmentCandidateScore{
+        .personId = person.id,
+        .personName = person.name,
+        .institutionName = institutionName(state, person.institutionId),
+        .role = role,
+        .roleName = appointmentRoleName(role),
+        .totalScore = sumScoreRows(breakdown),
+        .scoreBreakdown = std::move(breakdown),
+        .riskNotes = std::move(riskNotes),
+        .tradeoffNotes = std::move(tradeoffNotes)
+    };
+}
+
 [[nodiscard]] std::string processingPolicyName(const ProcessingPolicy policy) {
     switch (policy) {
     case ProcessingPolicy::Balanced:
@@ -702,6 +913,52 @@ std::vector<AppointmentSummary> SimulationQueries::appointments() const {
     }
 
     return summaries;
+}
+
+
+
+std::vector<AppointmentCandidateScore> SimulationQueries::appointmentCandidatesFor(
+    const AppointmentRole role,
+    const AppointmentScopeType scopeType,
+    const std::int64_t scopeId) const {
+    const GameState& state = service_.state();
+    if (!appointmentScopeExists(state, scopeType, scopeId)) {
+        return {};
+    }
+
+    const std::optional<InstitutionId> ownerInstitutionId = appointmentOwnerInstitution(state, scopeType, scopeId);
+    std::vector<AppointmentCandidateScore> candidates;
+    candidates.reserve(state.people.size());
+
+    for (const Person& person : state.people) {
+        // Validation guarantees saved/current games reference existing
+        // institutions. The guard keeps query output robust for test-built or
+        // partially loaded states that have not passed validation yet.
+        if (findById(state.institutions, person.institutionId) == nullptr) {
+            continue;
+        }
+        candidates.push_back(scoreAppointmentCandidate(state, person, role, ownerInstitutionId));
+    }
+
+    std::sort(candidates.begin(), candidates.end(), [&state](const AppointmentCandidateScore& lhs, const AppointmentCandidateScore& rhs) {
+        if (lhs.totalScore != rhs.totalScore) {
+            return lhs.totalScore > rhs.totalScore;
+        }
+
+        const Person* lhsPerson = findById(state.people, lhs.personId);
+        const Person* rhsPerson = findById(state.people, rhs.personId);
+        const int lhsSeniority = lhsPerson == nullptr ? 0 : lhsPerson->seniorityLevel;
+        const int rhsSeniority = rhsPerson == nullptr ? 0 : rhsPerson->seniorityLevel;
+        if (lhsSeniority != rhsSeniority) {
+            return lhsSeniority > rhsSeniority;
+        }
+        if (lhs.personName != rhs.personName) {
+            return lhs.personName < rhs.personName;
+        }
+        return lhs.personId.value < rhs.personId.value;
+    });
+
+    return candidates;
 }
 
 std::string SimulationQueries::institutionDisplayName(const InstitutionId id) const {

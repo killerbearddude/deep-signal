@@ -133,6 +133,28 @@ struct AppointmentSummary {
     std::int64_t appointedDay = 0;
 };
 
+
+// One explainable score contribution used by appointment candidate ranking.
+// Values may be negative for service risks; totalScore is the sum of rows.
+struct AppointmentScoreBreakdownRow {
+    std::string label;
+    double value = 0.0;
+};
+
+// Read-only candidate score for a possible appointment. This DTO supports
+// player choice only: queries rank candidates but never assign anyone.
+struct AppointmentCandidateScore {
+    PersonId personId;
+    std::string personName;
+    std::string institutionName;
+    AppointmentRole role = AppointmentRole::InstitutionHead;
+    std::string roleName;
+    double totalScore = 0.0;
+    std::vector<AppointmentScoreBreakdownRow> scoreBreakdown;
+    std::vector<std::string> riskNotes;
+    std::vector<std::string> tradeoffNotes;
+};
+
 // Display-ready queued fleet order row. The queue position is one-based so UI
 // tables can present the same ordering players expect from command queues.
 struct FleetQueuedOrderSummary {
@@ -278,6 +300,13 @@ public:
 
     // Returns current appointment rows with resolved person and scope names.
     [[nodiscard]] std::vector<AppointmentSummary> appointments() const;
+
+    // Returns ranked, explainable candidates for an appointment slot. The query
+    // is deterministic and non-mutating; Simulation still owns appointment writes.
+    [[nodiscard]] std::vector<AppointmentCandidateScore> appointmentCandidatesFor(
+        AppointmentRole role,
+        AppointmentScopeType scopeType,
+        std::int64_t scopeId) const;
 
     // Returns a display name for an institution reference. Unknown IDs produce a
     // stable placeholder so UI/tests can show broken references clearly.
