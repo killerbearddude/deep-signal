@@ -1,6 +1,6 @@
 #include "save/SaveGameRepository.h"
 
-// Implements schema v5 save/load mapping for the headless simulation state.
+// Implements schema v6 save/load mapping for the headless simulation state.
 // The repository uses prepared statements and transactions throughout; raw SQL
 // execution is limited to static schema/table maintenance statements with no data.
 
@@ -42,7 +42,7 @@ template <typename EnumT>
     return static_cast<std::int64_t>(value);
 }
 
-// Returns true when a persisted enum ordinal is part of the current schema v5
+// Returns true when a persisted enum ordinal is part of the current schema v6
 // contract. Keep this explicit instead of raw-casting database values; SQLite
 // files are inspectable and may be hand-edited or corrupted.
 template <typename EnumT>
@@ -149,7 +149,7 @@ void reuse(Statement& stmt) {
 }
 
 void clearExistingSave(Database& db) {
-    // Delete child tables first because schema v5 intentionally uses explicit
+    // Delete child tables first because schema v6 intentionally uses explicit
     // foreign keys rather than ON DELETE CASCADE. This makes destructive save
     // behavior visible and easy to audit.
     db.execute(R"sql(
@@ -165,6 +165,7 @@ void clearExistingSave(Database& db) {
         DELETE FROM colony_minerals;
         DELETE FROM mineral_deposits;
         DELETE FROM colonies;
+        DELETE FROM people;
         DELETE FROM institutions;
         DELETE FROM bodies;
         DELETE FROM star_systems;
@@ -204,6 +205,7 @@ void saveIdCounters(Database& db, const IdCounters& ids) {
     insertCounter("next_body_id", ids.nextBodyId);
     insertCounter("next_colony_id", ids.nextColonyId);
     insertCounter("next_institution_id", ids.nextInstitutionId);
+    insertCounter("next_person_id", ids.nextPersonId);
     insertCounter("next_ship_class_id", ids.nextShipClassId);
     insertCounter("next_shipyard_order_id", ids.nextShipyardOrderId);
     insertCounter("next_ship_id", ids.nextShipId);
@@ -227,6 +229,38 @@ void saveInstitutions(Database& db, const GameState& state) {
         stmt.bindInt64(1, idValue(institution.id));
         stmt.bindText(2, institution.name);
         stmt.bindInt64(3, enumValue(institution.type));
+        stmt.execute();
+        reuse(stmt);
+    }
+}
+
+void savePeople(Database& db, const GameState& state) {
+    Statement stmt{db, R"sql(
+        INSERT INTO people(
+            id, name, institution_id, logistics, industry, survey, command,
+            administration, engineering, intelligence, crisis_management,
+            seniority_level, successful_assignments, failed_assignments,
+            commendations, controversies
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+    )sql"};
+
+    for (const Person& person : state.people) {
+        stmt.bindInt64(1, idValue(person.id));
+        stmt.bindText(2, person.name);
+        stmt.bindInt64(3, idValue(person.institutionId));
+        stmt.bindInt64(4, person.competencies.logistics);
+        stmt.bindInt64(5, person.competencies.industry);
+        stmt.bindInt64(6, person.competencies.survey);
+        stmt.bindInt64(7, person.competencies.command);
+        stmt.bindInt64(8, person.competencies.administration);
+        stmt.bindInt64(9, person.competencies.engineering);
+        stmt.bindInt64(10, person.competencies.intelligence);
+        stmt.bindInt64(11, person.competencies.crisisManagement);
+        stmt.bindInt64(12, person.seniorityLevel);
+        stmt.bindInt64(13, person.serviceRecord.successfulAssignments);
+        stmt.bindInt64(14, person.serviceRecord.failedAssignments);
+        stmt.bindInt64(15, person.serviceRecord.commendations);
+        stmt.bindInt64(16, person.serviceRecord.controversies);
         stmt.execute();
         reuse(stmt);
     }
@@ -471,6 +505,7 @@ void loadIdCounters(Database& db, IdCounters& ids) {
     ids.nextBodyId = loadCounter(db, "next_body_id");
     ids.nextColonyId = loadCounter(db, "next_colony_id");
     ids.nextInstitutionId = loadCounter(db, "next_institution_id");
+    ids.nextPersonId = loadCounter(db, "next_person_id");
     ids.nextShipClassId = loadCounter(db, "next_ship_class_id");
     ids.nextShipyardOrderId = loadCounter(db, "next_shipyard_order_id");
     ids.nextShipId = loadCounter(db, "next_ship_id");
@@ -495,6 +530,42 @@ void loadInstitutions(Database& db, GameState& state) {
             .id = InstitutionId{stmt.columnInt64(0)},
             .name = stmt.columnText(1),
             .type = enumFromValue<InstitutionType>(stmt.columnInt64(2))
+        });
+    }
+}
+
+void loadPeople(Database& db, GameState& state) {
+    Statement stmt{db, R"sql(
+        SELECT id, name, institution_id, logistics, industry, survey, command,
+               administration, engineering, intelligence, crisis_management,
+               seniority_level, successful_assignments, failed_assignments,
+               commendations, controversies
+        FROM people
+        ORDER BY id;
+    )sql"};
+
+    while (stmt.step()) {
+        state.people.push_back(Person{
+            .id = PersonId{stmt.columnInt64(0)},
+            .name = stmt.columnText(1),
+            .institutionId = InstitutionId{stmt.columnInt64(2)},
+            .competencies = PersonCompetencies{
+                .logistics = checkedIntFromSql(stmt.columnInt64(3), "people.logistics"),
+                .industry = checkedIntFromSql(stmt.columnInt64(4), "people.industry"),
+                .survey = checkedIntFromSql(stmt.columnInt64(5), "people.survey"),
+                .command = checkedIntFromSql(stmt.columnInt64(6), "people.command"),
+                .administration = checkedIntFromSql(stmt.columnInt64(7), "people.administration"),
+                .engineering = checkedIntFromSql(stmt.columnInt64(8), "people.engineering"),
+                .intelligence = checkedIntFromSql(stmt.columnInt64(9), "people.intelligence"),
+                .crisisManagement = checkedIntFromSql(stmt.columnInt64(10), "people.crisis_management")
+            },
+            .seniorityLevel = checkedIntFromSql(stmt.columnInt64(11), "people.seniority_level"),
+            .serviceRecord = PersonServiceRecord{
+                .successfulAssignments = checkedIntFromSql(stmt.columnInt64(12), "people.successful_assignments"),
+                .failedAssignments = checkedIntFromSql(stmt.columnInt64(13), "people.failed_assignments"),
+                .commendations = checkedIntFromSql(stmt.columnInt64(14), "people.commendations"),
+                .controversies = checkedIntFromSql(stmt.columnInt64(15), "people.controversies")
+            }
         });
     }
 }
@@ -728,6 +799,7 @@ void SaveGameRepository::save(const std::filesystem::path& path, const GameState
     saveIdCounters(db, state.ids);
     saveStarSystems(db, state);
     saveInstitutions(db, state);
+    savePeople(db, state);
     saveBodies(db, state);
     saveColonies(db, state);
     saveMineralDeposits(db, state);
@@ -758,6 +830,7 @@ GameState SaveGameRepository::load(const std::filesystem::path& path) {
     loadIdCounters(db, state.ids);
     loadStarSystems(db, state);
     loadInstitutions(db, state);
+    loadPeople(db, state);
     loadBodies(db, state);
     loadColonies(db, state);
     loadMineralDeposits(db, state);
@@ -768,7 +841,7 @@ GameState SaveGameRepository::load(const std::filesystem::path& path) {
     loadEvents(db, state);
 
     // There is intentionally no load step for dailyEconomySnapshots. Economy
-    // telemetry is transient runtime data in schema v5 and remains empty until
+    // telemetry is transient runtime data in schema v6 and remains empty until
     // the loaded simulation advances new days.
 
     // SQLite constraints are first-line protection only. The authoritative pass

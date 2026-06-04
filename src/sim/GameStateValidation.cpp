@@ -201,6 +201,26 @@ void validateProcessingPolicy(const Colony& colony) {
     }
 }
 
+void validatePersonCompetencies(const PersonCompetencies& competencies) {
+    // Competencies are stored as non-negative levels only. They intentionally do
+    // not influence simulation output until appointment/merit rules are added.
+    requireState(competencies.logistics >= 0, "person logistics competency must be non-negative");
+    requireState(competencies.industry >= 0, "person industry competency must be non-negative");
+    requireState(competencies.survey >= 0, "person survey competency must be non-negative");
+    requireState(competencies.command >= 0, "person command competency must be non-negative");
+    requireState(competencies.administration >= 0, "person administration competency must be non-negative");
+    requireState(competencies.engineering >= 0, "person engineering competency must be non-negative");
+    requireState(competencies.intelligence >= 0, "person intelligence competency must be non-negative");
+    requireState(competencies.crisisManagement >= 0, "person crisis management competency must be non-negative");
+}
+
+void validatePersonServiceRecord(const PersonServiceRecord& record) {
+    requireState(record.successfulAssignments >= 0, "person successful assignments must be non-negative");
+    requireState(record.failedAssignments >= 0, "person failed assignments must be non-negative");
+    requireState(record.commendations >= 0, "person commendations must be non-negative");
+    requireState(record.controversies >= 0, "person controversies must be non-negative");
+}
+
 void validateFleetOrder(const GameState& state, const Fleet& fleet) {
     requireState(isValidFleetOrderType(fleet.activeOrder.type), "fleet order type must be valid");
     requireState(fleet.activeOrder.daysRemaining >= 0, "fleet order days must be non-negative");
@@ -277,6 +297,7 @@ void validateGameState(const GameState& state) {
     validateIdsAndCounter<Body, BodyId>(state.bodies, state.ids.nextBodyId, "body");
     validateIdsAndCounter<Colony, ColonyId>(state.colonies, state.ids.nextColonyId, "colony");
     validateIdsAndCounter<Institution, InstitutionId>(state.institutions, state.ids.nextInstitutionId, "institution");
+    validateIdsAndCounter<Person, PersonId>(state.people, state.ids.nextPersonId, "person");
     validateIdsAndCounter<ShipClass, ShipClassId>(state.shipClasses, state.ids.nextShipClassId, "ship class");
     validateIdsAndCounter<ShipyardOrder, ShipyardOrderId>(state.shipyardOrders,
                                                             state.ids.nextShipyardOrderId,
@@ -292,6 +313,16 @@ void validateGameState(const GameState& state) {
     for (const Institution& institution : state.institutions) {
         requireState(!institution.name.empty(), "institution name must be non-empty");
         requireState(isValidInstitutionType(institution.type), "institution type must be valid");
+    }
+
+    for (const Person& person : state.people) {
+        requireState(!person.name.empty(), "person name must be non-empty");
+        requireValidReference(containsId(state.institutions, person.institutionId),
+                              person.institutionId,
+                              "person institution");
+        validatePersonCompetencies(person.competencies);
+        requireState(person.seniorityLevel >= 0, "person seniority level must be non-negative");
+        validatePersonServiceRecord(person.serviceRecord);
     }
 
     for (const Body& body : state.bodies) {

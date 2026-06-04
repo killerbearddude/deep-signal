@@ -167,6 +167,26 @@ void test_invalid_institution_references_are_rejected() {
     });
 }
 
+void test_invalid_personnel_records_are_rejected() {
+    // Personnel are durable simulation records. Reject dangling institution
+    // references and negative levels before future appointment logic trusts them.
+    expectInvalidState("person institution missing", [](deep::GameState& state) {
+        state.people.front().institutionId = deep::InstitutionId{999};
+    });
+
+    expectInvalidState("negative person competency", [](deep::GameState& state) {
+        state.people.front().competencies.logistics = -1;
+    });
+
+    expectInvalidState("negative person seniority", [](deep::GameState& state) {
+        state.people.front().seniorityLevel = -1;
+    });
+
+    expectInvalidState("negative person service counter", [](deep::GameState& state) {
+        state.people.front().serviceRecord.controversies = -1;
+    });
+}
+
 void test_ship_missing_from_owning_fleet_is_rejected() {
     // Ship and fleet references must be bidirectional. A ship whose fleet does
     // not list it would disappear from fleet-level views and order resolution.
@@ -296,6 +316,7 @@ int main() {
         test_invalid_manual_processing_weights_are_rejected();
         test_manual_processing_policy_without_positive_total_weight_is_rejected();
         test_invalid_institution_references_are_rejected();
+        test_invalid_personnel_records_are_rejected();
         test_ship_missing_from_owning_fleet_is_rejected();
         test_fleet_listing_nonexistent_ship_is_rejected();
         test_ship_claimed_by_multiple_fleets_is_rejected();

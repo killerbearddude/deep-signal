@@ -601,6 +601,27 @@ std::vector<FleetSummary> SimulationQueries::fleets() const {
 }
 
 
+std::vector<PersonSummary> SimulationQueries::personnel() const {
+    const GameState& state = service_.state();
+    std::vector<PersonSummary> summaries;
+    summaries.reserve(state.people.size());
+
+    for (const Person& person : state.people) {
+        summaries.push_back(PersonSummary{
+            .id = person.id,
+            .name = person.name,
+            .institutionId = person.institutionId,
+            .institutionName = institutionName(state, person.institutionId),
+            .competencies = person.competencies,
+            .seniorityLevel = person.seniorityLevel,
+            .serviceRecord = person.serviceRecord
+        });
+    }
+
+    return summaries;
+}
+
+
 std::string SimulationQueries::institutionDisplayName(const InstitutionId id) const {
     return institutionName(service_.state(), id);
 }

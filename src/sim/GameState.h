@@ -20,6 +20,7 @@ struct IdCounters {
     std::int64_t nextBodyId = 1;
     std::int64_t nextColonyId = 1;
     std::int64_t nextInstitutionId = 1;
+    std::int64_t nextPersonId = 1;
     std::int64_t nextShipClassId = 1;
     std::int64_t nextShipyardOrderId = 1;
     std::int64_t nextShipId = 1;
@@ -36,6 +37,7 @@ struct GameState {
 
     std::vector<StarSystem> starSystems;
     std::vector<Institution> institutions;
+    std::vector<Person> people;
     std::vector<Body> bodies;
     std::vector<MineralDeposit> mineralDeposits;
     std::vector<Colony> colonies;

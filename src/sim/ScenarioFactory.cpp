@@ -21,6 +21,10 @@ GameState createHomeSystemScenario() {
     const InstitutionId extractionCombineId{state.ids.nextInstitutionId++};
     const InstitutionId fuelTrustId{state.ids.nextInstitutionId++};
     const InstitutionId surveyOfficeId{state.ids.nextInstitutionId++};
+    const PersonId continuityDirectorId{state.ids.nextPersonId++};
+    const PersonId yardLiaisonId{state.ids.nextPersonId++};
+    const PersonId surveyCoordinatorId{state.ids.nextPersonId++};
+    const PersonId fuelPlannerId{state.ids.nextPersonId++};
     const ShipClassId surveyCutterId{state.ids.nextShipClassId++};
 
     state.starSystems.push_back(StarSystem{
@@ -55,6 +59,98 @@ GameState createHomeSystemScenario() {
         .id = surveyOfficeId,
         .name = "Survey Office",
         .type = InstitutionType::SurveyOffice
+    });
+
+    // Starter personnel are durable identity records only. They provide early
+    // anchors for future appointment and merit systems without applying any
+    // command, production, or political modifiers in this patch.
+    state.people.push_back(Person{
+        .id = continuityDirectorId,
+        .name = "Director Mara Chen",
+        .institutionId = continuityOfficeId,
+        .competencies = PersonCompetencies{
+            .logistics = 4,
+            .industry = 3,
+            .survey = 2,
+            .command = 3,
+            .administration = 5,
+            .engineering = 2,
+            .intelligence = 3,
+            .crisisManagement = 5
+        },
+        .seniorityLevel = 5,
+        .serviceRecord = PersonServiceRecord{
+            .successfulAssignments = 12,
+            .failedAssignments = 1,
+            .commendations = 4,
+            .controversies = 1
+        }
+    });
+    state.people.push_back(Person{
+        .id = yardLiaisonId,
+        .name = "Commodore Elias Voss",
+        .institutionId = navalBoardId,
+        .competencies = PersonCompetencies{
+            .logistics = 3,
+            .industry = 5,
+            .survey = 1,
+            .command = 5,
+            .administration = 3,
+            .engineering = 4,
+            .intelligence = 2,
+            .crisisManagement = 3
+        },
+        .seniorityLevel = 4,
+        .serviceRecord = PersonServiceRecord{
+            .successfulAssignments = 9,
+            .failedAssignments = 2,
+            .commendations = 3,
+            .controversies = 0
+        }
+    });
+    state.people.push_back(Person{
+        .id = surveyCoordinatorId,
+        .name = "Dr. Nia Okafor",
+        .institutionId = surveyOfficeId,
+        .competencies = PersonCompetencies{
+            .logistics = 2,
+            .industry = 1,
+            .survey = 5,
+            .command = 2,
+            .administration = 3,
+            .engineering = 4,
+            .intelligence = 5,
+            .crisisManagement = 2
+        },
+        .seniorityLevel = 4,
+        .serviceRecord = PersonServiceRecord{
+            .successfulAssignments = 15,
+            .failedAssignments = 1,
+            .commendations = 5,
+            .controversies = 0
+        }
+    });
+    state.people.push_back(Person{
+        .id = fuelPlannerId,
+        .name = "Priya Raman",
+        .institutionId = fuelTrustId,
+        .competencies = PersonCompetencies{
+            .logistics = 5,
+            .industry = 3,
+            .survey = 2,
+            .command = 2,
+            .administration = 4,
+            .engineering = 3,
+            .intelligence = 2,
+            .crisisManagement = 4
+        },
+        .seniorityLevel = 3,
+        .serviceRecord = PersonServiceRecord{
+            .successfulAssignments = 7,
+            .failedAssignments = 1,
+            .commendations = 2,
+            .controversies = 1
+        }
     });
 
     state.bodies.push_back(Body{

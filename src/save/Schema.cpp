@@ -1,6 +1,6 @@
 #include "save/Schema.h"
 
-// Implements schema v5 for Prototype 0.1 saves.
+// Implements schema v6 for Prototype 0.1 saves.
 // The schema mirrors GameState-owned records and keeps event payloads as typed
 // JSON text for inspectable, forward-migratable audit history. CHECK constraints
 // intentionally duplicate core invariants so hand-edited save files fail early.
@@ -36,7 +36,7 @@ void initializeSchema(Database& db) {
 
         CREATE TABLE IF NOT EXISTS schema_version (
             id INTEGER PRIMARY KEY CHECK(id = 1),
-            version INTEGER NOT NULL CHECK(version = 5)
+            version INTEGER NOT NULL CHECK(version = 6)
         );
 
         CREATE TABLE IF NOT EXISTS game_meta (
@@ -58,6 +58,26 @@ void initializeSchema(Database& db) {
             id INTEGER PRIMARY KEY NOT NULL CHECK(id > 0),
             name TEXT NOT NULL CHECK(length(name) > 0),
             institution_type INTEGER NOT NULL CHECK(institution_type BETWEEN 0 AND 7)
+        );
+
+        CREATE TABLE IF NOT EXISTS people (
+            id INTEGER PRIMARY KEY NOT NULL CHECK(id > 0),
+            name TEXT NOT NULL CHECK(length(name) > 0),
+            institution_id INTEGER NOT NULL CHECK(institution_id > 0),
+            logistics INTEGER NOT NULL CHECK(logistics >= 0),
+            industry INTEGER NOT NULL CHECK(industry >= 0),
+            survey INTEGER NOT NULL CHECK(survey >= 0),
+            command INTEGER NOT NULL CHECK(command >= 0),
+            administration INTEGER NOT NULL CHECK(administration >= 0),
+            engineering INTEGER NOT NULL CHECK(engineering >= 0),
+            intelligence INTEGER NOT NULL CHECK(intelligence >= 0),
+            crisis_management INTEGER NOT NULL CHECK(crisis_management >= 0),
+            seniority_level INTEGER NOT NULL CHECK(seniority_level >= 0),
+            successful_assignments INTEGER NOT NULL CHECK(successful_assignments >= 0),
+            failed_assignments INTEGER NOT NULL CHECK(failed_assignments >= 0),
+            commendations INTEGER NOT NULL CHECK(commendations >= 0),
+            controversies INTEGER NOT NULL CHECK(controversies >= 0),
+            FOREIGN KEY(institution_id) REFERENCES institutions(id)
         );
 
         CREATE TABLE IF NOT EXISTS bodies (
@@ -209,6 +229,7 @@ void initializeSchema(Database& db) {
             payload_json TEXT NOT NULL CHECK(length(payload_json) > 0)
         );
 
+        CREATE INDEX IF NOT EXISTS idx_people_institution_id ON people(institution_id);
         CREATE INDEX IF NOT EXISTS idx_bodies_system_id ON bodies(system_id);
         CREATE INDEX IF NOT EXISTS idx_colonies_body_id ON colonies(body_id);
         CREATE INDEX IF NOT EXISTS idx_colonies_owner_institution_id ON colonies(owner_institution_id);

@@ -44,6 +44,41 @@ struct Institution {
     InstitutionType type = InstitutionType::ContinuityOffice;
 };
 
+// Areas of professional capability recorded for durable personnel identity.
+// V1 stores values only; no gameplay modifiers or merit calculations consume
+// these competencies yet.
+struct PersonCompetencies {
+    int logistics = 0;
+    int industry = 0;
+    int survey = 0;
+    int command = 0;
+    int administration = 0;
+    int engineering = 0;
+    int intelligence = 0;
+    int crisisManagement = 0;
+};
+
+// Lightweight service-history counters for future appointment and merit systems.
+// Counters are non-negative audit inputs only in v1.
+struct PersonServiceRecord {
+    int successfulAssignments = 0;
+    int failedAssignments = 0;
+    int commendations = 0;
+    int controversies = 0;
+};
+
+// Durable personnel identity tied to a home-system institution. People are
+// simulation records rather than UI-only names so later appointment systems can
+// reference them by stable ID without changing save structure again.
+struct Person {
+    PersonId id;
+    std::string name;
+    InstitutionId institutionId;
+    PersonCompetencies competencies;
+    int seniorityLevel = 0;
+    PersonServiceRecord serviceRecord;
+};
+
 // A star system container. Prototype 0.1 starts with a single Sol system.
 struct StarSystem {
     StarSystemId id;

@@ -104,6 +104,18 @@ struct ShipClassSummary {
     double buildPoints = 0.0;
 };
 
+// Display-ready personnel row. This preserves durable personnel identity for
+// future appointment/merit UI without exposing mutable GameState records.
+struct PersonSummary {
+    PersonId id;
+    std::string name;
+    InstitutionId institutionId;
+    std::string institutionName;
+    PersonCompetencies competencies;
+    int seniorityLevel = 0;
+    PersonServiceRecord serviceRecord;
+};
+
 // Display-ready queued fleet order row. The queue position is one-based so UI
 // tables can present the same ordering players expect from command queues.
 struct FleetQueuedOrderSummary {
@@ -243,6 +255,9 @@ public:
 
     // Returns a single fleet summary when the ID exists in the active snapshot.
     [[nodiscard]] std::optional<FleetSummary> fleet(FleetId id) const;
+
+    // Returns display-ready personnel rows with resolved institution names.
+    [[nodiscard]] std::vector<PersonSummary> personnel() const;
 
     // Returns a display name for an institution reference. Unknown IDs produce a
     // stable placeholder so UI/tests can show broken references clearly.

@@ -3,9 +3,10 @@
 #include "save/SaveGameRepository.h"
 #include "sim/Commands.h"
 #include "sim/Minerals.h"
+#include "sim/ScenarioFactory.h"
 
 // Regression tests for SQLite save/load round-tripping.
-// These tests verify that schema v5 persists durable Prototype 0.1 state,
+// These tests verify that schema v6 persists durable Prototype 0.1 state,
 // including ID counters, institutions, ownership, production, fleet orders, and events.
 // Runtime-only economy telemetry is tested separately as intentionally transient.
 
@@ -132,6 +133,7 @@ void requireSameState(const deep::GameState& expected, const deep::GameState& ac
     require(expected.ids.nextBodyId == actual.ids.nextBodyId, "body counter round-trips");
     require(expected.ids.nextColonyId == actual.ids.nextColonyId, "colony counter round-trips");
     require(expected.ids.nextInstitutionId == actual.ids.nextInstitutionId, "institution counter round-trips");
+    require(expected.ids.nextPersonId == actual.ids.nextPersonId, "person counter round-trips");
     require(expected.ids.nextShipClassId == actual.ids.nextShipClassId, "ship-class counter round-trips");
     require(expected.ids.nextShipyardOrderId == actual.ids.nextShipyardOrderId, "shipyard-order counter round-trips");
     require(expected.ids.nextShipId == actual.ids.nextShipId, "ship counter round-trips");
@@ -151,6 +153,36 @@ void requireSameState(const deep::GameState& expected, const deep::GameState& ac
         require(left.id == right.id, "institution ID round-trips");
         require(left.name == right.name, "institution name round-trips");
         require(left.type == right.type, "institution type round-trips");
+    }
+
+    require(expected.people.size() == actual.people.size(), "person row count round-trips");
+    for (std::size_t i = 0; i < expected.people.size(); ++i) {
+        const deep::Person& left = expected.people.at(i);
+        const deep::Person& right = actual.people.at(i);
+        require(left.id == right.id, "person ID round-trips");
+        require(left.name == right.name, "person name round-trips");
+        require(left.institutionId == right.institutionId, "person institution reference round-trips");
+        require(left.competencies.logistics == right.competencies.logistics, "person logistics competency round-trips");
+        require(left.competencies.industry == right.competencies.industry, "person industry competency round-trips");
+        require(left.competencies.survey == right.competencies.survey, "person survey competency round-trips");
+        require(left.competencies.command == right.competencies.command, "person command competency round-trips");
+        require(left.competencies.administration == right.competencies.administration,
+                "person administration competency round-trips");
+        require(left.competencies.engineering == right.competencies.engineering,
+                "person engineering competency round-trips");
+        require(left.competencies.intelligence == right.competencies.intelligence,
+                "person intelligence competency round-trips");
+        require(left.competencies.crisisManagement == right.competencies.crisisManagement,
+                "person crisis-management competency round-trips");
+        require(left.seniorityLevel == right.seniorityLevel, "person seniority level round-trips");
+        require(left.serviceRecord.successfulAssignments == right.serviceRecord.successfulAssignments,
+                "person successful assignment count round-trips");
+        require(left.serviceRecord.failedAssignments == right.serviceRecord.failedAssignments,
+                "person failed assignment count round-trips");
+        require(left.serviceRecord.commendations == right.serviceRecord.commendations,
+                "person commendation count round-trips");
+        require(left.serviceRecord.controversies == right.serviceRecord.controversies,
+                "person controversy count round-trips");
     }
 
     require(expected.bodies.size() == actual.bodies.size(), "body row count round-trips");
@@ -479,6 +511,51 @@ void test_institution_identity_and_ownership_round_trip() {
     std::filesystem::remove(path);
 }
 
+void test_personnel_registry_round_trips() {
+    // Personnel are durable simulation records, not generated UI names. This
+    // verifies both starter personnel and a hand-authored record survive SQLite.
+    const std::filesystem::path path = testSavePath();
+    std::filesystem::remove(path);
+
+    deep::GameState state = deep::createHomeSystemScenario();
+    const deep::InstitutionId institutionId = state.institutions.front().id;
+    const deep::PersonId personId{state.ids.nextPersonId++};
+    state.people.push_back(deep::Person{
+        .id = personId,
+        .name = "Senior Controller Ada Park",
+        .institutionId = institutionId,
+        .competencies = deep::PersonCompetencies{
+            .logistics = 6,
+            .industry = 2,
+            .survey = 3,
+            .command = 4,
+            .administration = 5,
+            .engineering = 2,
+            .intelligence = 4,
+            .crisisManagement = 6
+        },
+        .seniorityLevel = 6,
+        .serviceRecord = deep::PersonServiceRecord{
+            .successfulAssignments = 21,
+            .failedAssignments = 2,
+            .commendations = 8,
+            .controversies = 1
+        }
+    });
+
+    deep::save::SaveGameRepository::save(path, state);
+    const deep::GameState loaded = deep::save::SaveGameRepository::load(path);
+
+    requireSameState(state, loaded);
+    require(loaded.people.back().name == "Senior Controller Ada Park", "added person name round-trips");
+    require(loaded.people.back().competencies.crisisManagement == 6,
+            "added person crisis management competency round-trips");
+    require(loaded.people.back().serviceRecord.commendations == 8,
+            "added person service record counter round-trips");
+
+    std::filesystem::remove(path);
+}
+
 void test_manual_processing_policy_state_round_trips() {
     // Verifies the player-facing processing allocation controls are durable.
     // Without this coverage, loading a save can silently revert production intent
@@ -518,7 +595,7 @@ void test_manual_processing_policy_state_round_trips() {
 }
 
 void test_daily_economy_snapshots_are_runtime_only() {
-    // Confirms the schema v5 contract for high-volume economy telemetry. The
+    // Confirms the schema v6 contract for high-volume economy telemetry. The
     // stockpile/deposit state is durable, but per-day mining samples are a
     // current-session UI/forecast/debug aid and intentionally reload empty.
     const std::filesystem::path path = std::filesystem::temp_directory_path() / "deep_signal_transient_telemetry.sqlite";
@@ -688,6 +765,23 @@ void test_malformed_save_unknown_order_status_is_rejected() {
                                 true);
 }
 
+void test_malformed_save_broken_person_institution_reference_is_rejected() {
+    // Personnel are tied to institutions. A broken reference would make later
+    // appointment or merit systems operate on an unowned person record.
+    expectMalformedSaveRejected("broken_person_institution",
+                                "UPDATE people SET institution_id = 999 WHERE id = 1;",
+                                false,
+                                true);
+}
+
+void test_malformed_save_negative_person_counter_is_rejected() {
+    // Service record counters are append-only audit data. Negative values are
+    // invalid even when imported from hand-edited SQLite files.
+    expectMalformedSaveRejected("negative_person_counter",
+                                "UPDATE people SET commendations = -1 WHERE id = 1;",
+                                true);
+}
+
 void test_malformed_save_broken_owner_institution_reference_is_rejected() {
     // Ownership is soft gameplay data in v1, but a present owner ID must still
     // point at a real institution so future access/trust rules have safe inputs.
@@ -729,6 +823,7 @@ int main() {
     try {
         test_sqlite_save_load_round_trip();
         test_institution_identity_and_ownership_round_trip();
+        test_personnel_registry_round_trips();
         test_manual_processing_policy_state_round_trips();
         test_daily_economy_snapshots_are_runtime_only();
         test_malformed_save_missing_schema_version_is_rejected();
@@ -750,6 +845,8 @@ int main() {
         test_malformed_save_completed_order_with_build_progress_is_rejected();
         test_malformed_save_active_order_already_complete_is_rejected();
         test_malformed_save_unknown_order_status_is_rejected();
+        test_malformed_save_broken_person_institution_reference_is_rejected();
+        test_malformed_save_negative_person_counter_is_rejected();
         test_malformed_save_broken_owner_institution_reference_is_rejected();
         test_malformed_save_negative_colony_mines_is_rejected();
         test_malformed_save_non_finite_numeric_value_is_rejected();

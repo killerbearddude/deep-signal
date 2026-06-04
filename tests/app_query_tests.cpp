@@ -160,6 +160,25 @@ void test_production_backlog_summaries_expose_queue_eta() {
     require(backlog.front().statusName == "Building", "well-stocked order reports building status");
 }
 
+void test_personnel_summaries_resolve_institution_context() {
+    // Personnel queries expose durable person records with resolved institution
+    // names so future UI can render staff lists without raw GameState access.
+    const deep::SimulationService service;
+    const deep::SimulationQueries queries{service};
+
+    const auto personnel = queries.personnel();
+
+    require(personnel.size() >= 4, "home scenario exposes starter personnel summaries");
+    require(personnel.front().name == "Director Mara Chen", "personnel summary includes starter person name");
+    require(personnel.front().institutionName == "Strategic Continuity Office",
+            "personnel summary resolves institution name");
+    require(personnel.front().competencies.crisisManagement == 5,
+            "personnel summary includes competency values");
+    require(personnel.front().seniorityLevel == 5, "personnel summary includes seniority level");
+    require(personnel.front().serviceRecord.commendations == 4,
+            "personnel summary includes service record counters");
+}
+
 void test_ship_class_summaries_expose_build_targets() {
     // Verifies that UI production panels can discover buildable ship classes
     // through query DTOs instead of reading GameState::shipClasses directly.
@@ -449,6 +468,7 @@ int main() {
         test_colony_summaries_include_processing_policy();
         test_shipyard_order_summaries_resolve_names();
         test_production_backlog_summaries_expose_queue_eta();
+        test_personnel_summaries_resolve_institution_context();
         test_ship_class_summaries_expose_build_targets();
         test_fleet_summaries_resolve_location_and_order();
         test_fleet_summaries_include_queued_orders();
