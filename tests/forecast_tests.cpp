@@ -81,7 +81,7 @@ void test_mineral_income_per_day_uses_current_mining_formula() {
 
     const auto income = forecasts.mineralIncomePerDay();
 
-    require(income.size() == 7, "home scenario has seven Terra income forecast rows");
+    require(income.size() == 19, "home scenario has mature-system income forecast rows");
     require(income.front().colonyName == "Terra Directorate", "income forecast resolves colony name");
     require(income.front().bodyName == "Terra", "income forecast resolves body name");
     require(income.front().mineralName == "Iron", "income forecast exposes mineral name");
@@ -156,16 +156,17 @@ void test_mineral_forecast_cause_chains_report_processing_demand() {
 
     require(chains.size() == deep::mineralCount(), "one cause chain is returned for every mineral");
     require(iron.mineralName == "Iron", "cause chain exposes mineral name");
-    requireNear(iron.stockpile, 10000.0, "cause chain sums colony raw stockpiles");
-    requireNear(iron.miningIncomePerDay, 10.0, "cause chain includes mining income per day");
-    const double balancedAlloyOutput = 50.0 / static_cast<double>(deep::processedMaterialCount());
-    requireNear(iron.committedDemandPerDay, balancedAlloyOutput, "cause chain includes policy-weighted processing raw demand");
-    requireNear(iron.netPerDay, 10.0 - balancedAlloyOutput, "cause chain computes net raw mineral flow");
+    requireNear(iron.stockpile, 28'000.0, "cause chain sums mature-system colony raw stockpiles");
+    const double expectedIronIncome = 10.0 + 3.6 + 13.3;
+    requireNear(iron.miningIncomePerDay, expectedIronIncome, "cause chain includes mature-system mining income per day");
+    const double expectedIronDemand = 50.0 / static_cast<double>(deep::processedMaterialCount());
+    requireNear(iron.committedDemandPerDay, expectedIronDemand, "cause chain includes policy-weighted processing raw demand");
+    requireNear(iron.netPerDay, expectedIronIncome - expectedIronDemand, "cause chain computes net raw mineral flow");
     require(!iron.stockpileRunoutDays.has_value(), "positive net flow has no stockpile runout");
     require(iron.causes.size() == 2, "cause chain contains the v1 explanation rows");
     require(iron.causes.front().label == "Mining", "first cause row explains mining");
     require(iron.causes.at(1).label == "Processing recipes", "second cause row explains processing demand");
-    requireNear(iron.causes.at(1).amountPerDay, -balancedAlloyOutput, "processing cause row reports demand as a negative contribution");
+    requireNear(iron.causes.at(1).amountPerDay, -expectedIronDemand, "processing cause row reports demand as a negative contribution");
 }
 
 void test_processed_material_forecast_cause_chains_report_shipyard_demand() {
@@ -188,13 +189,13 @@ void test_processed_material_forecast_cause_chains_report_shipyard_demand() {
 
     require(chains.size() == deep::processedMaterialCount(), "one cause chain is returned for every processed material");
     require(electronics.materialName == "Electronics", "processed cause chain exposes material name");
-    requireNear(electronics.stockpile, 500.0, "cause chain sums colony processed stockpiles");
+    requireNear(electronics.stockpile, 750.0, "cause chain sums mature-system colony processed stockpiles");
     const double balancedElectronicsOutput = 50.0 / static_cast<double>(deep::processedMaterialCount());
     requireNear(electronics.processingIncomePerDay, balancedElectronicsOutput, "balanced policy assigns capacity to electronics");
     requireNear(electronics.committedDemandPerDay, 16.0, "shipyard demand is amortized over ETA");
     requireNear(electronics.netPerDay, balancedElectronicsOutput - 16.0, "processed material net flow includes shipyard demand");
     require(electronics.stockpileRunoutDays.has_value(), "negative material net flow yields runout");
-    require(*electronics.stockpileRunoutDays == 66, "processed material runout rounds up by days");
+    require(*electronics.stockpileRunoutDays == 98, "processed material runout rounds up by days");
     require(electronics.causes.at(1).label == "Active shipyard orders", "processed demand names shipyard orders");
 }
 
@@ -257,9 +258,10 @@ void test_mineral_forecast_cause_chains_include_processing_demand() {
     const deep::MineralForecastCauseChain& iron = requireCauseChain(chains, deep::Mineral::Iron);
 
     const double balancedAlloyOutput = 50.0 / static_cast<double>(deep::processedMaterialCount());
-    requireNear(iron.miningIncomePerDay, 10.0, "surplus forecast includes current mining income");
+    const double expectedIronIncome = 10.0 + 3.6 + 13.3;
+    requireNear(iron.miningIncomePerDay, expectedIronIncome, "surplus forecast includes mature-system mining income");
     requireNear(iron.committedDemandPerDay, balancedAlloyOutput, "surplus forecast includes policy-weighted processing demand");
-    requireNear(iron.netPerDay, 10.0 - balancedAlloyOutput, "raw forecast includes processing demand");
+    requireNear(iron.netPerDay, expectedIronIncome - balancedAlloyOutput, "raw forecast includes processing demand");
     require(!iron.stockpileRunoutDays.has_value(), "positive raw flow has no runout day");
 }
 
@@ -271,7 +273,7 @@ void test_deposit_exhaustion_estimate_uses_current_income_rate() {
 
     const auto deposits = forecasts.depositExhaustionEstimates();
 
-    require(deposits.size() == 11, "home scenario has Terra and Mars deposit exhaustion rows");
+    require(deposits.size() == 31, "home scenario has mature-system deposit exhaustion rows");
     require(deposits.front().exhaustionDays.has_value(), "positive income yields exhaustion estimate");
     require(*deposits.front().exhaustionDays == 100000, "iron deposit exhaustion is rounded up by days");
     require(deposits.at(1).exhaustionDays.has_value(), "nickel deposit also has exhaustion estimate");

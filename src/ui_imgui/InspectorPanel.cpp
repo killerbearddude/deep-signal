@@ -50,6 +50,8 @@ void drawBodyDetails(const SimulationQueries& queries, const BodyId bodyId) {
     ImGui::Text("ID: %lld", static_cast<long long>(body->id.value));
     ImGui::Text("Name: %s", body->name.c_str());
     ImGui::Text("Type: %s", body->typeName.c_str());
+    ImGui::Text("Strategic zone: %s", body->strategicZoneName.c_str());
+    ImGui::Text("Owner / institution: %s", body->ownerInstitutionName.empty() ? "-" : body->ownerInstitutionName.c_str());
     ImGui::Text("Position: %.2f, %.2f", body->x, body->y);
 
     // Surface the first colony tied to the selected body as navigation context;

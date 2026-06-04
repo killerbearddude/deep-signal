@@ -84,6 +84,14 @@ void test_duplicate_body_ids_are_rejected() {
     });
 }
 
+void test_invalid_body_strategic_zone_is_rejected() {
+    // Strategic zones are persisted enum metadata. Reject corrupted values so
+    // UI filters and later logistics rules do not branch on undefined ordinals.
+    expectInvalidState("invalid body strategic zone", [](deep::GameState& state) {
+        state.bodies.front().strategicZone = static_cast<deep::StrategicZone>(99);
+    });
+}
+
 void test_stale_id_counters_are_rejected() {
     // Allocators must stay ahead of loaded IDs so the next simulated creation
     // cannot reuse an existing record ID.
@@ -337,6 +345,7 @@ int main() {
     try {
         test_valid_completed_state_is_accepted();
         test_duplicate_body_ids_are_rejected();
+        test_invalid_body_strategic_zone_is_rejected();
         test_stale_id_counters_are_rejected();
         test_negative_colony_mines_are_rejected();
         test_non_finite_stockpile_amounts_are_rejected();

@@ -261,6 +261,10 @@ struct BodySystemSummary {
     std::string name;
     BodyType type = BodyType::Terrestrial;
     std::string typeName;
+    StrategicZone strategicZone = StrategicZone::InnerCore;
+    std::string strategicZoneName;
+    std::optional<InstitutionId> ownerInstitutionId;
+    std::string ownerInstitutionName;
     std::size_t colonyCount = 0;
     std::size_t mineralDepositCount = 0;
     std::size_t fleetCount = 0;
@@ -273,6 +277,10 @@ struct StrategicBodySummary {
     std::string name;
     BodyType type = BodyType::Terrestrial;
     std::string typeName;
+    StrategicZone strategicZone = StrategicZone::InnerCore;
+    std::string strategicZoneName;
+    std::optional<InstitutionId> ownerInstitutionId;
+    std::string ownerInstitutionName;
     double x = 0.0;
     double y = 0.0;
 };

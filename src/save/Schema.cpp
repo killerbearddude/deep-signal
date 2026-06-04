@@ -1,6 +1,6 @@
 #include "save/Schema.h"
 
-// Implements schema v7 for Prototype 0.1 saves.
+// Implements schema v8 for Prototype 0.1 saves.
 // The schema mirrors GameState-owned records and keeps event payloads as typed
 // JSON text for inspectable, forward-migratable audit history. CHECK constraints
 // intentionally duplicate core invariants so hand-edited save files fail early.
@@ -36,7 +36,7 @@ void initializeSchema(Database& db) {
 
         CREATE TABLE IF NOT EXISTS schema_version (
             id INTEGER PRIMARY KEY CHECK(id = 1),
-            version INTEGER NOT NULL CHECK(version = 7)
+            version INTEGER NOT NULL CHECK(version = 8)
         );
 
         CREATE TABLE IF NOT EXISTS game_meta (
@@ -96,6 +96,7 @@ void initializeSchema(Database& db) {
             system_id INTEGER NOT NULL CHECK(system_id > 0),
             name TEXT NOT NULL CHECK(length(name) > 0),
             body_type INTEGER NOT NULL CHECK(body_type BETWEEN 0 AND 4),
+            strategic_zone INTEGER NOT NULL CHECK(strategic_zone BETWEEN 0 AND 4),
             x REAL NOT NULL,
             y REAL NOT NULL,
             FOREIGN KEY(system_id) REFERENCES star_systems(id)

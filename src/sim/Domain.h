@@ -230,6 +230,17 @@ enum class BodyType {
     Asteroid
 };
 
+// Strategic zones describe a body's operational role in the mature home-system
+// start. They are scenario metadata only: v1 does not add access rights,
+// logistics routes, survey commands, or institutional AI.
+enum class StrategicZone {
+    InnerCore,
+    MilitaryIndustrial,
+    BeltIndustrial,
+    OuterLogistics,
+    DeepSurveyFrontier
+};
+
 // A body in a star system. Coordinates are abstract map coordinates, not orbital
 // mechanics; this keeps movement deterministic for the first vertical slice.
 struct Body {
@@ -237,6 +248,7 @@ struct Body {
     StarSystemId systemId;
     std::string name;
     BodyType type = BodyType::Terrestrial;
+    StrategicZone strategicZone = StrategicZone::InnerCore;
     double x = 0.0;
     double y = 0.0;
 };

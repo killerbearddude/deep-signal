@@ -1,26 +1,60 @@
 #include "sim/ScenarioFactory.h"
 
-// Builds the deterministic home-system scenario used by Phase 1 tests and CLI.
-// The data is intentionally hardcoded until the simulation contracts stabilize;
-// later phases can replace these values with JSON/TOML definitions.
+// Builds the deterministic mature home-system scenario used by Phase 1 tests
+// and CLI. The scenario is hand-authored so geography, ownership, and deposits
+// can express design intent before procedural generation or logistics routes
+// exist.
 
 namespace deep {
+
+namespace {
+
+void addDeposit(GameState& state,
+                const BodyId bodyId,
+                const Mineral mineral,
+                const double remaining,
+                const double accessibility) {
+    state.mineralDeposits.push_back(MineralDeposit{
+        .bodyId = bodyId,
+        .mineral = mineral,
+        .remaining = remaining,
+        .accessibility = accessibility
+    });
+}
+
+} // namespace
 
 GameState createHomeSystemScenario() {
     GameState state;
     state.date.day = 0;
 
     // IDs are allocated through the same counters the live simulation uses so
-    // save/load can later preserve deterministic continuation behavior.
+    // save/load can later preserve deterministic continuation behavior. Terra
+    // and Mars intentionally remain the first two bodies because existing tests
+    // and UI smoke workflows use them as the canonical short movement pair.
     const StarSystemId solId{state.ids.nextStarSystemId++};
     const BodyId terraId{state.ids.nextBodyId++};
     const BodyId marsId{state.ids.nextBodyId++};
+    const BodyId lunaId{state.ids.nextBodyId++};
+    const BodyId ceresId{state.ids.nextBodyId++};
+    const BodyId vestaId{state.ids.nextBodyId++};
+    const BodyId pallasId{state.ids.nextBodyId++};
+    const BodyId titanId{state.ids.nextBodyId++};
+    const BodyId frontierObjectId{state.ids.nextBodyId++};
+
     const ColonyId terraColonyId{state.ids.nextColonyId++};
+    const ColonyId marsColonyId{state.ids.nextColonyId++};
+    const ColonyId ceresColonyId{state.ids.nextColonyId++};
+    const ColonyId titanColonyId{state.ids.nextColonyId++};
+
     const InstitutionId continuityOfficeId{state.ids.nextInstitutionId++};
     const InstitutionId navalBoardId{state.ids.nextInstitutionId++};
     const InstitutionId extractionCombineId{state.ids.nextInstitutionId++};
     const InstitutionId fuelTrustId{state.ids.nextInstitutionId++};
     const InstitutionId surveyOfficeId{state.ids.nextInstitutionId++};
+    const InstitutionId haulerGuildId{state.ids.nextInstitutionId++};
+    const InstitutionId developmentBureauId{state.ids.nextInstitutionId++};
+
     const PersonId continuityDirectorId{state.ids.nextPersonId++};
     const PersonId yardLiaisonId{state.ids.nextPersonId++};
     const PersonId surveyCoordinatorId{state.ids.nextPersonId++};
@@ -59,6 +93,16 @@ GameState createHomeSystemScenario() {
         .id = surveyOfficeId,
         .name = "Survey Office",
         .type = InstitutionType::SurveyOffice
+    });
+    state.institutions.push_back(Institution{
+        .id = haulerGuildId,
+        .name = "Private Hauler Guild",
+        .type = InstitutionType::PrivateHauler
+    });
+    state.institutions.push_back(Institution{
+        .id = developmentBureauId,
+        .name = "Colonial Development Bureau",
+        .type = InstitutionType::DevelopmentBureau
     });
 
     // Starter personnel are durable identity records. Their competencies feed
@@ -153,22 +197,79 @@ GameState createHomeSystemScenario() {
         }
     });
 
+    // The mature home-system map is deliberately coarse. Coordinates are
+    // operational distances used by v1 fuel/range previews, not orbital physics.
     state.bodies.push_back(Body{
         .id = terraId,
         .systemId = solId,
         .name = "Terra",
         .type = BodyType::Terrestrial,
+        .strategicZone = StrategicZone::InnerCore,
         .x = 0.0,
         .y = 0.0
     });
-
     state.bodies.push_back(Body{
         .id = marsId,
         .systemId = solId,
         .name = "Mars",
         .type = BodyType::Terrestrial,
+        .strategicZone = StrategicZone::MilitaryIndustrial,
         .x = 240.0,
         .y = 0.0
+    });
+    state.bodies.push_back(Body{
+        .id = lunaId,
+        .systemId = solId,
+        .name = "Luna Yard Complex",
+        .type = BodyType::Moon,
+        .strategicZone = StrategicZone::MilitaryIndustrial,
+        .x = 18.0,
+        .y = 6.0
+    });
+    state.bodies.push_back(Body{
+        .id = ceresId,
+        .systemId = solId,
+        .name = "Ceres Extraction Hub",
+        .type = BodyType::Asteroid,
+        .strategicZone = StrategicZone::BeltIndustrial,
+        .x = 520.0,
+        .y = 70.0
+    });
+    state.bodies.push_back(Body{
+        .id = vestaId,
+        .systemId = solId,
+        .name = "Vesta Refinery Claim",
+        .type = BodyType::Asteroid,
+        .strategicZone = StrategicZone::BeltIndustrial,
+        .x = 620.0,
+        .y = -90.0
+    });
+    state.bodies.push_back(Body{
+        .id = pallasId,
+        .systemId = solId,
+        .name = "Pallas Survey Claim",
+        .type = BodyType::Asteroid,
+        .strategicZone = StrategicZone::BeltIndustrial,
+        .x = 710.0,
+        .y = 145.0
+    });
+    state.bodies.push_back(Body{
+        .id = titanId,
+        .systemId = solId,
+        .name = "Titan Fuel Depot",
+        .type = BodyType::Moon,
+        .strategicZone = StrategicZone::OuterLogistics,
+        .x = 1250.0,
+        .y = -160.0
+    });
+    state.bodies.push_back(Body{
+        .id = frontierObjectId,
+        .systemId = solId,
+        .name = "Helios Far Survey Object",
+        .type = BodyType::Asteroid,
+        .strategicZone = StrategicZone::DeepSurveyFrontier,
+        .x = 1850.0,
+        .y = 420.0
     });
 
     MineralSet startingStockpile;
@@ -195,6 +296,37 @@ GameState createHomeSystemScenario() {
     startingProcessedStockpile.set(ProcessedMaterial::IndustrialComposites, 700.0);
     startingProcessedStockpile.set(ProcessedMaterial::OrdnanceMaterials, 300.0);
 
+    MineralSet marsStockpile;
+    marsStockpile.set(Mineral::Iron, 6'000.0);
+    marsStockpile.set(Mineral::Titanium, 3'000.0);
+    marsStockpile.set(Mineral::Aluminum, 4'000.0);
+    marsStockpile.set(Mineral::WaterIce, 8'000.0);
+
+    ProcessedMaterialSet marsProcessedStockpile;
+    marsProcessedStockpile.set(ProcessedMaterial::StructuralAlloys, 900.0);
+    marsProcessedStockpile.set(ProcessedMaterial::Electronics, 250.0);
+    marsProcessedStockpile.set(ProcessedMaterial::Propellant, 600.0);
+    marsProcessedStockpile.set(ProcessedMaterial::IndustrialComposites, 300.0);
+
+    MineralSet ceresStockpile;
+    ceresStockpile.set(Mineral::Iron, 12'000.0);
+    ceresStockpile.set(Mineral::Nickel, 9'000.0);
+    ceresStockpile.set(Mineral::WaterIce, 20'000.0);
+    ceresStockpile.set(Mineral::CarbonCompounds, 4'000.0);
+
+    ProcessedMaterialSet ceresProcessedStockpile;
+    ceresProcessedStockpile.set(ProcessedMaterial::StructuralAlloys, 400.0);
+    ceresProcessedStockpile.set(ProcessedMaterial::IndustrialComposites, 150.0);
+
+    MineralSet titanStockpile;
+    titanStockpile.set(Mineral::WaterIce, 80'000.0);
+    titanStockpile.set(Mineral::Volatiles, 60'000.0);
+    titanStockpile.set(Mineral::CarbonCompounds, 15'000.0);
+
+    ProcessedMaterialSet titanProcessedStockpile;
+    titanProcessedStockpile.set(ProcessedMaterial::Propellant, 4'000.0);
+    titanProcessedStockpile.set(ProcessedMaterial::ReactorFuel, 100.0);
+
     state.colonies.push_back(Colony{
         .id = terraColonyId,
         .bodyId = terraId,
@@ -208,11 +340,48 @@ GameState createHomeSystemScenario() {
         .manualProcessingAllocations = {},
         .ownerInstitutionId = continuityOfficeId
     });
-
+    state.colonies.push_back(Colony{
+        .id = marsColonyId,
+        .bodyId = marsId,
+        .name = "Mars Naval Yards",
+        .stockpile = marsStockpile,
+        .processedStockpile = marsProcessedStockpile,
+        .mines = 4.0,
+        .processorCapacity = 25.0,
+        .shipyardCapacity = 60.0,
+        .processingPolicy = ProcessingPolicy::ShipbuildingFocus,
+        .manualProcessingAllocations = {},
+        .ownerInstitutionId = navalBoardId
+    });
+    state.colonies.push_back(Colony{
+        .id = ceresColonyId,
+        .bodyId = ceresId,
+        .name = "Ceres Belt Works",
+        .stockpile = ceresStockpile,
+        .processedStockpile = ceresProcessedStockpile,
+        .mines = 14.0,
+        .processorCapacity = 30.0,
+        .shipyardCapacity = 0.0,
+        .processingPolicy = ProcessingPolicy::StockpileRecovery,
+        .manualProcessingAllocations = {},
+        .ownerInstitutionId = extractionCombineId
+    });
+    state.colonies.push_back(Colony{
+        .id = titanColonyId,
+        .bodyId = titanId,
+        .name = "Titan Fuel Depot",
+        .stockpile = titanStockpile,
+        .processedStockpile = titanProcessedStockpile,
+        .mines = 6.0,
+        .processorCapacity = 40.0,
+        .shipyardCapacity = 0.0,
+        .processingPolicy = ProcessingPolicy::FuelFocus,
+        .manualProcessingAllocations = {},
+        .ownerInstitutionId = fuelTrustId
+    });
 
     // Starter appointments name who is responsible for current operational
-    // areas. A later app/sim layer applies only small deterministic modifiers,
-    // leaving political effects and trust systems out of the scenario data.
+    // areas. Current effects are deliberately small deterministic modifiers.
     state.appointments.push_back(Appointment{
         .role = AppointmentRole::InstitutionHead,
         .scopeType = AppointmentScopeType::Institution,
@@ -249,84 +418,48 @@ GameState createHomeSystemScenario() {
         .appointedDay = state.date.day
     });
 
-    // Starter deposits are raw resources only. Colony processors convert them
-    // into industrial materials consumed by shipyard construction.
-    state.mineralDeposits.push_back(MineralDeposit{
-        .bodyId = terraId,
-        .mineral = Mineral::Iron,
-        .remaining = 1'000'000.0,
-        .accessibility = 1.0
-    });
+    // Deposits are distributed by strategic role: core bodies have legacy
+    // industrial reserves, Mars has shipbuilding inputs, the belt has bulk ore,
+    // Titan carries volatiles, and the frontier object contains low-confidence
+    // exploration pressure for future survey commands.
+    addDeposit(state, terraId, Mineral::Iron, 1'000'000.0, 1.0);
+    addDeposit(state, terraId, Mineral::Nickel, 600'000.0, 0.8);
+    addDeposit(state, terraId, Mineral::Copper, 200'000.0, 0.6);
+    addDeposit(state, terraId, Mineral::Silicon, 700'000.0, 0.9);
+    addDeposit(state, terraId, Mineral::WaterIce, 2'000'000.0, 1.0);
+    addDeposit(state, terraId, Mineral::CarbonCompounds, 500'000.0, 0.7);
+    addDeposit(state, terraId, Mineral::Volatiles, 800'000.0, 0.75);
 
-    state.mineralDeposits.push_back(MineralDeposit{
-        .bodyId = terraId,
-        .mineral = Mineral::Nickel,
-        .remaining = 600'000.0,
-        .accessibility = 0.8
-    });
+    addDeposit(state, marsId, Mineral::Iron, 800'000.0, 0.9);
+    addDeposit(state, marsId, Mineral::Titanium, 250'000.0, 0.55);
+    addDeposit(state, marsId, Mineral::Aluminum, 300'000.0, 0.65);
+    addDeposit(state, marsId, Mineral::WaterIce, 350'000.0, 0.5);
 
-    state.mineralDeposits.push_back(MineralDeposit{
-        .bodyId = terraId,
-        .mineral = Mineral::Copper,
-        .remaining = 200'000.0,
-        .accessibility = 0.6
-    });
+    addDeposit(state, lunaId, Mineral::Aluminum, 120'000.0, 0.35);
+    addDeposit(state, lunaId, Mineral::Silicon, 150'000.0, 0.4);
+    addDeposit(state, lunaId, Mineral::PlatinumGroupMetals, 30'000.0, 0.25);
 
-    state.mineralDeposits.push_back(MineralDeposit{
-        .bodyId = terraId,
-        .mineral = Mineral::Silicon,
-        .remaining = 700'000.0,
-        .accessibility = 0.9
-    });
+    addDeposit(state, ceresId, Mineral::Iron, 1'400'000.0, 0.95);
+    addDeposit(state, ceresId, Mineral::Nickel, 900'000.0, 0.85);
+    addDeposit(state, ceresId, Mineral::Copper, 180'000.0, 0.55);
+    addDeposit(state, ceresId, Mineral::WaterIce, 1'800'000.0, 0.9);
+    addDeposit(state, ceresId, Mineral::CarbonCompounds, 450'000.0, 0.75);
 
-    state.mineralDeposits.push_back(MineralDeposit{
-        .bodyId = terraId,
-        .mineral = Mineral::WaterIce,
-        .remaining = 2'000'000.0,
-        .accessibility = 1.0
-    });
+    addDeposit(state, vestaId, Mineral::Iron, 700'000.0, 0.8);
+    addDeposit(state, vestaId, Mineral::Titanium, 600'000.0, 0.7);
+    addDeposit(state, vestaId, Mineral::RareEarthElements, 90'000.0, 0.45);
 
-    state.mineralDeposits.push_back(MineralDeposit{
-        .bodyId = terraId,
-        .mineral = Mineral::CarbonCompounds,
-        .remaining = 500'000.0,
-        .accessibility = 0.7
-    });
+    addDeposit(state, pallasId, Mineral::Uranium, 80'000.0, 0.35);
+    addDeposit(state, pallasId, Mineral::Thorium, 95'000.0, 0.4);
+    addDeposit(state, pallasId, Mineral::RareEarthElements, 120'000.0, 0.5);
 
-    state.mineralDeposits.push_back(MineralDeposit{
-        .bodyId = terraId,
-        .mineral = Mineral::Volatiles,
-        .remaining = 800'000.0,
-        .accessibility = 0.75
-    });
+    addDeposit(state, titanId, Mineral::WaterIce, 4'500'000.0, 0.95);
+    addDeposit(state, titanId, Mineral::CarbonCompounds, 1'000'000.0, 0.75);
+    addDeposit(state, titanId, Mineral::Volatiles, 3'200'000.0, 0.9);
 
-    state.mineralDeposits.push_back(MineralDeposit{
-        .bodyId = marsId,
-        .mineral = Mineral::Iron,
-        .remaining = 800'000.0,
-        .accessibility = 0.9
-    });
-
-    state.mineralDeposits.push_back(MineralDeposit{
-        .bodyId = marsId,
-        .mineral = Mineral::Titanium,
-        .remaining = 250'000.0,
-        .accessibility = 0.55
-    });
-
-    state.mineralDeposits.push_back(MineralDeposit{
-        .bodyId = marsId,
-        .mineral = Mineral::Aluminum,
-        .remaining = 300'000.0,
-        .accessibility = 0.65
-    });
-
-    state.mineralDeposits.push_back(MineralDeposit{
-        .bodyId = marsId,
-        .mineral = Mineral::WaterIce,
-        .remaining = 350'000.0,
-        .accessibility = 0.5
-    });
+    addDeposit(state, frontierObjectId, Mineral::Lithium, 160'000.0, 0.25);
+    addDeposit(state, frontierObjectId, Mineral::RareEarthElements, 110'000.0, 0.2);
+    addDeposit(state, frontierObjectId, Mineral::Volatiles, 600'000.0, 0.3);
 
     ProcessedMaterialSet surveyCutterCost;
     surveyCutterCost.set(ProcessedMaterial::StructuralAlloys, 250.0);

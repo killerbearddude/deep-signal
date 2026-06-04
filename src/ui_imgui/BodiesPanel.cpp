@@ -38,9 +38,11 @@ void BodiesPanel::render(const SimulationQueries& queries, SelectionState& selec
     const std::vector<BodySystemSummary> bodies = queries.bodySystemOverview();
     ImGui::Text("Bodies: %zu", bodies.size());
 
-    if (ImGui::BeginTable("BodySystemTable", 5, kBodyTableFlags)) {
+    if (ImGui::BeginTable("BodySystemTable", 7, kBodyTableFlags)) {
         ImGui::TableSetupColumn("Body");
         ImGui::TableSetupColumn("Type");
+        ImGui::TableSetupColumn("Zone");
+        ImGui::TableSetupColumn("Owner / Institution");
         ImGui::TableSetupColumn("Colonies");
         ImGui::TableSetupColumn("Mineral Deposits");
         ImGui::TableSetupColumn("Fleets");
@@ -60,10 +62,14 @@ void BodiesPanel::render(const SimulationQueries& queries, SelectionState& selec
             ImGui::TableSetColumnIndex(1);
             ImGui::TextUnformatted(body.typeName.c_str());
             ImGui::TableSetColumnIndex(2);
-            ImGui::Text("%zu", body.colonyCount);
+            ImGui::TextUnformatted(body.strategicZoneName.c_str());
             ImGui::TableSetColumnIndex(3);
-            ImGui::Text("%zu", body.mineralDepositCount);
+            ImGui::TextUnformatted(body.ownerInstitutionName.empty() ? "-" : body.ownerInstitutionName.c_str());
             ImGui::TableSetColumnIndex(4);
+            ImGui::Text("%zu", body.colonyCount);
+            ImGui::TableSetColumnIndex(5);
+            ImGui::Text("%zu", body.mineralDepositCount);
+            ImGui::TableSetColumnIndex(6);
             ImGui::Text("%zu", body.fleetCount);
         }
 

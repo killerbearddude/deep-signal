@@ -103,8 +103,8 @@ void test_time_advancement() {
     require(sim.state().date.day == 5, "advancing 5 days reaches day 5");
     require(events.empty(), "pure mining days emit no audit events");
     require(sim.state().eventLog.empty(), "pure mining days do not append audit history");
-    require(sim.state().dailyEconomySnapshots.size() == 35,
-            "five days of seven Terra deposits creates thirty-five telemetry rows");
+    require(sim.state().dailyEconomySnapshots.size() == 95,
+            "five days across mature-system mining colonies creates ninety-five telemetry rows");
     require(sim.state().dailyEconomySnapshots.front().day == 1, "telemetry captures first simulated day");
     require(sim.state().dailyEconomySnapshots.back().day == 5, "telemetry captures latest simulated day");
 }
@@ -126,7 +126,7 @@ void test_mining() {
 
     require(endingIron > startingIron, "mining increases iron stockpile when processors are disabled");
     require(endingDeposit < startingDeposit, "mining decreases deposit");
-    require(sim.state().dailyEconomySnapshots.size() == 7, "one mining day creates telemetry for all Terra deposits");
+    require(sim.state().dailyEconomySnapshots.size() == 19, "one mining day creates telemetry for all active mature-system deposits");
 
     const deep::DailyEconomySnapshot& ironTelemetry = sim.state().dailyEconomySnapshots.front();
     require(ironTelemetry.day == 1, "mining telemetry records the production day");

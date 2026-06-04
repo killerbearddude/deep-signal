@@ -70,6 +70,30 @@ template <typename T, typename IdT>
     return "Unknown";
 }
 
+[[nodiscard]] std::string strategicZoneName(const StrategicZone zone) {
+    switch (zone) {
+    case StrategicZone::InnerCore:
+        return "Inner Core";
+    case StrategicZone::MilitaryIndustrial:
+        return "Military Industrial";
+    case StrategicZone::BeltIndustrial:
+        return "Belt Industrial";
+    case StrategicZone::OuterLogistics:
+        return "Outer Logistics";
+    case StrategicZone::DeepSurveyFrontier:
+        return "Deep Survey Frontier";
+    }
+
+    return "Unknown";
+}
+
+[[nodiscard]] std::optional<InstitutionId> bodyOwnerInstitutionId(const GameState& state, const BodyId bodyId) noexcept {
+    const auto colonyIt = std::find_if(state.colonies.begin(), state.colonies.end(), [bodyId](const Colony& colony) {
+        return colony.bodyId == bodyId && colony.ownerInstitutionId.has_value();
+    });
+    return colonyIt == state.colonies.end() ? std::optional<InstitutionId>{} : colonyIt->ownerInstitutionId;
+}
+
 [[nodiscard]] std::string colonyName(const GameState& state, const ColonyId id) {
     const Colony* colony = findById(state.colonies, id);
     return colony == nullptr ? std::string{"<unknown colony>"} : colony->name;
@@ -1220,11 +1244,16 @@ std::vector<BodySystemSummary> SimulationQueries::bodySystemOverview() const {
 
         // Counts are derived here rather than in the UI so the Bodies/System
         // panel remains a read-only projection over stable app DTOs.
+        const std::optional<InstitutionId> ownerInstitutionId = bodyOwnerInstitutionId(state, body.id);
         summaries.push_back(BodySystemSummary{
             .id = body.id,
             .name = body.name,
             .type = body.type,
             .typeName = bodyTypeName(body.type),
+            .strategicZone = body.strategicZone,
+            .strategicZoneName = strategicZoneName(body.strategicZone),
+            .ownerInstitutionId = ownerInstitutionId,
+            .ownerInstitutionName = optionalInstitutionName(state, ownerInstitutionId),
             .colonyCount = static_cast<std::size_t>(std::count_if(state.colonies.begin(), state.colonies.end(), onBody)),
             .mineralDepositCount = static_cast<std::size_t>(std::count_if(state.mineralDeposits.begin(), state.mineralDeposits.end(), onBody)),
             .fleetCount = static_cast<std::size_t>(std::count_if(state.fleets.begin(), state.fleets.end(), fleetAtBody))
@@ -1240,11 +1269,16 @@ std::vector<StrategicBodySummary> SimulationQueries::strategicBodies() const {
     summaries.reserve(state.bodies.size());
 
     for (const Body& body : state.bodies) {
+        const std::optional<InstitutionId> ownerInstitutionId = bodyOwnerInstitutionId(state, body.id);
         summaries.push_back(StrategicBodySummary{
             .id = body.id,
             .name = body.name,
             .type = body.type,
             .typeName = bodyTypeName(body.type),
+            .strategicZone = body.strategicZone,
+            .strategicZoneName = strategicZoneName(body.strategicZone),
+            .ownerInstitutionId = ownerInstitutionId,
+            .ownerInstitutionName = optionalInstitutionName(state, ownerInstitutionId),
             .x = body.x,
             .y = body.y
         });

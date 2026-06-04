@@ -1,6 +1,6 @@
 #include "save/SaveGameRepository.h"
 
-// Implements schema v7 save/load mapping for the headless simulation state.
+// Implements schema v8 save/load mapping for the headless simulation state.
 // The repository uses prepared statements and transactions throughout; raw SQL
 // execution is limited to static schema/table maintenance statements with no data.
 
@@ -42,7 +42,7 @@ template <typename EnumT>
     return static_cast<std::int64_t>(value);
 }
 
-// Returns true when a persisted enum ordinal is part of the current schema v7
+// Returns true when a persisted enum ordinal is part of the current schema v8
 // contract. Keep this explicit instead of raw-casting database values; SQLite
 // files are inspectable and may be hand-edited or corrupted.
 template <typename EnumT>
@@ -59,6 +59,8 @@ template <typename EnumT>
         return value >= 0 && value <= static_cast<std::int64_t>(AppointmentScopeType::Institution);
     } else if constexpr (std::is_same_v<EnumT, BodyType>) {
         return value >= 0 && value <= static_cast<std::int64_t>(BodyType::Asteroid);
+    } else if constexpr (std::is_same_v<EnumT, StrategicZone>) {
+        return value >= 0 && value <= static_cast<std::int64_t>(StrategicZone::DeepSurveyFrontier);
     } else if constexpr (std::is_same_v<EnumT, ShipRole>) {
         return value >= 0 && value <= static_cast<std::int64_t>(ShipRole::Escort);
     } else if constexpr (std::is_same_v<EnumT, ProcessingPolicy>) {
@@ -153,7 +155,7 @@ void reuse(Statement& stmt) {
 }
 
 void clearExistingSave(Database& db) {
-    // Delete child tables first because schema v7 intentionally uses explicit
+    // Delete child tables first because schema v8 intentionally uses explicit
     // foreign keys rather than ON DELETE CASCADE. This makes destructive save
     // behavior visible and easy to audit.
     db.execute(R"sql(
@@ -291,14 +293,15 @@ void saveAppointments(Database& db, const GameState& state) {
 }
 
 void saveBodies(Database& db, const GameState& state) {
-    Statement stmt{db, "INSERT INTO bodies(id, system_id, name, body_type, x, y) VALUES (?, ?, ?, ?, ?, ?);"};
+    Statement stmt{db, "INSERT INTO bodies(id, system_id, name, body_type, strategic_zone, x, y) VALUES (?, ?, ?, ?, ?, ?, ?);"};
     for (const Body& body : state.bodies) {
         stmt.bindInt64(1, idValue(body.id));
         stmt.bindInt64(2, idValue(body.systemId));
         stmt.bindText(3, body.name);
         stmt.bindInt64(4, enumValue(body.type));
-        stmt.bindDouble(5, body.x);
-        stmt.bindDouble(6, body.y);
+        stmt.bindInt64(5, enumValue(body.strategicZone));
+        stmt.bindDouble(6, body.x);
+        stmt.bindDouble(7, body.y);
         stmt.execute();
         reuse(stmt);
     }
@@ -613,15 +616,16 @@ void loadAppointments(Database& db, GameState& state) {
 }
 
 void loadBodies(Database& db, GameState& state) {
-    Statement stmt{db, "SELECT id, system_id, name, body_type, x, y FROM bodies ORDER BY id;"};
+    Statement stmt{db, "SELECT id, system_id, name, body_type, strategic_zone, x, y FROM bodies ORDER BY id;"};
     while (stmt.step()) {
         state.bodies.push_back(Body{
             .id = BodyId{stmt.columnInt64(0)},
             .systemId = StarSystemId{stmt.columnInt64(1)},
             .name = stmt.columnText(2),
             .type = enumFromValue<BodyType>(stmt.columnInt64(3)),
-            .x = stmt.columnDouble(4),
-            .y = stmt.columnDouble(5)
+            .strategicZone = enumFromValue<StrategicZone>(stmt.columnInt64(4)),
+            .x = stmt.columnDouble(5),
+            .y = stmt.columnDouble(6)
         });
     }
 }
@@ -885,7 +889,7 @@ GameState SaveGameRepository::load(const std::filesystem::path& path) {
     loadEvents(db, state);
 
     // There is intentionally no load step for dailyEconomySnapshots. Economy
-    // telemetry is transient runtime data in schema v7 and remains empty until
+    // telemetry is transient runtime data in schema v8 and remains empty until
     // the loaded simulation advances new days.
 
     // SQLite constraints are first-line protection only. The authoritative pass

@@ -6,7 +6,7 @@
 #include "sim/ScenarioFactory.h"
 
 // Regression tests for SQLite save/load round-tripping.
-// These tests verify that schema v7 persists durable Prototype 0.1 state,
+// These tests verify that schema v8 persists durable Prototype 0.1 state,
 // including ID counters, institutions, ownership, production, fleet orders, and events.
 // Runtime-only economy telemetry is tested separately as intentionally transient.
 
@@ -204,6 +204,7 @@ void requireSameState(const deep::GameState& expected, const deep::GameState& ac
         require(left.systemId == right.systemId, "body system ID round-trips");
         require(left.name == right.name, "body name round-trips");
         require(left.type == right.type, "body type round-trips");
+        require(left.strategicZone == right.strategicZone, "body strategic zone round-trips");
         require(almostEqual(left.x, right.x), "body x coordinate round-trips");
         require(almostEqual(left.y, right.y), "body y coordinate round-trips");
     }
@@ -606,7 +607,7 @@ void test_manual_processing_policy_state_round_trips() {
 }
 
 void test_daily_economy_snapshots_are_runtime_only() {
-    // Confirms the schema v7 contract for high-volume economy telemetry. The
+    // Confirms the schema v8 contract for high-volume economy telemetry. The
     // stockpile/deposit state is durable, but per-day mining samples are a
     // current-session UI/forecast/debug aid and intentionally reload empty.
     const std::filesystem::path path = std::filesystem::temp_directory_path() / "deep_signal_transient_telemetry.sqlite";
@@ -700,6 +701,7 @@ void test_malformed_save_invalid_enum_is_rejected() {
     // Invalid enum ordinals must not be raw-cast into domain state because later
     // switch/visitor code assumes only known alternatives.
     expectMalformedSaveRejected("invalid_enum", "UPDATE bodies SET body_type = 99 WHERE id = 1;", true);
+    expectMalformedSaveRejected("invalid_strategic_zone", "UPDATE bodies SET strategic_zone = 99 WHERE id = 1;", true);
 }
 
 void test_malformed_save_negative_stockpile_is_rejected() {

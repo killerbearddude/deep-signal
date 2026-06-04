@@ -87,7 +87,7 @@ void test_colony_summaries_resolve_body_context() {
 
     const auto colonies = queries.colonies();
 
-    require(colonies.size() == 1, "home scenario exposes one colony summary");
+    require(colonies.size() == 4, "home scenario exposes mature-system colony summaries");
     require(colonies.front().name == "Terra Directorate", "colony summary includes colony name");
     require(colonies.front().bodyName == "Terra", "colony summary resolves body name");
     require(colonies.front().ownerInstitutionId.has_value(), "colony summary exposes owner institution ID");
@@ -119,7 +119,7 @@ void test_colony_summaries_include_processing_policy() {
     const deep::SimulationQueries queries{service};
     const auto colonies = queries.colonies();
 
-    require(colonies.size() == 1, "home scenario still exposes one colony summary");
+    require(colonies.size() == 4, "home scenario still exposes mature-system colony summaries");
     require(colonies.front().processingPolicy == deep::ProcessingPolicy::Manual,
             "colony summary exposes processing policy enum");
     require(colonies.front().processingPolicyName == "Manual", "colony summary exposes processing policy display name");
@@ -687,16 +687,23 @@ void test_body_system_overview_exposes_counts() {
     const deep::SimulationQueries queries{service};
     const auto bodies = queries.bodySystemOverview();
 
-    require(bodies.size() == 2, "home scenario exposes two body overview rows");
+    require(bodies.size() == 8, "home scenario exposes mature-system body overview rows");
     require(bodies.front().name == "Terra", "first body overview row resolves Terra");
     require(bodies.front().typeName == "Terrestrial", "body overview resolves body type name");
+    require(bodies.front().strategicZoneName == "Inner Core", "body overview resolves strategic zone name");
+    require(bodies.front().ownerInstitutionName == "Strategic Continuity Office",
+            "body overview resolves colony owner institution where available");
     require(bodies.front().colonyCount == 1, "Terra body overview counts the colony");
     require(bodies.front().mineralDepositCount == 7, "Terra body overview counts mineral deposits");
     require(bodies.front().fleetCount == 1, "Terra body overview counts the newly completed fleet");
     require(bodies.at(1).name == "Mars", "second body overview row resolves Mars");
-    require(bodies.at(1).colonyCount == 0, "Mars body overview has no colonies in the home scenario");
+    require(bodies.at(1).strategicZoneName == "Military Industrial", "Mars body overview resolves military-industrial zone");
+    require(bodies.at(1).ownerInstitutionName == "Naval Construction Board", "Mars body overview resolves yard owner");
+    require(bodies.at(1).colonyCount == 1, "Mars body overview counts the naval yard colony");
     require(bodies.at(1).mineralDepositCount == 4, "Mars body overview counts mineral deposits");
     require(bodies.at(1).fleetCount == 0, "Mars body overview has no fleets before movement");
+    require(bodies.back().strategicZoneName == "Deep Survey Frontier",
+            "remote body overview exposes the survey-frontier zone");
 }
 
 void test_strategic_map_summaries_resolve_positions() {
@@ -717,12 +724,17 @@ void test_strategic_map_summaries_resolve_positions() {
     const auto bodies = queries.strategicBodies();
     const auto fleets = queries.strategicFleets();
 
-    require(bodies.size() == 2, "home scenario exposes two strategic body summaries");
+    require(bodies.size() == 8, "home scenario exposes mature-system strategic body summaries");
     require(bodies.front().name == "Terra", "strategic body summary includes body name");
     require(bodies.front().typeName == "Terrestrial", "strategic body summary includes body type name");
+    require(bodies.front().strategicZoneName == "Inner Core", "strategic body summary includes zone name");
+    require(bodies.front().ownerInstitutionName == "Strategic Continuity Office",
+            "strategic body summary includes owner institution name where available");
     require(bodies.front().x == 0.0 && bodies.front().y == 0.0, "strategic body summary includes coordinates");
     require(bodies.at(1).name == "Mars", "second strategic body summary includes Mars");
     require(bodies.at(1).x == 240.0, "Mars strategic body summary preserves map x coordinate");
+    require(bodies.back().strategicZoneName == "Deep Survey Frontier",
+            "strategic body summary includes survey-frontier body metadata");
 
     require(fleets.size() == 1, "completed ship creates one strategic fleet summary");
     require(fleets.front().name.find("Survey Cutter Fleet") != std::string::npos, "strategic fleet summary includes fleet name");

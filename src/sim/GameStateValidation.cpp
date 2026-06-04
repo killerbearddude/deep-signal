@@ -84,6 +84,18 @@ void requireState(const bool condition, const std::string_view message) {
     return false;
 }
 
+[[nodiscard]] bool isValidStrategicZone(const StrategicZone value) noexcept {
+    switch (value) {
+    case StrategicZone::InnerCore:
+    case StrategicZone::MilitaryIndustrial:
+    case StrategicZone::BeltIndustrial:
+    case StrategicZone::OuterLogistics:
+    case StrategicZone::DeepSurveyFrontier:
+        return true;
+    }
+    return false;
+}
+
 [[nodiscard]] bool isValidShipRole(const ShipRole value) noexcept {
     switch (value) {
     case ShipRole::Survey:
@@ -364,6 +376,7 @@ void validateGameState(const GameState& state) {
         requireValidReference(containsId(state.starSystems, body.systemId), body.systemId, "body system");
         requireState(!body.name.empty(), "body name must be non-empty");
         requireState(isValidBodyType(body.type), "body type must be valid");
+        requireState(isValidStrategicZone(body.strategicZone), "body strategic zone must be valid");
         requireState(isFinite(body.x) && isFinite(body.y), "body coordinates must be finite");
     }
 
