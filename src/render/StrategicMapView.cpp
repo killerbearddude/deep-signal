@@ -1,8 +1,8 @@
 #include "render/StrategicMapView.h"
 
 // Implements the first strategic map renderer using only ImGui draw primitives.
-// This is deliberately simple: bodies and fleets are markers over abstract
-// scenario coordinates, not orbital mechanics or tactical rendering.
+// This remains a presentation layer: it draws deterministic rail positions and
+// sustained-burn previews without owning simulation movement rules.
 
 #include <algorithm>
 #include <limits>
@@ -193,7 +193,7 @@ void StrategicMapView::draw(ImDrawList& drawList,
     drawList.PopClipRect();
 
     const MapPoint center = camera.center();
-    const std::string overlay = "Zoom " + std::to_string(camera.zoom()).substr(0, 4)
+    const std::string overlay = "Zoom " + std::to_string(camera.zoom()).substr(0, 6)
         + " | Center " + std::to_string(center.x).substr(0, 6) + ", " + std::to_string(center.y).substr(0, 6);
     drawList.AddText(ImVec2{canvasMin.x + 8.0F, canvasMin.y + 8.0F}, IM_COL32(180, 185, 195, 255), overlay.c_str());
 }
