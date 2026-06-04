@@ -7,6 +7,7 @@
 #include "sim/IdTypes.h"
 #include "sim/Minerals.h"
 
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <vector>
@@ -77,6 +78,38 @@ struct Person {
     PersonCompetencies competencies;
     int seniorityLevel = 0;
     PersonServiceRecord serviceRecord;
+};
+
+
+// Operational roles that can be assigned to durable personnel records. These
+// appointments are responsibility/audit links only in v1; they do not apply any
+// production, movement, morale, trust, or competence modifiers.
+enum class AppointmentRole {
+    FleetCommander,
+    ColonyAdministrator,
+    ShipyardDirector,
+    SurveyChief,
+    LogisticsCoordinator,
+    InstitutionHead
+};
+
+// Scope category for an appointment target. The paired scopeId stores the typed
+// ID value for the selected Fleet, Colony, or Institution record.
+enum class AppointmentScopeType {
+    Fleet,
+    Colony,
+    Institution
+};
+
+// Current personnel assignment to one operational slot. Appointments are stored
+// separately from assets so future history/effects can evolve without changing
+// fleet, colony, or institution record shape again.
+struct Appointment {
+    AppointmentRole role = AppointmentRole::InstitutionHead;
+    AppointmentScopeType scopeType = AppointmentScopeType::Institution;
+    std::int64_t scopeId = 0;
+    PersonId personId;
+    std::int64_t appointedDay = 0;
 };
 
 // A star system container. Prototype 0.1 starts with a single Sol system.

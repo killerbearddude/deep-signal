@@ -116,6 +116,23 @@ struct PersonSummary {
     PersonServiceRecord serviceRecord;
 };
 
+
+// Display-ready current appointment row. These rows expose responsibility slots
+// for debugging and future UI panels without applying any personnel modifiers.
+struct AppointmentSummary {
+    AppointmentRole role = AppointmentRole::InstitutionHead;
+    std::string roleName;
+    AppointmentScopeType scopeType = AppointmentScopeType::Institution;
+    std::string scopeTypeName;
+    std::int64_t scopeId = 0;
+    std::string scopeName;
+    PersonId personId;
+    std::string personName;
+    InstitutionId personInstitutionId;
+    std::string personInstitutionName;
+    std::int64_t appointedDay = 0;
+};
+
 // Display-ready queued fleet order row. The queue position is one-based so UI
 // tables can present the same ordering players expect from command queues.
 struct FleetQueuedOrderSummary {
@@ -258,6 +275,9 @@ public:
 
     // Returns display-ready personnel rows with resolved institution names.
     [[nodiscard]] std::vector<PersonSummary> personnel() const;
+
+    // Returns current appointment rows with resolved person and scope names.
+    [[nodiscard]] std::vector<AppointmentSummary> appointments() const;
 
     // Returns a display name for an institution reference. Unknown IDs produce a
     // stable placeholder so UI/tests can show broken references clearly.

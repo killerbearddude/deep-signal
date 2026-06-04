@@ -209,6 +209,45 @@ GameState createHomeSystemScenario() {
         .ownerInstitutionId = continuityOfficeId
     });
 
+
+    // Starter appointments name who is responsible for current operational
+    // areas, but do not apply competency modifiers or political effects.
+    state.appointments.push_back(Appointment{
+        .role = AppointmentRole::InstitutionHead,
+        .scopeType = AppointmentScopeType::Institution,
+        .scopeId = continuityOfficeId.value,
+        .personId = continuityDirectorId,
+        .appointedDay = state.date.day
+    });
+    state.appointments.push_back(Appointment{
+        .role = AppointmentRole::ColonyAdministrator,
+        .scopeType = AppointmentScopeType::Colony,
+        .scopeId = terraColonyId.value,
+        .personId = continuityDirectorId,
+        .appointedDay = state.date.day
+    });
+    state.appointments.push_back(Appointment{
+        .role = AppointmentRole::ShipyardDirector,
+        .scopeType = AppointmentScopeType::Colony,
+        .scopeId = terraColonyId.value,
+        .personId = yardLiaisonId,
+        .appointedDay = state.date.day
+    });
+    state.appointments.push_back(Appointment{
+        .role = AppointmentRole::SurveyChief,
+        .scopeType = AppointmentScopeType::Institution,
+        .scopeId = surveyOfficeId.value,
+        .personId = surveyCoordinatorId,
+        .appointedDay = state.date.day
+    });
+    state.appointments.push_back(Appointment{
+        .role = AppointmentRole::LogisticsCoordinator,
+        .scopeType = AppointmentScopeType::Institution,
+        .scopeId = fuelTrustId.value,
+        .personId = fuelPlannerId,
+        .appointedDay = state.date.day
+    });
+
     // Starter deposits are raw resources only. Colony processors convert them
     // into industrial materials consumed by shipyard construction.
     state.mineralDeposits.push_back(MineralDeposit{

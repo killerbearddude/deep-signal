@@ -49,6 +49,29 @@ void requireState(const bool condition, const std::string_view message) {
     return false;
 }
 
+[[nodiscard]] bool isValidAppointmentRole(const AppointmentRole value) noexcept {
+    switch (value) {
+    case AppointmentRole::FleetCommander:
+    case AppointmentRole::ColonyAdministrator:
+    case AppointmentRole::ShipyardDirector:
+    case AppointmentRole::SurveyChief:
+    case AppointmentRole::LogisticsCoordinator:
+    case AppointmentRole::InstitutionHead:
+        return true;
+    }
+    return false;
+}
+
+[[nodiscard]] bool isValidAppointmentScopeType(const AppointmentScopeType value) noexcept {
+    switch (value) {
+    case AppointmentScopeType::Fleet:
+    case AppointmentScopeType::Colony:
+    case AppointmentScopeType::Institution:
+        return true;
+    }
+    return false;
+}
+
 [[nodiscard]] bool isValidBodyType(const BodyType value) noexcept {
     switch (value) {
     case BodyType::Star:
@@ -219,6 +242,18 @@ void validatePersonServiceRecord(const PersonServiceRecord& record) {
     requireState(record.failedAssignments >= 0, "person failed assignments must be non-negative");
     requireState(record.commendations >= 0, "person commendations must be non-negative");
     requireState(record.controversies >= 0, "person controversies must be non-negative");
+}
+
+[[nodiscard]] bool appointmentScopeExists(const GameState& state, const AppointmentScopeType scopeType, const std::int64_t scopeId) noexcept {
+    switch (scopeType) {
+    case AppointmentScopeType::Fleet:
+        return containsId(state.fleets, FleetId{scopeId});
+    case AppointmentScopeType::Colony:
+        return containsId(state.colonies, ColonyId{scopeId});
+    case AppointmentScopeType::Institution:
+        return containsId(state.institutions, InstitutionId{scopeId});
+    }
+    return false;
 }
 
 void validateFleetOrder(const GameState& state, const Fleet& fleet) {
@@ -437,6 +472,28 @@ void validateGameState(const GameState& state) {
         requireState(listedFleetIt != listedShipFleetIds.end(), "ship/fleet references must be bidirectional");
         requireState(listedFleetIt->second == ship.fleetId,
                      "ship fleet ID must match the fleet roster that lists it");
+    }
+
+    std::unordered_set<std::string> appointmentSlots;
+    for (const Appointment& appointment : state.appointments) {
+        requireState(isValidAppointmentRole(appointment.role), "appointment role must be valid");
+        requireState(isValidAppointmentScopeType(appointment.scopeType), "appointment scope type must be valid");
+        requireState(appointment.scopeId > 0, "appointment scope ID must be positive");
+        requireState(appointment.appointedDay >= 0, "appointment day must be non-negative");
+        requireState(appointment.appointedDay <= state.date.day, "appointment day must not exceed current day");
+        requireState(appointmentScopeExists(state, appointment.scopeType, appointment.scopeId),
+                     "appointment target scope reference is missing");
+
+        const Person* person = findById(state.people, appointment.personId);
+        requireValidReference(person != nullptr, appointment.personId, "appointment person");
+        requireState(person == nullptr || containsId(state.institutions, person->institutionId),
+                     "appointment person institution reference is missing");
+
+        const std::string slotKey = std::to_string(static_cast<int>(appointment.role)) + ":" +
+                                    std::to_string(static_cast<int>(appointment.scopeType)) + ":" +
+                                    std::to_string(appointment.scopeId);
+        requireState(appointmentSlots.insert(slotKey).second,
+                     "appointment role/scope slots must be unique");
     }
 
     std::int64_t previousEventId = 0;

@@ -187,6 +187,35 @@ void test_invalid_personnel_records_are_rejected() {
     });
 }
 
+void test_invalid_appointment_records_are_rejected() {
+    // Appointments are current responsibility slots. Validate the person,
+    // target scope, date, enum values, and uniqueness before future merit or
+    // modifier systems trust these records.
+    expectInvalidState("appointment person missing", [](deep::GameState& state) {
+        state.appointments.front().personId = deep::PersonId{999};
+    });
+
+    expectInvalidState("appointment scope missing", [](deep::GameState& state) {
+        state.appointments.front().scopeId = 999;
+    });
+
+    expectInvalidState("duplicate appointment slot", [](deep::GameState& state) {
+        state.appointments.push_back(state.appointments.front());
+    });
+
+    expectInvalidState("future appointment day", [](deep::GameState& state) {
+        state.appointments.front().appointedDay = state.date.day + 1;
+    });
+
+    expectInvalidState("invalid appointment role", [](deep::GameState& state) {
+        state.appointments.front().role = static_cast<deep::AppointmentRole>(999);
+    });
+
+    expectInvalidState("invalid appointment scope type", [](deep::GameState& state) {
+        state.appointments.front().scopeType = static_cast<deep::AppointmentScopeType>(999);
+    });
+}
+
 void test_ship_missing_from_owning_fleet_is_rejected() {
     // Ship and fleet references must be bidirectional. A ship whose fleet does
     // not list it would disappear from fleet-level views and order resolution.
@@ -317,6 +346,7 @@ int main() {
         test_manual_processing_policy_without_positive_total_weight_is_rejected();
         test_invalid_institution_references_are_rejected();
         test_invalid_personnel_records_are_rejected();
+        test_invalid_appointment_records_are_rejected();
         test_ship_missing_from_owning_fleet_is_rejected();
         test_fleet_listing_nonexistent_ship_is_rejected();
         test_ship_claimed_by_multiple_fleets_is_rejected();

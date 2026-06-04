@@ -12,9 +12,9 @@ namespace deep::save {
 
 // Current on-disk schema version supported by this prototype. Any future schema
 // change that alters persisted rows must increment this value and add migration.
-inline constexpr std::int64_t kSchemaVersion = 6;
+inline constexpr std::int64_t kSchemaVersion = 7;
 
-// Creates schema v6 tables and indexes if they do not exist, then ensures the
+// Creates schema v7 tables and indexes if they do not exist, then ensures the
 // schema_version table contains the current version for new databases.
 void initializeSchema(Database& db);
 

@@ -50,6 +50,7 @@ private:
     CommandResult queueFleetMoveOrder(const QueueFleetMoveOrderCommand& command);
     CommandResult clearFleetOrderQueue(const ClearFleetOrderQueueCommand& command);
     CommandResult cancelFleetOrder(const CancelFleetOrderCommand& command);
+    CommandResult assignAppointment(const AssignAppointmentCommand& command);
     CommandResult setColonyProcessingPolicy(const SetColonyProcessingPolicyCommand& command);
 
     // Starts the first queued order, if one exists and can be started from the
@@ -75,6 +76,8 @@ private:
     [[nodiscard]] const ShipClass* findShipClass(ShipClassId id) const noexcept;
     [[nodiscard]] Fleet* findFleet(FleetId id) noexcept;
     [[nodiscard]] const Fleet* findFleet(FleetId id) const noexcept;
+    [[nodiscard]] const Institution* findInstitution(InstitutionId id) const noexcept;
+    [[nodiscard]] const Person* findPerson(PersonId id) const noexcept;
 
     [[nodiscard]] ShipyardOrderId allocateShipyardOrderId() noexcept;
     [[nodiscard]] ShipId allocateShipId() noexcept;

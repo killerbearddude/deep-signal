@@ -38,6 +38,7 @@ struct GameState {
     std::vector<StarSystem> starSystems;
     std::vector<Institution> institutions;
     std::vector<Person> people;
+    std::vector<Appointment> appointments;
     std::vector<Body> bodies;
     std::vector<MineralDeposit> mineralDeposits;
     std::vector<Colony> colonies;

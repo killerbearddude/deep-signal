@@ -123,6 +123,29 @@ using ProcessingShares = std::array<double, processedMaterialCount()>;
     return false;
 }
 
+[[nodiscard]] bool isValidAppointmentRole(const AppointmentRole role) noexcept {
+    switch (role) {
+    case AppointmentRole::FleetCommander:
+    case AppointmentRole::ColonyAdministrator:
+    case AppointmentRole::ShipyardDirector:
+    case AppointmentRole::SurveyChief:
+    case AppointmentRole::LogisticsCoordinator:
+    case AppointmentRole::InstitutionHead:
+        return true;
+    }
+    return false;
+}
+
+[[nodiscard]] bool isValidAppointmentScopeType(const AppointmentScopeType scopeType) noexcept {
+    switch (scopeType) {
+    case AppointmentScopeType::Fleet:
+    case AppointmentScopeType::Colony:
+    case AppointmentScopeType::Institution:
+        return true;
+    }
+    return false;
+}
+
 void addProcessingWeight(ProcessingShares& weights, const ProcessedMaterial material, const double weight) noexcept {
     if (weight <= 0.0 || !isValidProcessedMaterial(material)) {
         return;
@@ -333,6 +356,8 @@ CommandResult Simulation::execute(const SimCommand& command) {
             return clearFleetOrderQueue(concreteCommand);
         } else if constexpr (std::is_same_v<Command, CancelFleetOrderCommand>) {
             return cancelFleetOrder(concreteCommand);
+        } else if constexpr (std::is_same_v<Command, AssignAppointmentCommand>) {
+            return assignAppointment(concreteCommand);
         } else if constexpr (std::is_same_v<Command, SetColonyProcessingPolicyCommand>) {
             return setColonyProcessingPolicy(concreteCommand);
         }
@@ -517,6 +542,76 @@ CommandResult Simulation::cancelFleetOrder(const CancelFleetOrderCommand& comman
     fleet->activeOrder = FleetOrder{};
 
     return CommandResult::success("Fleet order cancelled");
+}
+
+CommandResult Simulation::assignAppointment(const AssignAppointmentCommand& command) {
+    if (!isValidAppointmentRole(command.role)) {
+        appendEvent(EventSeverity::Warning, CommandRejectedEvent{"Appointment role is invalid"});
+        return CommandResult::failure("Appointment role is invalid");
+    }
+
+    if (!isValidAppointmentScopeType(command.scopeType)) {
+        appendEvent(EventSeverity::Warning, CommandRejectedEvent{"Appointment scope type is invalid"});
+        return CommandResult::failure("Appointment scope type is invalid");
+    }
+
+    if (command.scopeId <= 0) {
+        appendEvent(EventSeverity::Warning, CommandRejectedEvent{"Appointment scope ID must be positive"});
+        return CommandResult::failure("Appointment scope ID must be positive");
+    }
+
+    const Person* person = findPerson(command.personId);
+    if (person == nullptr) {
+        appendEvent(EventSeverity::Warning, CommandRejectedEvent{"Appointment person does not exist"});
+        return CommandResult::failure("Appointment person does not exist");
+    }
+
+    if (findInstitution(person->institutionId) == nullptr) {
+        appendEvent(EventSeverity::Warning, CommandRejectedEvent{"Appointment person institution does not exist"});
+        return CommandResult::failure("Appointment person institution does not exist");
+    }
+
+    const bool scopeExists = [this, &command] {
+        switch (command.scopeType) {
+        case AppointmentScopeType::Fleet:
+            return findFleet(FleetId{command.scopeId}) != nullptr;
+        case AppointmentScopeType::Colony:
+            return findColony(ColonyId{command.scopeId}) != nullptr;
+        case AppointmentScopeType::Institution:
+            return findInstitution(InstitutionId{command.scopeId}) != nullptr;
+        }
+        return false;
+    }();
+
+    if (!scopeExists) {
+        appendEvent(EventSeverity::Warning, CommandRejectedEvent{"Appointment target scope does not exist"});
+        return CommandResult::failure("Appointment target scope does not exist");
+    }
+
+    const auto sameSlot = [&command](const Appointment& appointment) {
+        return appointment.role == command.role &&
+               appointment.scopeType == command.scopeType &&
+               appointment.scopeId == command.scopeId;
+    };
+
+    const auto it = std::find_if(state_.appointments.begin(), state_.appointments.end(), sameSlot);
+    if (it != state_.appointments.end()) {
+        // Appointments represent current slots, not history yet. Reassigning a
+        // slot updates the responsible person while preserving the uniqueness
+        // invariant that validation enforces for imported/saved states.
+        it->personId = command.personId;
+        it->appointedDay = state_.date.day;
+    } else {
+        state_.appointments.push_back(Appointment{
+            .role = command.role,
+            .scopeType = command.scopeType,
+            .scopeId = command.scopeId,
+            .personId = command.personId,
+            .appointedDay = state_.date.day
+        });
+    }
+
+    return CommandResult::success("Appointment assigned");
 }
 
 CommandResult Simulation::setColonyProcessingPolicy(const SetColonyProcessingPolicyCommand& command) {
@@ -927,6 +1022,14 @@ Fleet* Simulation::findFleet(const FleetId id) noexcept {
 
 const Fleet* Simulation::findFleet(const FleetId id) const noexcept {
     return findById(state_.fleets, id);
+}
+
+const Institution* Simulation::findInstitution(const InstitutionId id) const noexcept {
+    return findById(state_.institutions, id);
+}
+
+const Person* Simulation::findPerson(const PersonId id) const noexcept {
+    return findById(state_.people, id);
 }
 
 ShipyardOrderId Simulation::allocateShipyardOrderId() noexcept {

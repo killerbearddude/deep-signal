@@ -44,6 +44,11 @@ template <typename T, typename IdT>
     return id.has_value() ? institutionName(state, *id) : std::string{};
 }
 
+[[nodiscard]] std::string personName(const GameState& state, const PersonId id) {
+    const Person* person = findById(state.people, id);
+    return person == nullptr ? std::string{"<unknown person>"} : person->name;
+}
+
 [[nodiscard]] const Body* bodyById(const GameState& state, const BodyId id) noexcept {
     return findById(state.bodies, id);
 }
@@ -165,6 +170,57 @@ struct FleetFuelTotals {
     }
 
     return "Unknown";
+}
+
+[[nodiscard]] std::string appointmentRoleName(const AppointmentRole role) {
+    switch (role) {
+    case AppointmentRole::FleetCommander:
+        return "Fleet Commander";
+    case AppointmentRole::ColonyAdministrator:
+        return "Colony Administrator";
+    case AppointmentRole::ShipyardDirector:
+        return "Shipyard Director";
+    case AppointmentRole::SurveyChief:
+        return "Survey Chief";
+    case AppointmentRole::LogisticsCoordinator:
+        return "Logistics Coordinator";
+    case AppointmentRole::InstitutionHead:
+        return "Institution Head";
+    }
+
+    return "Unknown";
+}
+
+[[nodiscard]] std::string appointmentScopeTypeName(const AppointmentScopeType scopeType) {
+    switch (scopeType) {
+    case AppointmentScopeType::Fleet:
+        return "Fleet";
+    case AppointmentScopeType::Colony:
+        return "Colony";
+    case AppointmentScopeType::Institution:
+        return "Institution";
+    }
+
+    return "Unknown";
+}
+
+[[nodiscard]] std::string appointmentScopeName(const GameState& state, const AppointmentScopeType scopeType, const std::int64_t scopeId) {
+    switch (scopeType) {
+    case AppointmentScopeType::Fleet:
+        if (const Fleet* fleet = findById(state.fleets, FleetId{scopeId}); fleet != nullptr) {
+            return fleet->name;
+        }
+        return "<unknown fleet>";
+    case AppointmentScopeType::Colony:
+        if (const Colony* colony = findById(state.colonies, ColonyId{scopeId}); colony != nullptr) {
+            return colony->name;
+        }
+        return "<unknown colony>";
+    case AppointmentScopeType::Institution:
+        return institutionName(state, InstitutionId{scopeId});
+    }
+
+    return "<unknown scope>";
 }
 
 [[nodiscard]] std::string processingPolicyName(const ProcessingPolicy policy) {
@@ -621,6 +677,32 @@ std::vector<PersonSummary> SimulationQueries::personnel() const {
     return summaries;
 }
 
+
+std::vector<AppointmentSummary> SimulationQueries::appointments() const {
+    const GameState& state = service_.state();
+    std::vector<AppointmentSummary> summaries;
+    summaries.reserve(state.appointments.size());
+
+    for (const Appointment& appointment : state.appointments) {
+        const Person* person = findById(state.people, appointment.personId);
+        const InstitutionId institutionId = person == nullptr ? InstitutionId{} : person->institutionId;
+        summaries.push_back(AppointmentSummary{
+            .role = appointment.role,
+            .roleName = appointmentRoleName(appointment.role),
+            .scopeType = appointment.scopeType,
+            .scopeTypeName = appointmentScopeTypeName(appointment.scopeType),
+            .scopeId = appointment.scopeId,
+            .scopeName = appointmentScopeName(state, appointment.scopeType, appointment.scopeId),
+            .personId = appointment.personId,
+            .personName = personName(state, appointment.personId),
+            .personInstitutionId = institutionId,
+            .personInstitutionName = institutionId ? institutionName(state, institutionId) : std::string{"<unknown institution>"},
+            .appointedDay = appointment.appointedDay
+        });
+    }
+
+    return summaries;
+}
 
 std::string SimulationQueries::institutionDisplayName(const InstitutionId id) const {
     return institutionName(service_.state(), id);

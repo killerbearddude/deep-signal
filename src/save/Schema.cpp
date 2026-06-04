@@ -1,6 +1,6 @@
 #include "save/Schema.h"
 
-// Implements schema v6 for Prototype 0.1 saves.
+// Implements schema v7 for Prototype 0.1 saves.
 // The schema mirrors GameState-owned records and keeps event payloads as typed
 // JSON text for inspectable, forward-migratable audit history. CHECK constraints
 // intentionally duplicate core invariants so hand-edited save files fail early.
@@ -36,7 +36,7 @@ void initializeSchema(Database& db) {
 
         CREATE TABLE IF NOT EXISTS schema_version (
             id INTEGER PRIMARY KEY CHECK(id = 1),
-            version INTEGER NOT NULL CHECK(version = 6)
+            version INTEGER NOT NULL CHECK(version = 7)
         );
 
         CREATE TABLE IF NOT EXISTS game_meta (
@@ -78,6 +78,17 @@ void initializeSchema(Database& db) {
             commendations INTEGER NOT NULL CHECK(commendations >= 0),
             controversies INTEGER NOT NULL CHECK(controversies >= 0),
             FOREIGN KEY(institution_id) REFERENCES institutions(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS appointments (
+            ordinal INTEGER PRIMARY KEY NOT NULL CHECK(ordinal >= 0),
+            role INTEGER NOT NULL CHECK(role BETWEEN 0 AND 5),
+            scope_type INTEGER NOT NULL CHECK(scope_type BETWEEN 0 AND 2),
+            scope_id INTEGER NOT NULL CHECK(scope_id > 0),
+            person_id INTEGER NOT NULL CHECK(person_id > 0),
+            appointed_day INTEGER NOT NULL CHECK(appointed_day >= 0),
+            UNIQUE(role, scope_type, scope_id),
+            FOREIGN KEY(person_id) REFERENCES people(id)
         );
 
         CREATE TABLE IF NOT EXISTS bodies (
@@ -230,6 +241,7 @@ void initializeSchema(Database& db) {
         );
 
         CREATE INDEX IF NOT EXISTS idx_people_institution_id ON people(institution_id);
+        CREATE INDEX IF NOT EXISTS idx_appointments_person_id ON appointments(person_id);
         CREATE INDEX IF NOT EXISTS idx_bodies_system_id ON bodies(system_id);
         CREATE INDEX IF NOT EXISTS idx_colonies_body_id ON colonies(body_id);
         CREATE INDEX IF NOT EXISTS idx_colonies_owner_institution_id ON colonies(owner_institution_id);

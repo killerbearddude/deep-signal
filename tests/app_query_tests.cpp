@@ -179,6 +179,53 @@ void test_personnel_summaries_resolve_institution_context() {
             "personnel summary includes service record counters");
 }
 
+void test_appointment_summaries_resolve_people_and_scopes() {
+    // Appointment queries flatten current responsibility slots into resolved
+    // display rows. This keeps future personnel/debug panels out of raw
+    // GameState appointment vectors.
+    deep::SimulationService service;
+    const deep::ColonyId colonyId = service.state().colonies.front().id;
+    const deep::PersonId replacementPersonId = service.state().people.at(2).id;
+
+    require(service.execute(deep::AssignAppointmentCommand{
+        .role = deep::AppointmentRole::ShipyardDirector,
+        .scopeType = deep::AppointmentScopeType::Colony,
+        .scopeId = colonyId.value,
+        .personId = replacementPersonId
+    }).ok, "appointment reassignment is accepted before query");
+
+    const deep::SimulationQueries queries{service};
+    const auto appointments = queries.appointments();
+
+    require(appointments.size() >= 5, "home scenario exposes starter appointment summaries");
+
+    bool foundShipyardDirector = false;
+    bool foundInstitutionHead = false;
+    for (const deep::AppointmentSummary& appointment : appointments) {
+        if (appointment.role == deep::AppointmentRole::ShipyardDirector &&
+            appointment.scopeType == deep::AppointmentScopeType::Colony &&
+            appointment.scopeId == colonyId.value) {
+            foundShipyardDirector = true;
+            require(appointment.roleName == "Shipyard Director", "appointment summary resolves role name");
+            require(appointment.scopeTypeName == "Colony", "appointment summary resolves scope type name");
+            require(appointment.scopeName == "Terra Directorate", "appointment summary resolves colony scope name");
+            require(appointment.personId == replacementPersonId, "appointment summary exposes assigned person ID");
+            require(appointment.personName == "Dr. Nia Okafor", "appointment summary resolves assigned person name");
+            require(appointment.personInstitutionName == "Survey Office",
+                    "appointment summary resolves assigned person's institution");
+        }
+        if (appointment.role == deep::AppointmentRole::InstitutionHead &&
+            appointment.scopeType == deep::AppointmentScopeType::Institution) {
+            foundInstitutionHead = true;
+            require(appointment.scopeName == "Strategic Continuity Office",
+                    "appointment summary resolves institution scope name");
+        }
+    }
+
+    require(foundShipyardDirector, "appointment summaries include reassigned shipyard director slot");
+    require(foundInstitutionHead, "appointment summaries include starter institution-head slot");
+}
+
 void test_ship_class_summaries_expose_build_targets() {
     // Verifies that UI production panels can discover buildable ship classes
     // through query DTOs instead of reading GameState::shipClasses directly.
@@ -469,6 +516,7 @@ int main() {
         test_shipyard_order_summaries_resolve_names();
         test_production_backlog_summaries_expose_queue_eta();
         test_personnel_summaries_resolve_institution_context();
+        test_appointment_summaries_resolve_people_and_scopes();
         test_ship_class_summaries_expose_build_targets();
         test_fleet_summaries_resolve_location_and_order();
         test_fleet_summaries_include_queued_orders();

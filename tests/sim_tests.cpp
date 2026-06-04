@@ -637,6 +637,65 @@ void test_clear_fleet_order_queue_preserves_current_order() {
             "no follow-up order starts after queue is cleared");
 }
 
+void test_assign_appointment_command_replaces_current_slot() {
+    // Verifies appointments are mutated through the command boundary and remain
+    // one current record per role/scope slot. Reassignment updates responsibility
+    // without adding gameplay modifiers or duplicate historical rows yet.
+    deep::Simulation sim{deep::createHomeSystemScenario()};
+    sim.advanceDays(2);
+
+    const deep::ColonyId colonyId = sim.state().colonies.front().id;
+    const deep::PersonId replacementPersonId = sim.state().people.at(2).id;
+
+    const auto result = sim.execute(deep::AssignAppointmentCommand{
+        .role = deep::AppointmentRole::ShipyardDirector,
+        .scopeType = deep::AppointmentScopeType::Colony,
+        .scopeId = colonyId.value,
+        .personId = replacementPersonId
+    });
+
+    require(result.ok, "valid appointment assignment is accepted");
+
+    int matchingSlots = 0;
+    const deep::Appointment* matchedAppointment = nullptr;
+    for (const deep::Appointment& appointment : sim.state().appointments) {
+        if (appointment.role == deep::AppointmentRole::ShipyardDirector &&
+            appointment.scopeType == deep::AppointmentScopeType::Colony &&
+            appointment.scopeId == colonyId.value) {
+            ++matchingSlots;
+            matchedAppointment = &appointment;
+        }
+    }
+
+    require(matchingSlots == 1, "appointment reassignment preserves one row per slot");
+    require(matchedAppointment != nullptr && matchedAppointment->personId == replacementPersonId,
+            "appointment records the replacement person");
+    require(matchedAppointment != nullptr && matchedAppointment->appointedDay == sim.state().date.day,
+            "appointment records the reassignment day");
+}
+
+void test_assign_appointment_command_rejects_invalid_target() {
+    // Verifies command-time validation rejects dangling personnel and scope IDs
+    // before they can enter GameState and later be persisted.
+    deep::Simulation sim{deep::createHomeSystemScenario()};
+
+    const auto missingPerson = sim.execute(deep::AssignAppointmentCommand{
+        .role = deep::AppointmentRole::InstitutionHead,
+        .scopeType = deep::AppointmentScopeType::Institution,
+        .scopeId = sim.state().institutions.front().id.value,
+        .personId = deep::PersonId{999}
+    });
+    require(!missingPerson.ok, "appointment command rejects missing person");
+
+    const auto missingScope = sim.execute(deep::AssignAppointmentCommand{
+        .role = deep::AppointmentRole::InstitutionHead,
+        .scopeType = deep::AppointmentScopeType::Institution,
+        .scopeId = 999,
+        .personId = sim.state().people.front().id
+    });
+    require(!missingScope.ok, "appointment command rejects missing scope");
+}
+
 void test_rejected_invalid_command() {
     // Verifies that invalid commands fail through CommandResult and are recorded
     // in the audit log. Prevents silent validation failures in future UI code.
@@ -677,6 +736,8 @@ int main() {
         test_cancel_fleet_order();
         test_fleet_order_queue_starts_next_order_after_arrival();
         test_clear_fleet_order_queue_preserves_current_order();
+        test_assign_appointment_command_replaces_current_slot();
+        test_assign_appointment_command_rejects_invalid_target();
         test_rejected_invalid_command();
     } catch (const std::exception& ex) {
         std::cerr << "Test failure: " << ex.what() << '\n';

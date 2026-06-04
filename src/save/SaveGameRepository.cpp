@@ -1,6 +1,6 @@
 #include "save/SaveGameRepository.h"
 
-// Implements schema v6 save/load mapping for the headless simulation state.
+// Implements schema v7 save/load mapping for the headless simulation state.
 // The repository uses prepared statements and transactions throughout; raw SQL
 // execution is limited to static schema/table maintenance statements with no data.
 
@@ -42,7 +42,7 @@ template <typename EnumT>
     return static_cast<std::int64_t>(value);
 }
 
-// Returns true when a persisted enum ordinal is part of the current schema v6
+// Returns true when a persisted enum ordinal is part of the current schema v7
 // contract. Keep this explicit instead of raw-casting database values; SQLite
 // files are inspectable and may be hand-edited or corrupted.
 template <typename EnumT>
@@ -53,6 +53,10 @@ template <typename EnumT>
         return value >= 0 && value < static_cast<std::int64_t>(processedMaterialCount());
     } else if constexpr (std::is_same_v<EnumT, InstitutionType>) {
         return value >= 0 && value <= static_cast<std::int64_t>(InstitutionType::ContinuityOffice);
+    } else if constexpr (std::is_same_v<EnumT, AppointmentRole>) {
+        return value >= 0 && value <= static_cast<std::int64_t>(AppointmentRole::InstitutionHead);
+    } else if constexpr (std::is_same_v<EnumT, AppointmentScopeType>) {
+        return value >= 0 && value <= static_cast<std::int64_t>(AppointmentScopeType::Institution);
     } else if constexpr (std::is_same_v<EnumT, BodyType>) {
         return value >= 0 && value <= static_cast<std::int64_t>(BodyType::Asteroid);
     } else if constexpr (std::is_same_v<EnumT, ShipRole>) {
@@ -149,11 +153,12 @@ void reuse(Statement& stmt) {
 }
 
 void clearExistingSave(Database& db) {
-    // Delete child tables first because schema v6 intentionally uses explicit
+    // Delete child tables first because schema v7 intentionally uses explicit
     // foreign keys rather than ON DELETE CASCADE. This makes destructive save
     // behavior visible and easy to audit.
     db.execute(R"sql(
         DELETE FROM event_log;
+        DELETE FROM appointments;
         DELETE FROM ships;
         DELETE FROM fleet_order_queue;
         DELETE FROM fleets;
@@ -261,6 +266,25 @@ void savePeople(Database& db, const GameState& state) {
         stmt.bindInt64(14, person.serviceRecord.failedAssignments);
         stmt.bindInt64(15, person.serviceRecord.commendations);
         stmt.bindInt64(16, person.serviceRecord.controversies);
+        stmt.execute();
+        reuse(stmt);
+    }
+}
+
+void saveAppointments(Database& db, const GameState& state) {
+    Statement stmt{db, R"sql(
+        INSERT INTO appointments(ordinal, role, scope_type, scope_id, person_id, appointed_day)
+        VALUES (?, ?, ?, ?, ?, ?);
+    )sql"};
+
+    for (std::size_t ordinal = 0; ordinal < state.appointments.size(); ++ordinal) {
+        const Appointment& appointment = state.appointments.at(ordinal);
+        stmt.bindInt64(1, static_cast<std::int64_t>(ordinal));
+        stmt.bindInt64(2, enumValue(appointment.role));
+        stmt.bindInt64(3, enumValue(appointment.scopeType));
+        stmt.bindInt64(4, appointment.scopeId);
+        stmt.bindInt64(5, idValue(appointment.personId));
+        stmt.bindInt64(6, appointment.appointedDay);
         stmt.execute();
         reuse(stmt);
     }
@@ -570,6 +594,24 @@ void loadPeople(Database& db, GameState& state) {
     }
 }
 
+void loadAppointments(Database& db, GameState& state) {
+    Statement stmt{db, R"sql(
+        SELECT role, scope_type, scope_id, person_id, appointed_day
+        FROM appointments
+        ORDER BY ordinal;
+    )sql"};
+
+    while (stmt.step()) {
+        state.appointments.push_back(Appointment{
+            .role = enumFromValue<AppointmentRole>(stmt.columnInt64(0)),
+            .scopeType = enumFromValue<AppointmentScopeType>(stmt.columnInt64(1)),
+            .scopeId = stmt.columnInt64(2),
+            .personId = PersonId{stmt.columnInt64(3)},
+            .appointedDay = stmt.columnInt64(4)
+        });
+    }
+}
+
 void loadBodies(Database& db, GameState& state) {
     Statement stmt{db, "SELECT id, system_id, name, body_type, x, y FROM bodies ORDER BY id;"};
     while (stmt.step()) {
@@ -800,6 +842,7 @@ void SaveGameRepository::save(const std::filesystem::path& path, const GameState
     saveStarSystems(db, state);
     saveInstitutions(db, state);
     savePeople(db, state);
+    saveAppointments(db, state);
     saveBodies(db, state);
     saveColonies(db, state);
     saveMineralDeposits(db, state);
@@ -838,10 +881,11 @@ GameState SaveGameRepository::load(const std::filesystem::path& path) {
     loadShipyardOrders(db, state);
     loadFleets(db, state);
     loadShips(db, state);
+    loadAppointments(db, state);
     loadEvents(db, state);
 
     // There is intentionally no load step for dailyEconomySnapshots. Economy
-    // telemetry is transient runtime data in schema v6 and remains empty until
+    // telemetry is transient runtime data in schema v7 and remains empty until
     // the loaded simulation advances new days.
 
     // SQLite constraints are first-line protection only. The authoritative pass

@@ -7,6 +7,7 @@
 #include "sim/Domain.h"
 #include "sim/IdTypes.h"
 
+#include <cstdint>
 #include <variant>
 #include <vector>
 
@@ -51,6 +52,17 @@ struct CancelFleetOrderCommand {
     FleetId fleetId;
 };
 
+
+// Assigns or replaces the current person responsible for one appointment slot.
+// The target scope is identified by its scope type and raw typed-ID value so one
+// command can cover fleets, colonies, and institutions without a variant payload.
+struct AssignAppointmentCommand {
+    AppointmentRole role = AppointmentRole::InstitutionHead;
+    AppointmentScopeType scopeType = AppointmentScopeType::Institution;
+    std::int64_t scopeId = 0;
+    PersonId personId;
+};
+
 // Requests a processing policy change for one colony. Manual allocations are
 // relative weights; the simulation normalizes them during the daily processing
 // pass rather than storing percentages that can drift due to rounding.
@@ -69,6 +81,7 @@ using SimCommand = std::variant<
     QueueFleetMoveOrderCommand,
     ClearFleetOrderQueueCommand,
     CancelFleetOrderCommand,
+    AssignAppointmentCommand,
     SetColonyProcessingPolicyCommand
 >;
 

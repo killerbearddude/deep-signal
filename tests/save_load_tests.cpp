@@ -6,7 +6,7 @@
 #include "sim/ScenarioFactory.h"
 
 // Regression tests for SQLite save/load round-tripping.
-// These tests verify that schema v6 persists durable Prototype 0.1 state,
+// These tests verify that schema v7 persists durable Prototype 0.1 state,
 // including ID counters, institutions, ownership, production, fleet orders, and events.
 // Runtime-only economy telemetry is tested separately as intentionally transient.
 
@@ -183,6 +183,17 @@ void requireSameState(const deep::GameState& expected, const deep::GameState& ac
                 "person commendation count round-trips");
         require(left.serviceRecord.controversies == right.serviceRecord.controversies,
                 "person controversy count round-trips");
+    }
+
+    require(expected.appointments.size() == actual.appointments.size(), "appointment row count round-trips");
+    for (std::size_t i = 0; i < expected.appointments.size(); ++i) {
+        const deep::Appointment& left = expected.appointments.at(i);
+        const deep::Appointment& right = actual.appointments.at(i);
+        require(left.role == right.role, "appointment role round-trips");
+        require(left.scopeType == right.scopeType, "appointment scope type round-trips");
+        require(left.scopeId == right.scopeId, "appointment scope ID round-trips");
+        require(left.personId == right.personId, "appointment person ID round-trips");
+        require(left.appointedDay == right.appointedDay, "appointment day round-trips");
     }
 
     require(expected.bodies.size() == actual.bodies.size(), "body row count round-trips");
@@ -595,7 +606,7 @@ void test_manual_processing_policy_state_round_trips() {
 }
 
 void test_daily_economy_snapshots_are_runtime_only() {
-    // Confirms the schema v6 contract for high-volume economy telemetry. The
+    // Confirms the schema v7 contract for high-volume economy telemetry. The
     // stockpile/deposit state is durable, but per-day mining samples are a
     // current-session UI/forecast/debug aid and intentionally reload empty.
     const std::filesystem::path path = std::filesystem::temp_directory_path() / "deep_signal_transient_telemetry.sqlite";
@@ -765,6 +776,25 @@ void test_malformed_save_unknown_order_status_is_rejected() {
                                 true);
 }
 
+void test_malformed_save_broken_appointment_person_is_rejected() {
+    // Appointments are responsibility records. A slot pointing at a missing
+    // person must not load because future effects will trust the person ID.
+    expectMalformedSaveRejected("broken_appointment_person",
+                                "UPDATE appointments SET person_id = 999 WHERE role = 5;",
+                                false,
+                                true);
+}
+
+void test_malformed_save_broken_appointment_scope_is_rejected() {
+    // Appointment target scopes are polymorphic, so SQLite cannot foreign-key
+    // them directly. GameState validation must reject missing fleet/colony/
+    // institution targets after loading rows.
+    expectMalformedSaveRejected("broken_appointment_scope",
+                                "UPDATE appointments SET scope_id = 999 WHERE role = 5;",
+                                false,
+                                false);
+}
+
 void test_malformed_save_broken_person_institution_reference_is_rejected() {
     // Personnel are tied to institutions. A broken reference would make later
     // appointment or merit systems operate on an unowned person record.
@@ -845,6 +875,8 @@ int main() {
         test_malformed_save_completed_order_with_build_progress_is_rejected();
         test_malformed_save_active_order_already_complete_is_rejected();
         test_malformed_save_unknown_order_status_is_rejected();
+        test_malformed_save_broken_appointment_person_is_rejected();
+        test_malformed_save_broken_appointment_scope_is_rejected();
         test_malformed_save_broken_person_institution_reference_is_rejected();
         test_malformed_save_negative_person_counter_is_rejected();
         test_malformed_save_broken_owner_institution_reference_is_rejected();
