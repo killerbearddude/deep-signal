@@ -876,6 +876,32 @@ void test_body_deposit_queries_expose_confidence_status() {
             "deposit detail exposes partial confidence");
     require(deposits.front().confirmedQuantity < deposits.front().estimatedQuantity,
             "deposit detail separates confirmed and estimated quantities");
+    require(!deposits.front().strategicRelevance.empty(),
+            "deposit detail explains survey or shortage relevance");
+}
+
+void test_exploration_intelligence_lists_survey_targets() {
+    // The exploration summary is the app-layer bridge from deposit confidence to
+    // strategy: it lists uncertain reserves before any future request/AI system.
+    const deep::SimulationService service;
+    const deep::SimulationQueries queries{service};
+    const deep::ExplorationIntelligenceSummary intelligence = queries.explorationIntelligence();
+
+    require(!intelligence.lowConfidenceDeposits.empty(), "exploration intelligence lists low-confidence deposits");
+    require(intelligence.lowConfidenceDeposits.front().confidence <= intelligence.lowConfidenceDeposits.back().confidence,
+            "survey targets are sorted by low confidence first when relevance ties allow it");
+
+    const auto frontierRareEarth = std::find_if(
+        intelligence.lowConfidenceDeposits.begin(),
+        intelligence.lowConfidenceDeposits.end(),
+        [](const deep::ExplorationDepositIntelligenceRow& row) {
+            return row.bodyName == "Helios Far Survey Object" && row.mineral == deep::Mineral::RareEarthElements;
+        });
+    require(frontierRareEarth != intelligence.lowConfidenceDeposits.end(),
+            "exploration intelligence includes hidden frontier rare-earth potential");
+    require(frontierRareEarth->surveyStateName == "Unknown", "hidden deposit is marked unknown in the intelligence summary");
+    require(frontierRareEarth->unknownPotentialQuantity > 0.0, "unknown deposit exposes potential instead of confirmed supply");
+    require(!frontierRareEarth->strategicRelevance.empty(), "survey target includes strategic relevance text");
 }
 
 void test_resource_survey_preview_and_queries_update_after_survey() {
@@ -915,6 +941,13 @@ void test_resource_survey_preview_and_queries_update_after_survey() {
     require(body != overview.end(), "surveyed frontier body remains in body overview");
     require(body->unknownDepositCount == 0, "survey clears unknown deposit count for the target body");
     require(body->estimatedDepositCount == 3, "surveyed deposits remain visible estimates until fully known");
+
+    const deep::ExplorationIntelligenceSummary intelligence = queries.explorationIntelligence();
+    require(!intelligence.recentSurveyResults.empty(), "exploration intelligence reports recent survey results");
+    require(intelligence.recentSurveyResults.front().bodyName == "Helios Far Survey Object",
+            "recent survey result resolves body name");
+    require(intelligence.recentSurveyResults.front().depositsImproved == 3,
+            "recent survey result reports changed deposit count");
 }
 
 void test_recent_events_returns_limited_chronological_tail() {
@@ -979,6 +1012,7 @@ int main() {
         test_body_system_overview_exposes_counts();
         test_strategic_map_summaries_resolve_positions();
         test_body_deposit_queries_expose_confidence_status();
+        test_exploration_intelligence_lists_survey_targets();
         test_resource_survey_preview_and_queries_update_after_survey();
         test_recent_events_returns_limited_chronological_tail();
     } catch (const std::exception& ex) {

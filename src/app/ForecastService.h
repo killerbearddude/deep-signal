@@ -57,11 +57,15 @@ struct MineralForecastCauseChain {
     std::string mineralName;
     double stockpile = 0.0;
     double confirmedDepositQuantity = 0.0;
+    double estimatedDepositQuantity = 0.0;
+    double unknownPotentialQuantity = 0.0;
     double uncertainDepositQuantity = 0.0;
     double miningIncomePerDay = 0.0;
     double committedDemandPerDay = 0.0;
     double netPerDay = 0.0;
     std::optional<int> stockpileRunoutDays;
+    bool dependsMostlyOnEstimatedSupply = false;
+    std::string uncertaintyWarning;
     std::vector<MineralForecastCauseRow> causes;
 };
 

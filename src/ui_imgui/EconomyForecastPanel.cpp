@@ -103,9 +103,12 @@ void EconomyForecastPanel::render(const ForecastService& forecasts, bool& visibl
     }
 
     ImGui::TextUnformatted("Raw resources");
-    if (ImGui::BeginTable("EconomyForecastRawMineralTable", 7, kForecastTableFlags)) {
+    if (ImGui::BeginTable("EconomyForecastRawMineralTable", 10, kForecastTableFlags)) {
         ImGui::TableSetupColumn("Mineral");
         ImGui::TableSetupColumn("Stockpile");
+        ImGui::TableSetupColumn("Confirmed");
+        ImGui::TableSetupColumn("Estimated");
+        ImGui::TableSetupColumn("Unknown");
         ImGui::TableSetupColumn("Income/day");
         ImGui::TableSetupColumn("Demand/day");
         ImGui::TableSetupColumn("Net/day");
@@ -127,18 +130,24 @@ void EconomyForecastPanel::render(const ForecastService& forecasts, bool& visibl
             ImGui::TableSetColumnIndex(1);
             ImGui::Text("%.1f", chain.stockpile);
             ImGui::TableSetColumnIndex(2);
-            ImGui::Text("%.1f", chain.miningIncomePerDay);
+            ImGui::Text("%.0f", chain.confirmedDepositQuantity);
             ImGui::TableSetColumnIndex(3);
-            ImGui::Text("%.1f", chain.committedDemandPerDay);
+            ImGui::Text("%.0f", chain.estimatedDepositQuantity);
             ImGui::TableSetColumnIndex(4);
-            ImGui::Text("%.1f", chain.netPerDay);
+            ImGui::Text("%.0f", chain.unknownPotentialQuantity);
             ImGui::TableSetColumnIndex(5);
+            ImGui::Text("%.1f", chain.miningIncomePerDay);
+            ImGui::TableSetColumnIndex(6);
+            ImGui::Text("%.1f", chain.committedDemandPerDay);
+            ImGui::TableSetColumnIndex(7);
+            ImGui::Text("%.1f", chain.netPerDay);
+            ImGui::TableSetColumnIndex(8);
             if (chain.stockpileRunoutDays.has_value()) {
                 ImGui::Text("%d d", *chain.stockpileRunoutDays);
             } else {
                 ImGui::TextUnformatted("--");
             }
-            ImGui::TableSetColumnIndex(6);
+            ImGui::TableSetColumnIndex(9);
             ImGui::TextUnformatted(statusText(chain.netPerDay));
         }
 
@@ -147,6 +156,9 @@ void EconomyForecastPanel::render(const ForecastService& forecasts, bool& visibl
 
     const MineralForecastCauseChain* selectedMineral = selectedChain(mineralChains, selectedMineral_);
     if (selectedMineral != nullptr) {
+        if (!selectedMineral->uncertaintyWarning.empty()) {
+            ImGui::TextWrapped("Survey warning: %s", selectedMineral->uncertaintyWarning.c_str());
+        }
         renderCauseRows(selectedMineral->mineralName, selectedMineral->causes);
     } else {
         ImGui::TextUnformatted("No raw-resource forecast rows are available.");

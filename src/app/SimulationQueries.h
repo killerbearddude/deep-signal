@@ -317,6 +317,49 @@ struct BodyDepositSummary {
     double estimatedQuantity = 0.0;
     double uncertainQuantity = 0.0;
     double accessibility = 1.0;
+    bool shortageRelevant = false;
+    std::string strategicRelevance;
+};
+
+// One low-confidence reserve row in the exploration intelligence summary. These
+// rows answer "where should we survey next?" without introducing survey AI.
+struct ExplorationDepositIntelligenceRow {
+    BodyId bodyId;
+    std::string bodyName;
+    Mineral mineral = Mineral::Iron;
+    std::string mineralName;
+    DepositSurveyState surveyState = DepositSurveyState::Unknown;
+    std::string surveyStateName;
+    double confidence = 0.0;
+    double confirmedQuantity = 0.0;
+    double estimatedQuantity = 0.0;
+    double unknownPotentialQuantity = 0.0;
+    double accessibility = 1.0;
+    bool shortageRelevant = false;
+    std::string strategicRelevance;
+};
+
+// Compact audit row for completed surveys. It intentionally references the
+// existing survey-completed event rather than adding save/schema state.
+struct RecentSurveyResultSummary {
+    EventId eventId;
+    std::int64_t day = 0;
+    FleetId fleetId;
+    std::string fleetName;
+    BodyId bodyId;
+    std::string bodyName;
+    int depositsImproved = 0;
+    double averageConfidenceBefore = 0.0;
+    double averageConfidenceAfter = 0.0;
+    std::string summary;
+};
+
+// Exploration intelligence is a read-only briefing over deposit confidence and
+// survey events. It does not choose missions or mutate survey state.
+struct ExplorationIntelligenceSummary {
+    std::vector<ExplorationDepositIntelligenceRow> lowConfidenceDeposits;
+    std::vector<RecentSurveyResultSummary> recentSurveyResults;
+    std::vector<std::string> warnings;
 };
 
 // Map-ready body row with coarse simulation coordinates copied from GameState.
@@ -430,6 +473,10 @@ public:
     // Returns display-ready deposit rows for a body. Unknown rows intentionally
     // hide estimated quantity until future survey commands improve confidence.
     [[nodiscard]] std::vector<BodyDepositSummary> bodyDeposits(BodyId bodyId) const;
+
+    // Returns survey intelligence over low-confidence deposits and recent survey
+    // events so UI panels can explain what exploration changed.
+    [[nodiscard]] ExplorationIntelligenceSummary explorationIntelligence() const;
 
     // Returns one map row per body, including abstract prototype coordinates.
     [[nodiscard]] std::vector<StrategicBodySummary> strategicBodies() const;

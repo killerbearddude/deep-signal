@@ -58,7 +58,7 @@ void drawBodyDetails(const SimulationQueries& queries, const BodyId bodyId) {
     if (!deposits.empty()) {
         ImGui::Separator();
         ImGui::Text("Deposits");
-        if (ImGui::BeginTable("InspectorBodyDeposits", 7, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
+        if (ImGui::BeginTable("InspectorBodyDeposits", 8, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
             ImGui::TableSetupColumn("Mineral");
             ImGui::TableSetupColumn("Status");
             ImGui::TableSetupColumn("Confidence");
@@ -66,6 +66,7 @@ void drawBodyDetails(const SimulationQueries& queries, const BodyId bodyId) {
             ImGui::TableSetupColumn("Estimated");
             ImGui::TableSetupColumn("Uncertain");
             ImGui::TableSetupColumn("Accessibility");
+            ImGui::TableSetupColumn("Strategic relevance");
             ImGui::TableHeadersRow();
 
             for (const BodyDepositSummary& deposit : deposits) {
@@ -84,6 +85,8 @@ void drawBodyDetails(const SimulationQueries& queries, const BodyId bodyId) {
                 ImGui::Text("%.0f", deposit.uncertainQuantity);
                 ImGui::TableSetColumnIndex(6);
                 ImGui::Text("%.2f", deposit.accessibility);
+                ImGui::TableSetColumnIndex(7);
+                ImGui::TextWrapped("%s", deposit.strategicRelevance.c_str());
             }
 
             ImGui::EndTable();

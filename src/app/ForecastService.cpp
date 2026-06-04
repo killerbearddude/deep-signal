@@ -316,6 +316,8 @@ void addProcessedMaterialSet(ProcessedMaterialAmountTotals& totals, const Proces
 
 struct DepositQuantityTotals {
     MineralAmountTotals confirmed{};
+    MineralAmountTotals estimated{};
+    MineralAmountTotals unknownPotential{};
     MineralAmountTotals uncertain{};
 };
 
@@ -325,8 +327,40 @@ struct DepositQuantityTotals {
         const std::size_t index = mineralIndex(deposit.mineral);
         totals.confirmed[index] += confirmedDepositQuantity(deposit);
         totals.uncertain[index] += uncertainDepositQuantity(deposit);
+
+        // Estimated deposits are partially surveyed reserves. Unknown potential
+        // remains physically present in the save but should be presented as a
+        // survey target rather than a reliable reserve estimate.
+        switch (depositSurveyState(deposit)) {
+        case DepositSurveyState::Estimated:
+            totals.estimated[index] += estimatedDepositQuantity(deposit);
+            break;
+        case DepositSurveyState::Unknown:
+            totals.unknownPotential[index] += deposit.remaining;
+            break;
+        case DepositSurveyState::Known:
+            break;
+        }
     }
     return totals;
+}
+
+[[nodiscard]] bool dependsMostlyOnEstimatedSupply(const DepositQuantityTotals& quantities, const std::size_t index) noexcept {
+    const double uncertainVisibleSupply = quantities.estimated[index] + quantities.unknownPotential[index];
+    return uncertainVisibleSupply > 0.0 && uncertainVisibleSupply > quantities.confirmed[index];
+}
+
+[[nodiscard]] std::string uncertaintyWarningText(const Mineral mineral,
+                                                 const DepositQuantityTotals& quantities,
+                                                 const std::size_t index) {
+    if (!dependsMostlyOnEstimatedSupply(quantities, index)) {
+        return {};
+    }
+
+    std::ostringstream out;
+    out << mineralName(mineral)
+        << " depends mostly on estimated or unknown deposits; prioritize resource survey before planning around this reserve.";
+    return out.str();
 }
 
 [[nodiscard]] ProcessingForecastTotals processingTotals(const GameState& state) {
@@ -772,27 +806,39 @@ std::vector<MineralForecastCauseChain> ForecastService::mineralForecastCauseChai
     for (std::size_t i = 0; i < mineralCount(); ++i) {
         const Mineral mineral = mineralFromIndex(i);
         const double netPerDay = miningIncome[i] - processing.rawDemand[i];
+        const std::optional<int> runoutDays = stockpileRunoutDays(stockpiles[i], netPerDay);
+        const bool mostlyEstimated = dependsMostlyOnEstimatedSupply(depositQuantities, i);
+        const bool critical = netPerDay < -kMineralComparisonEpsilon || runoutDays.has_value();
 
         forecasts.push_back(MineralForecastCauseChain{
             .mineral = mineral,
             .mineralName = mineralName(mineral),
             .stockpile = stockpiles[i],
             .confirmedDepositQuantity = depositQuantities.confirmed[i],
+            .estimatedDepositQuantity = depositQuantities.estimated[i],
+            .unknownPotentialQuantity = depositQuantities.unknownPotential[i],
             .uncertainDepositQuantity = depositQuantities.uncertain[i],
             .miningIncomePerDay = miningIncome[i],
             .committedDemandPerDay = processing.rawDemand[i],
             .netPerDay = netPerDay,
-            .stockpileRunoutDays = stockpileRunoutDays(stockpiles[i], netPerDay),
+            .stockpileRunoutDays = runoutDays,
+            .dependsMostlyOnEstimatedSupply = mostlyEstimated,
+            .uncertaintyWarning = mostlyEstimated && critical ? uncertaintyWarningText(mineral, depositQuantities, i) : std::string{},
             .causes = {
                 MineralForecastCauseRow{
                     .label = "Confirmed deposits",
                     .amountPerDay = depositQuantities.confirmed[i],
-                    .explanation = "Confirmed quantity from deposit confidence; uncertain reserves are tracked separately"
+                    .explanation = "Reserve quantity supported by current survey confidence"
                 },
                 MineralForecastCauseRow{
-                    .label = "Uncertain deposits",
-                    .amountPerDay = depositQuantities.uncertain[i],
-                    .explanation = "Unconfirmed reserve estimate that should be resolved by future survey work"
+                    .label = "Estimated deposits",
+                    .amountPerDay = depositQuantities.estimated[i],
+                    .explanation = "Partially surveyed reserve estimate; further surveys can convert more of it into confirmed supply"
+                },
+                MineralForecastCauseRow{
+                    .label = "Unknown potential",
+                    .amountPerDay = depositQuantities.unknownPotential[i],
+                    .explanation = "Hidden or unsurveyed reserve potential; do not treat as reliable supply until surveyed"
                 },
                 MineralForecastCauseRow{
                     .label = "Mining",

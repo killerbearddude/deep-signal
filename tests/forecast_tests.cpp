@@ -204,12 +204,13 @@ void test_mineral_forecast_cause_chains_report_processing_demand() {
     require(!iron.stockpileRunoutDays.has_value(), "positive net flow has no stockpile runout");
     require(iron.confirmedDepositQuantity > 0.0, "cause chain separates confirmed deposit quantity");
     require(iron.uncertainDepositQuantity >= 0.0, "cause chain separates uncertain deposit quantity");
-    require(iron.causes.size() == 4, "cause chain contains deposit certainty plus flow explanation rows");
+    require(iron.causes.size() == 5, "cause chain contains deposit certainty plus flow explanation rows");
     require(iron.causes.front().label == "Confirmed deposits", "first cause row explains confirmed reserves");
-    require(iron.causes.at(1).label == "Uncertain deposits", "second cause row explains uncertain reserves");
-    require(iron.causes.at(2).label == "Mining", "third cause row explains mining");
-    require(iron.causes.at(3).label == "Processing recipes", "fourth cause row explains processing demand");
-    requireNear(iron.causes.at(3).amountPerDay, -expectedIronDemand, "processing cause row reports demand as a negative contribution");
+    require(iron.causes.at(1).label == "Estimated deposits", "second cause row explains estimated reserves");
+    require(iron.causes.at(2).label == "Unknown potential", "third cause row explains unknown potential");
+    require(iron.causes.at(3).label == "Mining", "fourth cause row explains mining");
+    require(iron.causes.at(4).label == "Processing recipes", "fifth cause row explains processing demand");
+    requireNear(iron.causes.at(4).amountPerDay, -expectedIronDemand, "processing cause row reports demand as a negative contribution");
 }
 
 void test_processed_material_forecast_cause_chains_report_shipyard_demand() {
@@ -306,6 +307,42 @@ void test_mineral_forecast_cause_chains_include_processing_demand() {
     requireNear(iron.committedDemandPerDay, balancedAlloyOutput, "surplus forecast includes policy-weighted processing demand");
     requireNear(iron.netPerDay, expectedIronIncome - balancedAlloyOutput, "raw forecast includes processing demand");
     require(!iron.stockpileRunoutDays.has_value(), "positive raw flow has no runout day");
+}
+
+
+void test_mineral_forecast_distinguishes_estimated_and_unknown_supply() {
+    // Exploration intelligence needs forecasts to keep confirmed, estimated,
+    // and unknown reserves separate so survey results have visible impact.
+    const deep::SimulationService service;
+    const deep::ForecastService forecasts{service};
+    const auto chains = forecasts.mineralForecastCauseChains();
+    const deep::MineralForecastCauseChain& lithium = requireCauseChain(chains, deep::Mineral::Lithium);
+    const deep::MineralForecastCauseChain& rareEarth = requireCauseChain(chains, deep::Mineral::RareEarthElements);
+
+    require(lithium.estimatedDepositQuantity > 0.0, "partially surveyed frontier lithium contributes estimated supply");
+    require(lithium.confirmedDepositQuantity > 0.0, "partial confidence still contributes confirmed supply");
+    require(rareEarth.unknownPotentialQuantity > 0.0, "hidden rare-earth deposit contributes unknown potential");
+    require(rareEarth.uncertainDepositQuantity >= rareEarth.unknownPotentialQuantity,
+            "unknown potential remains part of the broader uncertain reserve total");
+}
+
+
+void test_mineral_forecast_warns_when_shortage_depends_on_uncertain_supply() {
+    // A material under immediate runout pressure should call out when the only
+    // apparent relief is mostly estimated or unknown deposits.
+    deep::GameState state = deep::createHomeSystemScenario();
+    for (deep::Colony& colony : state.colonies) {
+        colony.stockpile.set(deep::Mineral::RareEarthElements, 1.0);
+    }
+
+    const deep::SimulationService service{std::move(state)};
+    const deep::ForecastService forecasts{service};
+    const auto chains = forecasts.mineralForecastCauseChains();
+    const deep::MineralForecastCauseChain& rareEarth = requireCauseChain(chains, deep::Mineral::RareEarthElements);
+
+    require(rareEarth.stockpileRunoutDays.has_value(), "small stockpile under demand is critical immediately");
+    require(rareEarth.dependsMostlyOnEstimatedSupply, "rare-earth reserve base depends mostly on uncertain survey data");
+    require(!rareEarth.uncertaintyWarning.empty(), "critical uncertain supply emits a survey warning");
 }
 
 void test_deposit_forecasts_expose_confidence_and_uncertainty() {
@@ -601,6 +638,8 @@ int main() {
         test_processed_material_forecast_respects_processing_policy();
         test_processed_material_forecast_normalizes_manual_weights();
         test_mineral_forecast_cause_chains_include_processing_demand();
+        test_mineral_forecast_distinguishes_estimated_and_unknown_supply();
+        test_mineral_forecast_warns_when_shortage_depends_on_uncertain_supply();
         test_deposit_forecasts_expose_confidence_and_uncertainty();
         test_resource_survey_updates_confirmed_and_estimated_forecasts();
         test_deposit_exhaustion_estimate_uses_current_income_rate();

@@ -6,6 +6,7 @@
 
 #include <imgui.h>
 
+#include <algorithm>
 #include <string>
 #include <vector>
 
@@ -86,6 +87,80 @@ void BodiesPanel::render(const SimulationQueries& queries, SelectionState& selec
             ImGui::Text("%.0f / %.0f / %.0f", body.confirmedDepositQuantity, body.estimatedDepositQuantity, body.uncertainDepositQuantity);
             ImGui::TableSetColumnIndex(11);
             ImGui::Text("%zu", body.fleetCount);
+        }
+
+        ImGui::EndTable();
+    }
+
+    ImGui::Separator();
+    const ExplorationIntelligenceSummary intelligence = queries.explorationIntelligence();
+    ImGui::TextUnformatted("Exploration Intelligence");
+    if (intelligence.warnings.empty()) {
+        ImGui::TextUnformatted("No mineral forecast currently depends mostly on estimated reserves.");
+    } else {
+        for (const std::string& warning : intelligence.warnings) {
+            ImGui::BulletText("%s", warning.c_str());
+        }
+    }
+
+    const std::size_t depositRows = std::min<std::size_t>(intelligence.lowConfidenceDeposits.size(), 8U);
+    ImGui::Text("Low-confidence survey targets: %zu", intelligence.lowConfidenceDeposits.size());
+    if (depositRows == 0U) {
+        ImGui::TextUnformatted("All known deposits are fully confirmed.");
+    } else if (ImGui::BeginTable("ExplorationLowConfidenceDeposits", 7, kBodyTableFlags)) {
+        ImGui::TableSetupColumn("Body");
+        ImGui::TableSetupColumn("Mineral");
+        ImGui::TableSetupColumn("Status");
+        ImGui::TableSetupColumn("Confidence");
+        ImGui::TableSetupColumn("Confirmed");
+        ImGui::TableSetupColumn("Est / Unknown");
+        ImGui::TableSetupColumn("Relevance");
+        ImGui::TableHeadersRow();
+
+        for (std::size_t i = 0; i < depositRows; ++i) {
+            const ExplorationDepositIntelligenceRow& row = intelligence.lowConfidenceDeposits[i];
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            ImGui::TextUnformatted(row.bodyName.c_str());
+            ImGui::TableSetColumnIndex(1);
+            ImGui::TextUnformatted(row.mineralName.c_str());
+            ImGui::TableSetColumnIndex(2);
+            ImGui::TextUnformatted(row.surveyStateName.c_str());
+            ImGui::TableSetColumnIndex(3);
+            ImGui::Text("%.0f%%", row.confidence * 100.0);
+            ImGui::TableSetColumnIndex(4);
+            ImGui::Text("%.0f", row.confirmedQuantity);
+            ImGui::TableSetColumnIndex(5);
+            ImGui::Text("%.0f / %.0f", row.estimatedQuantity, row.unknownPotentialQuantity);
+            ImGui::TableSetColumnIndex(6);
+            ImGui::TextWrapped("%s", row.strategicRelevance.c_str());
+        }
+
+        ImGui::EndTable();
+    }
+
+    const std::size_t surveyRows = std::min<std::size_t>(intelligence.recentSurveyResults.size(), 5U);
+    ImGui::Text("Recent survey results: %zu", intelligence.recentSurveyResults.size());
+    if (surveyRows == 0U) {
+        ImGui::TextUnformatted("No resource survey results have been recorded yet.");
+    } else if (ImGui::BeginTable("ExplorationRecentSurveyResults", 4, kBodyTableFlags)) {
+        ImGui::TableSetupColumn("Day");
+        ImGui::TableSetupColumn("Fleet");
+        ImGui::TableSetupColumn("Body");
+        ImGui::TableSetupColumn("Result");
+        ImGui::TableHeadersRow();
+
+        for (std::size_t i = 0; i < surveyRows; ++i) {
+            const RecentSurveyResultSummary& row = intelligence.recentSurveyResults[i];
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            ImGui::Text("%lld", static_cast<long long>(row.day));
+            ImGui::TableSetColumnIndex(1);
+            ImGui::TextUnformatted(row.fleetName.c_str());
+            ImGui::TableSetColumnIndex(2);
+            ImGui::TextUnformatted(row.bodyName.c_str());
+            ImGui::TableSetColumnIndex(3);
+            ImGui::TextWrapped("%s", row.summary.c_str());
         }
 
         ImGui::EndTable();
