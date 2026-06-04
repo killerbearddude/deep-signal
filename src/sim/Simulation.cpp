@@ -1,5 +1,6 @@
 #include "sim/Simulation.h"
 #include "sim/GameStateValidation.h"
+#include "sim/TransitPlanning.h"
 
 // Implements deterministic daily simulation rules and command validation.
 // This file is intentionally self-contained within the sim layer; it should not
@@ -227,129 +228,6 @@ void addProcessingWeight(ProcessingShares& weights, const ProcessedMaterial mate
     return weights;
 }
 
-
-[[nodiscard]] MapPosition fallbackBodyPosition(const Body& body) noexcept {
-    return MapPosition{.x = body.x, .y = body.y};
-}
-
-[[nodiscard]] std::optional<MapPosition> bodyPositionAtDay(const GameState& state,
-                                                           const BodyId bodyId,
-                                                           const std::int64_t day,
-                                                           const int depth = 0) noexcept {
-    if (depth > 8) {
-        return std::nullopt;
-    }
-
-    const Body* body = findById(state.bodies, bodyId);
-    if (body == nullptr) {
-        return std::nullopt;
-    }
-
-    if (body->type == BodyType::Star || !body->parentBodyId.has_value() ||
-        body->orbitalRadiusKm <= 0.0 || body->orbitalPeriodDays <= 0.0) {
-        return fallbackBodyPosition(*body);
-    }
-
-    const std::optional<MapPosition> parentPosition = bodyPositionAtDay(state, *body->parentBodyId, day, depth + 1);
-    if (!parentPosition.has_value()) {
-        return std::nullopt;
-    }
-
-    constexpr double kTwoPi = 6.28318530717958647692;
-    const double angle = body->phaseRadians + (kTwoPi * static_cast<double>(day) / body->orbitalPeriodDays);
-    const double radiusMapUnits = body->orbitalRadiusKm / kKilometersPerMapUnit;
-    return MapPosition{
-        .x = parentPosition->x + (std::cos(angle) * radiusMapUnits),
-        .y = parentPosition->y + (std::sin(angle) * radiusMapUnits)
-    };
-}
-
-[[nodiscard]] double mapDistance(const MapPosition origin, const MapPosition destination) noexcept {
-    return std::hypot(destination.x - origin.x, destination.y - origin.y);
-}
-
-[[nodiscard]] double sustainedBurnTravelDays(const double transitDistanceKm, const double accelerationG) noexcept {
-    if (transitDistanceKm <= 0.0 || accelerationG <= 0.0) {
-        return 0.0;
-    }
-
-    const double distanceMeters = transitDistanceKm * 1000.0;
-    const double accelerationMetersPerSecondSquared = accelerationG * kStandardGravityMetersPerSecondSquared;
-    const double seconds = 2.0 * std::sqrt(distanceMeters / accelerationMetersPerSecondSquared);
-    return seconds / kSecondsPerGameDay;
-}
-
-[[nodiscard]] MapPosition routeCurveControlPoint(const MapPosition departure, const MapPosition arrival) noexcept {
-    const double dx = arrival.x - departure.x;
-    const double dy = arrival.y - departure.y;
-    const double length = std::hypot(dx, dy);
-    if (length <= 1.0e-9) {
-        return MapPosition{.x = departure.x, .y = departure.y};
-    }
-
-    // Bend the rendered route away from the chord so the visual language reads
-    // as a planned sustained-burn transit rather than a straight targeting ray.
-    const double bend = length * 0.18;
-    return MapPosition{
-        .x = (departure.x + arrival.x) * 0.5 + (dy / length) * bend,
-        .y = (departure.y + arrival.y) * 0.5 - (dx / length) * bend
-    };
-}
-
-[[nodiscard]] FleetOrder planFleetTransit(const GameState& state,
-                                           const BodyId departureBodyId,
-                                           const BodyId destinationBodyId,
-                                           const std::int64_t departureDay,
-                                           const double burnAccelerationG = kPrototypeBurnAccelerationG) noexcept {
-    const std::optional<MapPosition> departurePosition = bodyPositionAtDay(state, departureBodyId, departureDay);
-    if (!departurePosition.has_value()) {
-        return FleetOrder{};
-    }
-
-    std::int64_t arrivalDay = departureDay + 1;
-    MapPosition projectedArrivalPosition = bodyPositionAtDay(state, destinationBodyId, arrivalDay).value_or(*departurePosition);
-    double transitDistanceKm = mapDistance(*departurePosition, projectedArrivalPosition) * kKilometersPerMapUnit;
-
-    for (int i = 0; i < kTransitPlanningIterations; ++i) {
-        const double travelDays = sustainedBurnTravelDays(transitDistanceKm, burnAccelerationG);
-        arrivalDay = departureDay + std::max<std::int64_t>(1, static_cast<std::int64_t>(std::ceil(travelDays)));
-        projectedArrivalPosition = bodyPositionAtDay(state, destinationBodyId, arrivalDay).value_or(projectedArrivalPosition);
-        transitDistanceKm = mapDistance(*departurePosition, projectedArrivalPosition) * kKilometersPerMapUnit;
-    }
-
-    const int daysRemaining = static_cast<int>(std::max<std::int64_t>(1, arrivalDay - departureDay));
-    return FleetOrder{
-        .type = FleetOrderType::MoveToBody,
-        .targetBodyId = destinationBodyId,
-        .daysRemaining = daysRemaining,
-        .departureBodyId = departureBodyId,
-        .departureDay = departureDay,
-        .arrivalDay = arrivalDay,
-        .departurePosition = *departurePosition,
-        .projectedArrivalPosition = projectedArrivalPosition,
-        .transitDistanceKm = transitDistanceKm,
-        .burnAccelerationG = burnAccelerationG,
-        .routeCurveControlPoint = routeCurveControlPoint(*departurePosition, projectedArrivalPosition)
-    };
-}
-
-[[nodiscard]] double moveFuelCost(const GameState& state,
-                                  const BodyId originBodyId,
-                                  const BodyId destinationBodyId,
-                                  const std::int64_t departureDay) noexcept {
-    if (originBodyId == destinationBodyId) {
-        return 0.0;
-    }
-
-    const FleetOrder plan = planFleetTransit(state, originBodyId, destinationBodyId, departureDay);
-    if (plan.type != FleetOrderType::MoveToBody || plan.transitDistanceKm <= 0.0) {
-        return std::numeric_limits<double>::infinity();
-    }
-
-    // Fuel remains a v1 operational abstraction. It scales with planned transit
-    // distance while route timing comes from the sustained-burn estimate.
-    return std::max(1.0, (plan.transitDistanceKm / kKilometersPerMapUnit) * kPrototypeFuelPerMapUnit);
-}
 
 [[nodiscard]] const Appointment* activeAppointmentFor(const GameState& state,
                                                       const AppointmentRole role,

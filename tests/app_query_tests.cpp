@@ -2,6 +2,7 @@
 #include "app/SimulationService.h"
 #include "sim/Commands.h"
 #include "sim/ScenarioFactory.h"
+#include "sim/TransitPlanning.h"
 
 // Self-contained regression tests for app-layer read-only query DTOs.
 // These tests protect the future UI boundary from drifting back toward direct
@@ -619,6 +620,54 @@ void test_fleet_summaries_include_queued_orders() {
 }
 
 
+
+void test_fleet_move_preview_matches_authoritative_transit_plan() {
+    // The UI preview must be generated from the same transit planner used by
+    // command execution. This catches future drift between SimulationQueries and
+    // Simulation when rail projection, ETA, or fuel-cost rules change.
+    deep::SimulationService service;
+    const deep::ColonyId colonyId = service.state().colonies.front().id;
+    const deep::ShipClassId shipClassId = service.state().shipClasses.front().id;
+    const deep::BodyId terraId = service.state().bodies.front().id;
+    const deep::BodyId marsId = service.state().bodies.at(1).id;
+
+    require(service.execute(deep::AssignShipyardBuildCommand{
+        .colonyId = colonyId,
+        .shipClassId = shipClassId,
+        .quantity = 1
+    }).ok, "build order is accepted before transit-preview consistency test");
+    static_cast<void>(service.advanceDays(5));
+
+    const deep::FleetId fleetId = service.state().fleets.front().id;
+    const deep::FleetOrder expectedPlan = deep::planFleetTransit(service.state(), terraId, marsId, service.state().date.day);
+    const double expectedFuelCost = deep::moveFuelCost(service.state(), terraId, marsId, service.state().date.day);
+
+    const deep::SimulationQueries queriesBeforeMove{service};
+    const auto preview = queriesBeforeMove.fleetMovePreview(fleetId, marsId);
+    require(preview.has_value(), "move preview exists before immediate move");
+    require(preview->etaDays == expectedPlan.daysRemaining, "preview ETA comes from authoritative transit plan");
+    requireNear(preview->transitDistanceKm, expectedPlan.transitDistanceKm,
+                "preview distance comes from authoritative transit plan");
+    requireNear(preview->newMoveFuelCost, expectedFuelCost,
+                "preview fuel cost comes from authoritative transit fuel rule");
+
+    require(service.execute(deep::MoveFleetCommand{
+        .fleetId = fleetId,
+        .destinationBodyId = marsId
+    }).ok, "move order is accepted after preview consistency check");
+
+    const deep::SimulationQueries queriesAfterMove{service};
+    const auto fleet = queriesAfterMove.fleet(fleetId);
+    require(fleet.has_value(), "fleet summary exists after immediate move");
+    require(fleet->activeOrderEtaDays.has_value(), "active move summary exposes ETA");
+    require(*fleet->activeOrderEtaDays == expectedPlan.daysRemaining,
+            "active move summary keeps the same ETA as the previewed plan");
+    require(fleet->activeOrderProjectedArrivalDay == expectedPlan.arrivalDay,
+            "active move summary keeps the same arrival day as the previewed plan");
+    requireNear(fleet->activeOrderTransitDistanceKm, expectedPlan.transitDistanceKm,
+                "active move summary keeps the same distance as the previewed plan");
+}
+
 void test_fleet_summaries_report_empty_timeline_for_idle_fleet() {
     // Verifies that the UI can warn about a fleet with no active or queued
     // orders without inferring state from raw Fleet records.
@@ -846,6 +895,7 @@ int main() {
         test_ship_class_summaries_expose_build_targets();
         test_fleet_summaries_resolve_location_and_order();
         test_fleet_summaries_include_queued_orders();
+        test_fleet_move_preview_matches_authoritative_transit_plan();
         test_fleet_summaries_report_empty_timeline_for_idle_fleet();
         test_single_record_queries_return_matching_summaries();
         test_body_system_overview_exposes_counts();

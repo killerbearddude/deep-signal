@@ -8,6 +8,7 @@
 
 #include "sim/GameState.h"
 #include "sim/Minerals.h"
+#include "sim/TransitPlanning.h"
 
 #include <algorithm>
 #include <array>
@@ -157,116 +158,6 @@ struct FleetFuelTotals {
 
 [[nodiscard]] MapPosition fallbackBodyPosition(const Body& body) noexcept {
     return MapPosition{.x = body.x, .y = body.y};
-}
-
-[[nodiscard]] std::optional<MapPosition> bodyPositionAtDay(const GameState& state,
-                                                           const BodyId bodyId,
-                                                           const std::int64_t day,
-                                                           const int depth = 0) noexcept {
-    if (depth > 8) {
-        return std::nullopt;
-    }
-
-    const Body* body = bodyById(state, bodyId);
-    if (body == nullptr) {
-        return std::nullopt;
-    }
-
-    if (body->type == BodyType::Star || !body->parentBodyId.has_value() ||
-        body->orbitalRadiusKm <= 0.0 || body->orbitalPeriodDays <= 0.0) {
-        return fallbackBodyPosition(*body);
-    }
-
-    const std::optional<MapPosition> parentPosition = bodyPositionAtDay(state, *body->parentBodyId, day, depth + 1);
-    if (!parentPosition.has_value()) {
-        return std::nullopt;
-    }
-
-    constexpr double kTwoPi = 6.28318530717958647692;
-    const double angle = body->phaseRadians + (kTwoPi * static_cast<double>(day) / body->orbitalPeriodDays);
-    const double radiusMapUnits = body->orbitalRadiusKm / kKilometersPerMapUnit;
-    return MapPosition{
-        .x = parentPosition->x + std::cos(angle) * radiusMapUnits,
-        .y = parentPosition->y + std::sin(angle) * radiusMapUnits
-    };
-}
-
-[[nodiscard]] double mapDistance(const MapPosition origin, const MapPosition destination) noexcept {
-    return std::hypot(destination.x - origin.x, destination.y - origin.y);
-}
-
-[[nodiscard]] MapPosition routeCurveControlPoint(const MapPosition departure, const MapPosition arrival) noexcept {
-    const double dx = arrival.x - departure.x;
-    const double dy = arrival.y - departure.y;
-    const double length = std::hypot(dx, dy);
-    if (length <= 1.0e-9) {
-        return departure;
-    }
-    const double bend = length * 0.18;
-    return MapPosition{
-        .x = (departure.x + arrival.x) * 0.5 + (dy / length) * bend,
-        .y = (departure.y + arrival.y) * 0.5 - (dx / length) * bend
-    };
-}
-
-[[nodiscard]] double sustainedBurnTravelDays(const double transitDistanceKm, const double accelerationG) noexcept {
-    if (transitDistanceKm <= 0.0 || accelerationG <= 0.0) {
-        return 0.0;
-    }
-    const double distanceMeters = transitDistanceKm * 1000.0;
-    const double accelerationMetersPerSecondSquared = accelerationG * kStandardGravityMetersPerSecondSquared;
-    return (2.0 * std::sqrt(distanceMeters / accelerationMetersPerSecondSquared)) / kSecondsPerGameDay;
-}
-
-[[nodiscard]] FleetOrder planFleetTransitPreview(const GameState& state,
-                                                  const BodyId originBodyId,
-                                                  const BodyId destinationBodyId,
-                                                  const std::int64_t departureDay,
-                                                  const double burnAccelerationG = kPrototypeBurnAccelerationG) noexcept {
-    const std::optional<MapPosition> departurePosition = bodyPositionAtDay(state, originBodyId, departureDay);
-    if (!departurePosition.has_value()) {
-        return FleetOrder{};
-    }
-
-    std::int64_t arrivalDay = departureDay + 1;
-    MapPosition projectedArrival = bodyPositionAtDay(state, destinationBodyId, arrivalDay).value_or(*departurePosition);
-    double transitDistanceKm = mapDistance(*departurePosition, projectedArrival) * kKilometersPerMapUnit;
-    for (int i = 0; i < kTransitPlanningIterations; ++i) {
-        const double travelDays = sustainedBurnTravelDays(transitDistanceKm, burnAccelerationG);
-        arrivalDay = departureDay + std::max<std::int64_t>(1, static_cast<std::int64_t>(std::ceil(travelDays)));
-        projectedArrival = bodyPositionAtDay(state, destinationBodyId, arrivalDay).value_or(projectedArrival);
-        transitDistanceKm = mapDistance(*departurePosition, projectedArrival) * kKilometersPerMapUnit;
-    }
-
-    return FleetOrder{
-        .type = FleetOrderType::MoveToBody,
-        .targetBodyId = destinationBodyId,
-        .daysRemaining = static_cast<int>(std::max<std::int64_t>(1, arrivalDay - departureDay)),
-        .departureBodyId = originBodyId,
-        .departureDay = departureDay,
-        .arrivalDay = arrivalDay,
-        .departurePosition = *departurePosition,
-        .projectedArrivalPosition = projectedArrival,
-        .transitDistanceKm = transitDistanceKm,
-        .burnAccelerationG = burnAccelerationG,
-        .routeCurveControlPoint = routeCurveControlPoint(*departurePosition, projectedArrival)
-    };
-}
-
-[[nodiscard]] double moveFuelCost(const GameState& state,
-                                  const BodyId originBodyId,
-                                  const BodyId destinationBodyId,
-                                  const std::int64_t departureDay) noexcept {
-    if (originBodyId == destinationBodyId) {
-        return 0.0;
-    }
-
-    const FleetOrder plan = planFleetTransitPreview(state, originBodyId, destinationBodyId, departureDay);
-    if (plan.type != FleetOrderType::MoveToBody || plan.transitDistanceKm <= 0.0) {
-        return 0.0;
-    }
-
-    return std::max(1.0, (plan.transitDistanceKm / kKilometersPerMapUnit) * kPrototypeFuelPerMapUnit);
 }
 
 [[nodiscard]] FleetFuelTotals fleetFuelTotals(const GameState& state, const Fleet& fleet) noexcept {
@@ -1090,7 +981,7 @@ std::vector<FleetSummary> SimulationQueries::fleets() const {
             const QueuedFleetOrder& order = fleet.queuedOrders.at(i);
             const std::int64_t startDay = nextStartDay;
             const FleetOrder plan = order.targetBodyId.has_value()
-                ? planFleetTransitPreview(state, projectedOrigin, *order.targetBodyId, startDay)
+                ? planFleetTransit(state, projectedOrigin, *order.targetBodyId, startDay)
                 : FleetOrder{};
             const std::int64_t arrivalDay = plan.arrivalDay > startDay ? plan.arrivalDay : startDay;
             const double fuelCost = order.targetBodyId.has_value()
@@ -1331,7 +1222,7 @@ std::optional<FleetMovePreview> SimulationQueries::fleetMovePreview(const FleetI
         if (queuedOrder.type != FleetOrderType::MoveToBody || !queuedOrder.targetBodyId.has_value()) {
             return std::nullopt;
         }
-        const FleetOrder queuedPlan = planFleetTransitPreview(state, projectedOrigin, *queuedOrder.targetBodyId, projectedStartDay);
+        const FleetOrder queuedPlan = planFleetTransit(state, projectedOrigin, *queuedOrder.targetBodyId, projectedStartDay);
         queuedFuelRequired += adjustedMoveFuelCost(state, *fleet, projectedOrigin, *queuedOrder.targetBodyId, projectedStartDay);
         projectedStartDay = queuedPlan.arrivalDay;
         projectedOrigin = *queuedOrder.targetBodyId;
@@ -1340,7 +1231,7 @@ std::optional<FleetMovePreview> SimulationQueries::fleetMovePreview(const FleetI
     const std::optional<AppointmentModifierDetails> fleetCommanderModifier = appointmentModifierDetailsFor(
         state, AppointmentRole::FleetCommander, AppointmentScopeType::Fleet, fleet->id.value);
     const double fuelEfficiencyModifier = fleetCommanderModifier.has_value() ? fleetCommanderModifier->modifier : 0.0;
-    const FleetOrder newMovePlan = planFleetTransitPreview(state, projectedOrigin, destinationBodyId, projectedStartDay);
+    const FleetOrder newMovePlan = planFleetTransit(state, projectedOrigin, destinationBodyId, projectedStartDay);
     const double newMoveCost = adjustedMoveFuelCost(state, *fleet, projectedOrigin, destinationBodyId, projectedStartDay);
     queuedFuelRequired += newMoveCost;
     const double projectedRemaining = fuel.currentFuel - queuedFuelRequired;

@@ -29,6 +29,7 @@ add_library(deep_signal_sim
     src/sim/GameStateValidation.cpp
     src/sim/Simulation.cpp
     src/sim/ScenarioFactory.cpp
+    src/sim/TransitPlanning.cpp
 )
 
 target_include_directories(deep_signal_sim
