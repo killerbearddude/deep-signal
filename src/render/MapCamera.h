@@ -6,7 +6,8 @@
 
 namespace deep::render {
 
-// Lightweight 2D point used by the map camera without depending on ImGui types.
+// Lightweight 2D point used without ImGui types. The calling API determines
+// whether its components are map units or absolute screen pixels.
 struct MapPoint {
     double x = 0.0;
     double y = 0.0;
@@ -14,18 +15,20 @@ struct MapPoint {
 
 // Converts between abstract simulation map coordinates and panel pixels.
 // Positive zoom means pixels per one simulation coordinate unit.
+// Callers supply finite coordinates and finite positive zoom factors. The camera
+// clamps zoom but does not validate non-finite input; it owns no world geometry.
 class MapCamera {
 public:
     // Creates a camera centered on the home system with a conservative zoom that
     // keeps the expanded on-rails scenario visible by default.
     MapCamera() noexcept;
 
-    // Converts a world-space point into screen-space pixels relative to the
-    // current map canvas.
+    // Converts map units into absolute screen pixels. viewportCenter is the
+    // canvas center in the same screen coordinates used by drawing and picking.
     [[nodiscard]] MapPoint worldToScreen(MapPoint world, MapPoint viewportCenter) const noexcept;
 
-    // Converts screen-space pixels relative to the current map canvas back into
-    // simulation world coordinates for picking.
+    // Converts absolute screen pixels back into map units using the same
+    // viewportCenter as worldToScreen.
     [[nodiscard]] MapPoint screenToWorld(MapPoint screen, MapPoint viewportCenter) const noexcept;
 
     // Pans the camera by a dragged mouse delta in screen pixels.

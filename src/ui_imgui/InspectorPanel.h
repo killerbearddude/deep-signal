@@ -1,6 +1,6 @@
 #pragma once
 
-// Declares the shared read-only inspector panel for the ImGui shell.
+// Declares object inspection and direct fleet-command controls for the ImGui shell.
 // The inspector consumes SelectionState plus query DTOs, keeping UI inspection
 // independent from raw GameState storage. Command buttons route mutations through
 // SimulationService so the UI never edits simulation records directly.

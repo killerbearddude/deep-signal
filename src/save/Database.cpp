@@ -1,8 +1,9 @@
 #include "save/Database.h"
 
-// Implements the SQLite RAII wrappers used by SaveGameRepository.
-// All raw sqlite3 handles remain private to this layer to keep resource
-// ownership explicit and prevent C API details from leaking into app or sim code.
+// Responsibility: translate SQLite operations into save-layer RAII and errors.
+// Connection/statement lifetimes are defined in Database.h; gameplay validation
+// and schema policy belong to the repository. Numeric column readers preserve
+// SQLite's coercion behavior, so they are not strict input validators.
 
 #include <stdexcept>
 #include <string>

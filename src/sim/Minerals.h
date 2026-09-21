@@ -11,9 +11,8 @@
 
 namespace deep {
 
-// Raw extractable resources used by the v1 economy foundation. Processing chains
-// will later convert these into industrial intermediates, but mining, stockpiles,
-// and schema-v2 saves persist these stable ordinals directly.
+// Raw extractable resources used by the economy and processing recipes. Saves
+// persist these ordinals directly; reordering requires a schema/data migration.
 enum class Mineral : std::size_t {
     Iron = 0,
     Nickel = 1,
@@ -73,8 +72,10 @@ inline constexpr std::array<std::string_view, mineralCount()> mineralNames{
     return index < mineralNames.size() ? mineralNames[index] : std::string_view{"Unknown"};
 }
 
-// Holds one amount for every Mineral enum value. Negative values are invalid
-// because stockpiles and build costs represent physical quantities.
+// Holds abstract resource units for every Mineral enum value. Amounts and costs
+// must be finite and non-negative. These arithmetic helpers reject negatives in
+// set/add but do not check finiteness or overflow; validateGameState checks those
+// invariants on imported snapshots, and runtime callers must preserve them.
 struct MineralSet {
     std::array<double, mineralCount()> amount{};
 
@@ -112,8 +113,9 @@ struct MineralSet {
         return true;
     }
 
-    // Subtracts a full mineral cost. Epsilon-sized negative residue is clamped
-    // to zero so an allowed payment cannot leave an invalid stockpile behind.
+    // Rejects an unaffordable cost before payment and clamps negative residue
+    // strictly smaller than epsilon. This is not a rollback transaction if the
+    // post-subtraction check throws after a slot has already been changed.
     void subtract(const MineralSet& cost) {
         if (!canPay(cost)) {
             throw std::runtime_error{"Insufficient minerals"};
@@ -132,7 +134,7 @@ struct MineralSet {
         }
     }
 
-    // Adds another set slot-by-slot. Used for future bulk economy operations.
+    // Adds a validated set without per-slot checks; callers must avoid overflow.
     void addSet(const MineralSet& other) noexcept {
         for (std::size_t i = 0; i < amount.size(); ++i) {
             amount[i] += other.amount[i];
@@ -178,9 +180,9 @@ inline constexpr std::array<std::string_view, processedMaterialCount()> processe
     return index < processedMaterialNames.size() ? processedMaterialNames[index] : std::string_view{"Unknown"};
 }
 
-// Holds one amount for every processed industrial material. The behavior mirrors
-// MineralSet so simulation code can pay shipyard costs without duplicating
-// floating-point safety rules at each call site.
+// Holds abstract output units for every processed material. The finite,
+// non-negative preconditions and checked-index behavior mirror MineralSet.
+// subtract may throw after mutation on a residue check; it is not transactional.
 struct ProcessedMaterialSet {
     std::array<double, processedMaterialCount()> amount{};
 

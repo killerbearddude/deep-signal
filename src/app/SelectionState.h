@@ -21,13 +21,14 @@ enum class SelectedObjectType {
     Fleet
 };
 
-// Stores one selected object ID plus its type. IDs are stored as raw persisted
-// values internally because the active type determines which strong ID wrapper
-// should be reconstructed by readers.
+// Stores one app-local selected ID plus its type; owns no simulation entities and
+// does not persist itself. The type selects the strong ID wrapper reconstructed
+// by readers. Setters do not validate positivity or existence in the active game.
+// The UI owner must clear/reconcile selection after new/load/delete: stable IDs
+// identify entities within one world, and a replacement world may reuse them.
 class SelectionState {
 public:
-    // Clears the current selection. Used when clicks miss selectable objects or
-    // when future workflows delete a selected entity.
+    // Clears UI selection only; never changes or deletes a simulation entity.
     void clear() noexcept;
 
     // Selects a body by stable simulation ID.
@@ -39,7 +40,8 @@ public:
     // Selects a fleet by stable simulation ID.
     void selectFleet(FleetId id) noexcept;
 
-    // Returns the selected object kind. None means selectedId() is invalid.
+    // Returns the selected object kind. None means selectedId() is zero; a
+    // non-None kind alone does not establish that its ID still exists.
     [[nodiscard]] SelectedObjectType type() const noexcept;
 
     // Returns the selected raw ID value for display and same-type matching.

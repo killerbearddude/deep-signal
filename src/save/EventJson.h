@@ -1,9 +1,9 @@
 #pragma once
 
-// Provides typed JSON serialization for persisted simulation events.
-// SaveGameRepository stores event payloads as text, while this module owns the
-// event-specific conversion rules and validation so JSON handling does not leak
-// across the rest of the SQLite repository.
+// Responsibility: convert typed event payloads to/from the JSON text stored by
+// schema v10. Stable event names and fields are a persistence contract separate
+// from display wording. This module owns payload conversion, not event ordering,
+// reference integrity, or database transactions; those are checked elsewhere.
 
 #include "sim/Events.h"
 
@@ -12,19 +12,23 @@
 
 namespace deep::save {
 
-// Returns the stable schema v1 event type name for a typed payload.
+// Returns the stable persisted event type name for a typed payload.
 // The returned names are persisted in event_log.event_type and therefore must
 // be migration-managed if renamed later.
 [[nodiscard]] std::string eventTypeName(const SimEventPayload& payload);
 
-// Serializes one typed event payload to strict JSON object text for SQLite.
-// Throws if the payload contains a non-finite numeric value that cannot be
-// represented safely in save data.
+// Returns owned object text for one borrowed payload; rejects non-finite numeric
+// fields. A system nlohmann header selects the full JSON implementation, otherwise
+// a local serializer handles the limited strings emitted by current commands.
+// The fallback does not escape every JSON control character; callers must not
+// assume arbitrary string content is portable between the two implementations.
 [[nodiscard]] std::string eventPayloadToJson(const SimEventPayload& payload);
 
-// Parses one event payload from schema v1 JSON text and validates that the
-// required fields for eventType are present and have the expected types.
-// Throws std::runtime_error on malformed or unknown payloads.
+// Returns an owned typed payload, borrowing both views only during the call.
+// Unknown event types and detected parse/range failures throw; nlohmann failures
+// may use its own exception types. The local fallback expects compact flat
+// objects and is not a complete JSON syntax/type validator. GameState validation
+// must still check domain values and references after decoding.
 [[nodiscard]] SimEventPayload eventPayloadFromJson(std::string_view eventType, std::string_view json);
 
 } // namespace deep::save

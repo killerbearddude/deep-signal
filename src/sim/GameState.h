@@ -30,7 +30,10 @@ struct IdCounters {
 
 // Complete state snapshot for the headless simulation. Public vectors are kept
 // simple for prototype inspectability; mutation is still routed through
-// Simulation so invariants and events stay centralized.
+// Simulation so invariants and events stay centralized. Scenario builders and
+// persistence may assemble detached snapshots; Simulation validates them on entry.
+// Vector order is meaningful for FIFO production and pooled fleet fuel payment,
+// so persistence must preserve it rather than arbitrarily sorting records.
 struct GameState {
     GameDate date;
     IdCounters ids;
@@ -49,7 +52,7 @@ struct GameState {
 
     // Runtime-only economy telemetry is separated from the audit log so routine
     // mining can feed current-session UI, forecasts, and debugging without
-    // overwhelming event views. Schema v1 intentionally does not persist these
+    // overwhelming event views. Persistence intentionally does not store these
     // snapshots; loaded games start with this vector empty until more days run.
     std::vector<DailyEconomySnapshot> dailyEconomySnapshots;
 

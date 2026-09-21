@@ -9,6 +9,8 @@
 namespace deep::render {
 namespace {
 
+// Pixels per map unit: a positive lower bound also keeps screenToWorld's
+// division defined. These limits affect presentation, not transit distances.
 constexpr double kMinimumZoom = 0.035;
 constexpr double kMaximumZoom = 240.0;
 

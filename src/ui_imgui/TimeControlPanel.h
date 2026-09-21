@@ -17,6 +17,8 @@ class TimeControlPanel {
 public:
     // Draws Advance 1/5/30 day buttons and submits accepted clicks through the
     // application service command boundary, updating visibility when closed.
+    // A click runs the entire day batch synchronously on the UI thread; these
+    // are simulation days, not real-time playback speeds.
     void render(SimulationService& service, bool& visible);
 
 private:

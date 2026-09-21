@@ -1,7 +1,7 @@
 #include "sim/ScenarioFactory.h"
 
-// Builds the deterministic mature home-system scenario used by Phase 1 tests
-// and CLI. The scenario is hand-authored so geography, ownership, and deposits
+// Builds the deterministic mature home-system scenario used by new games and
+// tests. The scenario is hand-authored so geography, ownership, and deposits
 // can express design intent before procedural generation or logistics routes
 // exist.
 
@@ -31,7 +31,7 @@ GameState createHomeSystemScenario() {
     state.date.day = 0;
 
     // IDs are allocated through the same counters the live simulation uses so
-    // save/load can later preserve deterministic continuation behavior. Terra
+    // save/load preserves deterministic continuation behavior. Terra
     // and Mars intentionally remain the first two bodies because existing tests
     // and UI smoke workflows use them as the canonical short movement pair.
     const StarSystemId solId{state.ids.nextStarSystemId++};
@@ -479,7 +479,7 @@ GameState createHomeSystemScenario() {
     // Deposits are distributed by strategic role: core bodies have legacy
     // industrial reserves, Mars has shipbuilding inputs, the belt has bulk ore,
     // Titan carries volatiles, and the frontier object contains low-confidence
-    // exploration pressure for future survey commands.
+    // exploration targets for resource survey commands.
     addDeposit(state, terraId, Mineral::Iron, 1'000'000.0, 1.0);
     addDeposit(state, terraId, Mineral::Nickel, 600'000.0, 0.8);
     addDeposit(state, terraId, Mineral::Copper, 200'000.0, 0.6);

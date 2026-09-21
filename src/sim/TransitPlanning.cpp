@@ -1,6 +1,6 @@
 #include "sim/TransitPlanning.h"
 
-// Implements the shared v1 transit model: fixed on-rails body positions plus a
+// Implements the shared v1 transit model: date-derived on-rails positions plus a
 // simplified sustained-burn route estimate. This module has no SQLite/UI
 // dependencies and belongs to the deterministic simulation layer.
 
@@ -127,6 +127,9 @@ FleetOrder planFleetTransit(const GameState& state,
     MapPosition projectedArrivalPosition = bodyPositionAtDay(state, destinationBodyId, arrivalDay).value_or(*departurePosition);
     double transitDistanceKm = mapDistance(*departurePosition, projectedArrivalPosition) * kKilometersPerMapUnit;
 
+    // Keep the departure point fixed while refining the moving destination.
+    // A bounded iteration count makes preview cost predictable; the resulting
+    // integer-day intercept is an approximation, not a convergence certificate.
     for (int i = 0; i < kTransitPlanningIterations; ++i) {
         const double travelDays = sustainedBurnTravelDays(transitDistanceKm, burnAccelerationG);
         arrivalDay = departureDay + std::max<std::int64_t>(1, static_cast<std::int64_t>(std::ceil(travelDays)));

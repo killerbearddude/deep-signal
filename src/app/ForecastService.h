@@ -1,8 +1,10 @@
 #pragma once
 
-// Declares small app-layer forecast DTOs for explainable UI projections.
-// ForecastService reads SimulationService state but never mutates simulation data,
-// keeping future ImGui panels decoupled from raw GameState vectors.
+// Responsibility: expose explainable, advisory forecasts as owned value DTOs.
+// ForecastService borrows live SimulationService state without mutating it. It
+// does not advance a copied Simulation, reserve resources, or guarantee outcomes.
+// Amounts use the simulation's abstract resource units; rates are units per game
+// day, confidence is a fraction in [0, 1], and modifier percentages use points.
 
 #include "app/SimulationService.h"
 #include "sim/Domain.h"
@@ -41,8 +43,9 @@ struct MineralIncomeForecast {
     std::string explanation;
 };
 
-// One signed contribution row in a mineral forecast cause chain. Positive values
-// increase stockpile, while negative values represent committed demand.
+// One explanation row in a forecast cause chain. Flow rows use signed units per
+// game day. The raw-mineral reserve rows also use amountPerDay for total reserve
+// quantities, despite its name; those rows must not be summed into daily flow.
 struct MineralForecastCauseRow {
     std::string label;
     double amountPerDay = 0.0;
@@ -50,8 +53,10 @@ struct MineralForecastCauseRow {
 };
 
 // Empire-level raw mineral forecast with simple cause rows for UI explanation.
-// This v1 forecast uses current mining income and fixed processing recipe demand;
-// it does not introduce new economy systems or future automation.
+// Uses current mining income and processing estimates from existing stockpiles.
+// Runout extrapolates a constant net rate; it does not simulate policy changes,
+// future depletion, or transport between colonies. nullopt means the current net
+// rate does not predict runout, not that supply is guaranteed indefinitely.
 struct MineralForecastCauseChain {
     Mineral mineral = Mineral::Iron;
     std::string mineralName;
@@ -70,8 +75,9 @@ struct MineralForecastCauseChain {
 };
 
 // Empire-level processed-material forecast. Processing income comes from current
-// colony processing policies and raw-resource availability, while demand is
-// active shipyard commitments amortized over ETA.
+// colony processing policies and current raw stockpiles, without next-tick mining.
+// Demand amortizes each active order over its standalone capacity-only ETA; this
+// is a pressure indicator, not the shared FIFO queue's daily spending schedule.
 struct ProcessedMaterialForecastCauseChain {
     ProcessedMaterial material = ProcessedMaterial::StructuralAlloys;
     std::string materialName;
@@ -83,8 +89,10 @@ struct ProcessedMaterialForecastCauseChain {
     std::vector<MineralForecastCauseRow> causes;
 };
 
-// Deposit lifetime estimate for one currently-known mineral deposit.
-// exhaustionDays is empty when no positive extraction rate exists.
+// Deposit lifetime estimate for each deposit, including unsurveyed deposits.
+// Uses physical remaining quantity and the present extraction rate; confidence
+// describes survey knowledge rather than changing the extraction calculation.
+// exhaustionDays is zero for exhausted deposits and empty without extraction.
 struct DepositExhaustionForecast {
     BodyId bodyId;
     Mineral mineral = Mineral::Iron;
@@ -102,8 +110,10 @@ struct DepositExhaustionForecast {
 };
 
 // Capacity-only shipyard completion estimate for one production order.
-// This deliberately does not simulate future mineral shortages; explanation text
-// makes that limitation visible to callers and future UI panels.
+// Treats the order as the sole consumer of its colony's effective capacity and
+// ignores queue predecessors and material shortages. Use productionBacklog for
+// queue-aware capacity estimates. etaDays is relative to the current game day,
+// zero for completed orders, and empty when a usable capacity is unavailable.
 struct ShipyardOrderEtaForecast {
     ShipyardOrderId orderId;
     ColonyId colonyId;
@@ -120,9 +130,11 @@ struct ShipyardOrderEtaForecast {
 };
 
 // Production backlog row for one shipyard order. The forecast models colony
-// capacity as a single FIFO pool, matching simulation production allocation,
-// and reports processed-material pressure without changing production mechanics.
-// statusName is display text: Building, Waiting for materials, or Complete.
+// capacity as a single FIFO pool, but does not simulate material delays. The
+// shortage flag compares this order's entire remaining cost with current stock;
+// it neither reserves stock for predecessors nor describes a next-ship blocker.
+// queuePosition is one-based for active orders and zero for completed orders.
+// statusName is derived display text, not an authoritative production state.
 struct ProductionBacklogForecast {
     ShipyardOrderId orderId;
     ColonyId colonyId;
@@ -161,8 +173,11 @@ struct FleetArrivalEtaForecast {
     std::string explanation;
 };
 
-// Fuel/range summary for one fleet. Range is expressed in current abstract map
-// distance units because v1 fuel cost is one propellant unit per map unit.
+// Fuel/range summary for one fleet. Fuel uses abstract propellant units; range
+// uses map-distance units with the current commander efficiency modifier. Range
+// is a scalar budget, not a promise that a moving target or queued route is
+// reachable. fuelPercent uses 100 for a full tank; validation permits tiny
+// floating-point tolerance above capacity and this projection does not clamp it.
 struct FleetFuelForecast {
     FleetId fleetId;
     std::string fleetName;
@@ -175,8 +190,11 @@ struct FleetFuelForecast {
     std::string explanation;
 };
 
-// Read-only forecasting facade over SimulationService. Forecasts are copied out
-// as DTOs so UI code can display projections without owning simulation rules.
+// Read-only forecasting facade over a live SimulationService reference. Each
+// call reads current state and returns independent DTO values; constructing the
+// facade does not capture a snapshot. Keep the service alive and at a stable
+// address, and serialize forecasts with commands/load/new-game calls. A group of
+// forecast calls only describes one game day if no mutations occur between them.
 class ForecastService {
 public:
     // Binds the forecast service to an application service. The caller must keep
@@ -198,11 +216,11 @@ public:
     // Returns deposit lifetime estimates using current daily extraction rates.
     [[nodiscard]] std::vector<DepositExhaustionForecast> depositExhaustionEstimates() const;
 
-    // Returns capacity-only ETAs for shipyard orders.
+    // Returns standalone capacity-only ETAs, ignoring other queued orders.
     [[nodiscard]] std::vector<ShipyardOrderEtaForecast> shipyardOrderEtas() const;
 
-    // Returns production backlog rows that account for FIFO colony capacity and
-    // current mineral blockers. This is read-only forecasting only.
+    // Returns FIFO capacity estimates and whole-order material pressure. ETAs
+    // remain optimistic when stock shortages delay this order or predecessors.
     [[nodiscard]] std::vector<ProductionBacklogForecast> productionBacklog() const;
 
     // Returns fleet arrival ETAs for idle and moving fleets.

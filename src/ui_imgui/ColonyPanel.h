@@ -15,7 +15,9 @@
 
 namespace deep::ui_imgui {
 
-// Renders colony overview rows and v1 processor allocation controls.
+// Renders colony overview rows and processor allocation controls. The policy and
+// weights are an unapplied UI draft until Apply submits a command; queries remain
+// the source of authoritative colony values.
 class ColonyPanel {
 public:
     // Draws one table row per colony summary, updates selection when rows are
@@ -26,12 +28,18 @@ public:
                 bool& visible);
 
 private:
+    // Identity only: never retain pointers into a query result across frames.
     std::optional<ColonyId> editingColony_;
     ProcessingPolicy selectedPolicy_ = ProcessingPolicy::Balanced;
+    // Dimensionless relative weights, not percentages or material quantities.
     std::array<double, processedMaterialCount()> manualWeights_{};
     std::string statusMessage_;
 
+    // Replaces the local draft from a copied DTO. A successful Apply invalidates
+    // editingColony_ so the next render reloads the accepted service state.
     void loadEditorFromColony(const ColonySummary& colony);
+    // Normalizes nonnegative weights when their total exceeds the comparison
+    // epsilon; otherwise uses equal weights as a usable Manual starting point.
     void normalizeManualWeights() noexcept;
 };
 

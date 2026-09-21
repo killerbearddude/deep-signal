@@ -1,8 +1,8 @@
 #pragma once
 
 // Declares the headless simulation facade for Prototype 0.1.
-// Simulation owns one GameState and is the only component allowed to mutate it;
-// callers interact through commands, returned events, and read-only snapshots.
+// Simulation owns one live GameState and is its sole gameplay mutation authority;
+// callers interact through commands, returned events, and read-only state views.
 
 #include "sim/Commands.h"
 #include "sim/Error.h"
@@ -15,27 +15,31 @@ namespace deep {
 
 // Single-owner, single-threaded simulation engine. This class intentionally has
 // no UI, SDL, ImGui, SQLite, filesystem, or wall-clock dependencies.
+// No internal synchronization: callers serialize commands, ticks, and state reads.
 class Simulation {
 public:
     // Creates an empty simulation state. Primarily useful for tests that build
     // custom GameState values before exercising validation paths.
     Simulation() = default;
 
-    // Takes ownership of an initial state snapshot, usually from ScenarioFactory
-    // or the future SQLite repository layer.
+    // Takes ownership of an initial state snapshot from scenario creation or
+    // persistence. Throws std::runtime_error if domain validation rejects it.
     explicit Simulation(GameState initialState);
 
-    // Returns a read-only snapshot reference. The reference remains valid until
-    // the next non-const Simulation operation mutates internal vectors.
+    // Borrows the live state, not an immutable copy. The GameState reference has
+    // this Simulation's lifetime, but pointers/iterators into its vectors may be
+    // invalidated by the next mutation. Callers must not read during mutation.
     [[nodiscard]] const GameState& state() const noexcept;
 
     // Validates and applies a command. Rejected commands append a warning event
-    // but do not otherwise mutate gameplay state.
+    // and consume an event ID but do not otherwise mutate gameplay state.
+    // This is not a rollback transaction if an exception interrupts execution.
     CommandResult execute(const SimCommand& command);
 
     // Advances the simulation by a positive number of days and returns only the
     // events emitted during this call. All returned events are also appended to
-    // GameState::eventLog.
+    // GameState::eventLog. A non-positive count emits one rejection and leaves
+    // the date unchanged. Daily economy telemetry remains in state, not here.
     std::vector<SimEvent> advanceDays(int days);
 
 private:
@@ -53,9 +57,10 @@ private:
     CommandResult assignAppointment(const AssignAppointmentCommand& command);
     CommandResult setColonyProcessingPolicy(const SetColonyProcessingPolicyCommand& command);
 
-    // Starts the first queued order, if one exists and can be started from the
-    // fleet's current body. emitted is null for command-time starts where events
-    // are appended to GameState only; daily ticks pass their emitted-event list.
+    // Requires an idle fleet. Removes queued legs in order until one can start;
+    // invalid, redundant, or unaffordable legs are discarded with warning events.
+    // Returns false if no leg starts. emitted is null for command-time starts
+    // whose events go only to GameState; daily ticks also collect returned events.
     bool startNextQueuedFleetOrder(Fleet& fleet, std::vector<SimEvent>* emitted);
 
     void simulateOneDay(std::vector<SimEvent>& emitted);

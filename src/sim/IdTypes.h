@@ -2,7 +2,7 @@
 
 // Defines strongly typed integer IDs for simulation entities.
 // IDs are stable handles into GameState-owned vectors; they do not imply pointer
-// ownership and are safe to persist later in SQLite rows.
+// ownership and are persisted as integer values in SQLite rows.
 
 #include <cstdint>
 

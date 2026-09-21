@@ -55,6 +55,8 @@ constexpr std::array<ProcessingPolicy, 6> kPolicies{
     ProcessingPolicy::Manual
 };
 
+// The returned pointer borrows this render's DTO vector. Non-colony selection
+// shows the first colony; a missing explicitly selected colony has no fallback.
 [[nodiscard]] const ColonySummary* selectedColony(const std::vector<ColonySummary>& colonies,
                                                   const SelectionState& selection) noexcept {
     if (selection.type() != SelectedObjectType::Colony) {
@@ -103,6 +105,10 @@ void addProcessingWeight(std::array<double, processedMaterialCount()>& weights,
     return it == colony.processedStockpiles.end() ? 0.0 : it->amount;
 }
 
+// Preview the unapplied policy without running production. These preset ratios
+// mirror simulation rules; raw-input shortages can reduce actual daily output.
+// TODO: share the policy calculation when it changes so this editor, forecasts,
+// and the authoritative processing pass cannot drift independently.
 [[nodiscard]] std::array<double, processedMaterialCount()> policyWeightsForDisplay(
     const ColonySummary& colony,
     const ProcessingPolicy policy,
@@ -234,6 +240,9 @@ void ColonyPanel::render(const SimulationQueries& queries,
         return;
     }
 
+    // Keep an in-progress draft across frames instead of overwriting every edit.
+    // FIXME: New/Load can reuse this ID for different state; a session-change
+    // signal is needed to invalidate the draft when the world is replaced.
     if (!editingColony_.has_value() || *editingColony_ != colony->id) {
         loadEditorFromColony(*colony);
     }

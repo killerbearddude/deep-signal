@@ -1,8 +1,10 @@
 #include "app/ForecastService.h"
 
-// Implements lightweight app-layer forecasts over the current simulation state.
-// These projections intentionally mirror current Prototype 0.1 formulas without
-// moving forecast logic into src/sim or introducing UI dependencies.
+// Responsibility: compute advisory economy, production, and fleet projections
+// without advancing simulation state. Local balances own temporary calculations;
+// service/entity references are borrowed only while the serialized call runs.
+// Some formulas duplicate simulation rules and need review when those rules
+// change. These rate estimates are not a replay of authoritative daily ticks.
 
 #include "sim/GameState.h"
 
@@ -113,9 +115,9 @@ struct ProcessingForecastTotals {
 }
 
 [[nodiscard]] std::vector<ProcessingRecipe> processingRecipes() {
-    // Keep recipe order synchronized with Simulation::simulateProcessing. This
-    // duplication is intentional for now so forecasts can explain the sim rule
-    // without moving app-layer DTO logic into src/sim.
+    // Recipe costs/order duplicate the simulation's recipe table. Keep both
+    // aligned; shared pure recipe data becomes appropriate when these rules
+    // change independently. App explanation DTOs still belong outside src/sim.
     return {
         ProcessingRecipe{ProcessedMaterial::StructuralAlloys,
                          makeRawCost({{Mineral::Iron, 1.0}, {Mineral::Nickel, 0.5}, {Mineral::Titanium, 0.25}})},
@@ -364,6 +366,10 @@ struct DepositQuantityTotals {
 }
 
 [[nodiscard]] ProcessingForecastTotals processingTotals(const GameState& state) {
+    // Each colony gets its own temporary raw balance; recipe order matters where
+    // inputs overlap. Unused capacity is not reassigned to other materials.
+    // FIXME: These balances omit the mining performed before processing by the
+    // real daily tick, so raw-starved colonies can understate next-day output.
     const std::vector<ProcessingRecipe> recipes = processingRecipes();
     ProcessingForecastTotals totals{};
 
@@ -552,6 +558,9 @@ void addModifierRow(std::vector<ForecastModifierBreakdownRow>& rows, const std::
 }
 
 [[nodiscard]] ProcessedMaterialAmountTotals activeShipyardDemandByMaterial(const GameState& state) {
+    // Spread remaining commitments over each order's standalone capacity ETA.
+    // This intentionally exposes demand pressure rather than predicting actual
+    // daily material debits; concurrent orders do not share capacity here.
     ProcessedMaterialAmountTotals totals{};
 
     for (const ShipyardOrder& order : state.shipyardOrders) {
@@ -1024,6 +1033,9 @@ std::vector<ProductionBacklogForecast> ForecastService::productionBacklog() cons
             }
         }
 
+        // Compare the full outstanding order cost, not only the next ship's bill.
+        // This is a shortage-risk label: it can be true while construction still
+        // progresses, and it does not reserve materials for earlier FIFO orders.
         const std::optional<ProcessedMaterial> blockingMaterial = colony == nullptr
             ? std::nullopt
             : firstBlockingMaterial(colony->processedStockpile, requiredMaterials);

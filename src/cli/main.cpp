@@ -7,6 +7,8 @@
 // CLI smoke runner for the headless simulation.
 // This executable is a developer-facing verification tool, not the final UI. It
 // exercises build, advance-time, fleet movement, and event printing paths.
+// Owns a local Simulation directly; it does not exercise app-service or SQLite
+// workflows and does not write save files.
 
 #include <iostream>
 #include <string_view>
@@ -56,7 +58,8 @@ struct EventPrinter {
     }
 };
 
-// Prints a batch of events returned by one simulation API call.
+// Prints the events returned by time advancement. Events appended by execute()
+// live in the state log and are not automatically part of these returned batches.
 void printEvents(const std::vector<deep::SimEvent>& events) {
     for (const deep::SimEvent& event : events) {
         std::cout << "Day " << event.day << " event " << event.id.value << ':' << '\n';
@@ -66,9 +69,9 @@ void printEvents(const std::vector<deep::SimEvent>& events) {
 
 } // namespace
 
-// Runs the deterministic smoke scenario and returns non-zero if a required step
-// fails. This keeps CI or manual shell runs useful before a full test framework is
-// introduced.
+// Runs the deterministic smoke scenario. Rejected commands and a missing built
+// fleet return non-zero; the final location is printed but not asserted. Use the
+// regression tests for arrival correctness; exit zero alone does not prove arrival.
 int main() {
     deep::Simulation sim{deep::createHomeSystemScenario()};
 
@@ -95,6 +98,8 @@ int main() {
     }
 
     const deep::FleetId fleetId = sim.state().fleets.front().id;
+    // Scenario-specific ordering: Terra is first and Mars second. Resolve by an
+    // explicit scenario identifier before allowing alternate scenarios here.
     const deep::BodyId marsId = sim.state().bodies.at(1).id;
 
     const auto moveResult = sim.execute(deep::MoveFleetCommand{

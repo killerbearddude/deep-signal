@@ -188,6 +188,8 @@ void FleetOrdersPanel::render(const SimulationQueries& queries,
                                           !fleet->hasActiveOrder &&
                                           destinationSelected &&
                                           *destinationBodyId_ == fleet->currentBodyId;
+    // Preview gating is advisory. The service revalidates the complete route
+    // against current state when the player actually submits the command.
     const bool hasFuelForMove = !movePreview.has_value() || movePreview->canAfford;
     const bool canQueueMove = fleet.has_value() && destinationSelected && !idleDestinationIsCurrent && hasFuelForMove;
 
@@ -307,13 +309,15 @@ void FleetOrdersPanel::syncSelection(const SimulationQueries& queries, const Sel
         selectedFleetId_ = selection.fleetId();
     }
 
+    // FIXME: Applying the same body selection every frame overwrites a later
+    // destination-combo edit. Synchronize on selection changes when this workflow
+    // is revised, while retaining the independently remembered source fleet.
     if (selection.type() == SelectedObjectType::Body && queries.strategicBody(selection.bodyId()).has_value()) {
         destinationBodyId_ = selection.bodyId();
     }
 
-    // Drop stale UI-held IDs after save/load/new-game changes. This prevents a
-    // command button from targeting an object that no longer exists in the
-    // current SimulationService snapshot.
+    // Drop IDs absent from the current world. Existence checks do not detect IDs
+    // reused by New/Load; these IDs carry no session identity.
     if (selectedFleetId_.has_value() && !queries.fleet(*selectedFleetId_).has_value()) {
         selectedFleetId_.reset();
     }

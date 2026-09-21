@@ -12,8 +12,9 @@
 namespace deep::ui_imgui {
 
 // Renders the first production control surface for Prototype 0.1.
-// It intentionally supports only the fixed Survey Cutter order until a future
-// ship designer and production queue editor exist.
+// It supports one Survey Cutter at the first production-capable colony. This is
+// a scenario-specific shortcut; colony/class selection and batch editing remain
+// UI work rather than restrictions in the underlying build command.
 class ShipyardPanel {
 public:
     // Draws current shipyard orders, the Survey Cutter action, and close state.

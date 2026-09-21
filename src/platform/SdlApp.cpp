@@ -37,6 +37,8 @@ SdlApp::SdlApp(std::string title, const int width, const int height) {
         throw error;
     }
 
+    // VSync is a best-effort presentation setting; its result is not checked.
+    // Simulation days remain command-driven regardless of render frequency.
     SDL_SetRenderVSync(renderer_, 1);
 }
 

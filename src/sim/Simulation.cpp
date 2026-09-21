@@ -5,6 +5,8 @@
 // Implements deterministic daily simulation rules and command validation.
 // This file is intentionally self-contained within the sim layer; it should not
 // include UI, database, threading, or platform-specific headers.
+// State transitions run serially; callers must not observe or mutate state during
+// a command/tick. Collection order is part of deterministic resource allocation.
 
 #include <algorithm>
 #include <array>
@@ -64,8 +66,9 @@ struct ProcessingRecipe {
 [[nodiscard]] std::vector<ProcessingRecipe> processingRecipes() {
     // Fixed v1 processing chains. Each recipe produces one processed-material
     // unit per processor-capacity point and consumes the listed raw resources.
-    // The order is deterministic and intentionally mirrors ProcessedMaterial
-    // order so forecasts and simulation agree without a separate queue type.
+    // The order mirrors ProcessedMaterial and determines who consumes shared
+    // inputs first. ForecastService currently duplicates these recipes and must
+    // be updated with rule changes until the calculations share an implementation.
     return {
         ProcessingRecipe{ProcessedMaterial::StructuralAlloys,
                          makeRawCost({{Mineral::Iron, 1.0}, {Mineral::Nickel, 0.5}, {Mineral::Titanium, 0.25}})},
@@ -212,6 +215,9 @@ void addProcessingWeight(ProcessingShares& weights, const ProcessedMaterial mate
 }
 
 [[nodiscard]] ProcessingShares normalizedProcessingShares(const Colony& colony) noexcept {
+    // FIXME: Finite individual manual weights can still overflow their sum (or
+    // a repeated-material subtotal), producing zero/NaN shares. Bound or scale
+    // weights before normalizing when tightening the processing input contract.
     ProcessingShares weights = policyProcessingWeights(colony);
     double totalWeight = 0.0;
     for (const double weight : weights) {
@@ -292,6 +298,9 @@ void addProcessingWeight(ProcessingShares& weights, const ProcessedMaterial mate
 [[nodiscard]] double queuedRouteFuelRequirement(const GameState& state,
                                                 const Fleet& fleet,
                                                 const BodyId newDestinationBodyId) noexcept {
+    // The active leg has already paid its fuel. Project only queued/new legs,
+    // using today's commander modifier; each leg is checked again when started
+    // because appointments or a cancellation can change the actual future route.
     BodyId projectedOrigin = fleet.currentBodyId;
     std::int64_t projectedDepartureDay = state.date.day;
     if (fleet.activeOrder.type == FleetOrderType::MoveToBody && fleet.activeOrder.targetBodyId.has_value()) {
@@ -324,6 +333,8 @@ void addProcessingWeight(ProcessingShares& weights, const ProcessedMaterial mate
 }
 
 bool consumeFleetFuel(GameState& state, const Fleet& fleet, const double fuelCost) noexcept {
+    // Fuel is one fleet-wide pool, drawn from hulls in persisted roster order.
+    // There is no per-hull travel requirement or proportional sharing in v1.
     if (fuelCost <= kFuelComparisonEpsilon) {
         return true;
     }
@@ -574,9 +585,12 @@ CommandResult Simulation::cancelFleetOrder(const CancelFleetOrderCommand& comman
         return CommandResult::failure("Fleet has no active order");
     }
 
-    // Prototype movement is not interpolated yet, so cancelling simply drops the
-    // pending target and leaves the fleet at its current body/origin. Future
-    // route planning can replace this with partial-progress handling.
+    // Map positions interpolate the route, but the logical currentBodyId stays
+    // at departure until arrival. Cancellation clears the plan, returning the
+    // display to that body; fuel paid at departure is not refunded.
+    // FIXME: Remaining queued legs stay dormant because the daily movement pass
+    // skips idle fleets. A later queue command can restart this retained route;
+    // cancellation needs an explicit resume/clear policy before that is changed.
     fleet->destinationBodyId = std::nullopt;
     fleet->activeOrder = FleetOrder{};
 
@@ -834,9 +848,10 @@ bool Simulation::startNextQueuedFleetOrder(Fleet& fleet, std::vector<SimEvent>* 
 void Simulation::simulateOneDay(std::vector<SimEvent>& emitted) {
     ++state_.date.day;
 
-    // Daily tick order is stable by design: economy telemetry is recorded before
-    // shipyard completion, and completed fleets can begin moving only on a later
-    // command. This keeps tests and future save replays deterministic.
+    // Ordering is gameplay: today's mining feeds today's processing, and its
+    // output can pay for today's ship completions. New fleets remain idle until
+    // a later command, while existing arrivals can start their next queued leg.
+    // All telemetry/events below carry the newly advanced simulation day.
     simulateMining(emitted);
     simulateProcessing();
     simulateShipyards(emitted);
@@ -850,8 +865,9 @@ void Simulation::simulateMining(std::vector<SimEvent>&) {
                 continue;
             }
 
-            // Prototype formula: each mine contributes one base unit per day,
-            // scaled by accessibility, and extraction cannot exceed the deposit.
+            // Each mine contributes one base unit per day to every local deposit,
+            // scaled by accessibility and capped by remaining material. Confidence
+            // affects displayed knowledge only; mining does not require a survey.
             const double potentialExtraction = colony.mines * deposit.accessibility;
             const double extracted = std::min(deposit.remaining, std::max(0.0, potentialExtraction));
             if (extracted <= 0.0) {
@@ -892,11 +908,10 @@ void Simulation::simulateProcessing() {
                 continue;
             }
 
-            // TODO: Research will eventually modify recipe efficiency and unlock
-            // advanced processed materials.
-            // TODO: Colony buildings will eventually increase processor capacity.
-            // TODO: Inter-body logistics will eventually determine whether remote
-            // raw resources are available to this colony's processing chain.
+            // Capacity shares are fixed for this day. Missing inputs reduce this
+            // recipe's output; unused capacity is not redistributed to others.
+            // Only the colony's local raw stockpile is available. Research,
+            // building upgrades, and inter-body supply are outside this model.
             const double producible = std::min(targetOutput, maxRecipeOutput(colony.stockpile, recipe.rawCostPerUnit));
             if (producible <= kMineralComparisonEpsilon) {
                 continue;
@@ -972,10 +987,10 @@ void Simulation::simulateShipyards(std::vector<SimEvent>& emitted) {
             }
 
             if (!colony->processedStockpile.canPay(shipClass->buildCost)) {
-                // Mineral shortages are temporary production pauses, not a
-                // terminal order state. Keep the order Active so future mining
-                // can satisfy the cost and complete the ship automatically. The
-                // blocked FIFO order also holds the queue for this colony today;
+                // Processed-material shortages are temporary production pauses.
+                // Keep the order Active so future processing can satisfy the
+                // cost and complete the ship automatically. The blocked FIFO
+                // order also holds the queue for this colony today;
                 // later orders should not leapfrog a material-starved order.
                 poolIt->remainingBuildPoints = 0.0;
                 emitEvent(emitted, EventSeverity::Warning, CommandRejectedEvent{"Shipyard order waiting for sufficient processed materials"});
@@ -1077,8 +1092,8 @@ void Simulation::emitEvent(std::vector<SimEvent>& emitted, const EventSeverity s
     SimEvent event = makeEvent(severity, std::move(payload));
 
     // Store a copy in the authoritative log and return the emitted event by value
-    // to the caller. This preserves a complete state history without exposing
-    // mutable references to GameState internals.
+    // to the caller. This preserves the emitted audit history without exposing
+    // mutable references; the log is not a replay stream of every state mutation.
     state_.eventLog.push_back(event);
     emitted.push_back(std::move(event));
 }

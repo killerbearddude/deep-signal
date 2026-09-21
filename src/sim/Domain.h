@@ -2,7 +2,8 @@
 
 // Contains plain simulation domain records for Prototype 0.1.
 // These structs intentionally avoid behavior-heavy inheritance so GameState can
-// own data by value and the future SQLite layer can map records directly.
+// own data by value and persistence can map records directly. Shared pure helpers
+// express domain calculations; command validation and mutation belong to Simulation.
 
 #include "sim/IdTypes.h"
 #include "sim/Minerals.h"
@@ -128,6 +129,8 @@ enum class AppointmentScopeType {
 // Current personnel assignment to one operational slot. Appointments are stored
 // separately from assets so future history/effects can evolve without changing
 // fleet, colony, or institution record shape again.
+// Invariant: (role, scopeType, scopeId) is unique and personId resolves. A person
+// may hold multiple slots; role/scope compatibility is not currently enforced.
 struct Appointment {
     AppointmentRole role = AppointmentRole::InstitutionHead;
     AppointmentScopeType scopeType = AppointmentScopeType::Institution;
@@ -224,6 +227,8 @@ inline constexpr double kAppointmentControversyPenalty = -0.0050;
     return rawModifier;
 }
 
+// Returns a bounded fractional effect, not a percentage or final multiplier.
+// Consumers choose its sign: shipyard capacity uses 1 + effect, fuel cost 1 - effect.
 [[nodiscard]] inline double appointmentOperationalModifier(const Person& person,
                                                            const AppointmentRole role) noexcept {
     const AppointmentEffectProfile profile = appointmentEffectProfile(role);
@@ -262,8 +267,8 @@ enum class BodyType {
 };
 
 // Strategic zones describe a body's operational role in the mature home-system
-// start. They are scenario metadata only: v1 does not add access rights,
-// logistics routes, survey commands, or institutional AI.
+// start. These labels do not themselves grant access, route logistics, or drive
+// institutional AI; surveying is handled by a separate command.
 enum class StrategicZone {
     InnerCore,
     MilitaryIndustrial,
@@ -286,6 +291,8 @@ struct Body {
     double orbitalRadiusKm = 0.0;
     double orbitalPeriodDays = 0.0;
     double phaseRadians = 0.0;
+    // Base map glyph radius in screen pixels, enlarged when selected;
+    // this is not a physical body radius and never affects transit planning.
     double displayRadius = 8.0;
     // Fixed/fallback map position. Stars and non-railed prototype bodies use
     // this directly; railed bodies use it only when orbital metadata is absent.
@@ -294,8 +301,8 @@ struct Body {
 };
 
 // Coarse survey knowledge state for one mineral deposit. The simulation stores a
-// confidence value and derives this display state so future survey commands can
-// improve confidence without migrating save data again.
+// confidence value and derives this display state so resource surveys can
+// improve knowledge without maintaining a second authoritative state field.
 enum class DepositSurveyState {
     Unknown,
     Estimated,
@@ -307,6 +314,8 @@ enum class DepositSurveyState {
 // confidence models survey knowledge: 0.0 is hidden/unknown, partial values are
 // estimates, and 1.0 is fully confirmed. The physical remaining amount is still
 // stored so deterministic saves can reveal it later without procedural rolls.
+// Quantities use abstract mineral units. (bodyId, mineral) must be unique;
+// remaining/accessibility are finite and non-negative, confidence is in [0, 1].
 struct MineralDeposit {
     BodyId bodyId;
     Mineral mineral = Mineral::Iron;
@@ -333,6 +342,8 @@ struct MineralDeposit {
     return DepositSurveyState::Estimated;
 }
 
+// Confidence partitions the displayed reserve; it does not reserve separate
+// physical material or reduce the amount available to the mining tick.
 [[nodiscard]] inline double confirmedDepositQuantity(const MineralDeposit& deposit) noexcept {
     return deposit.remaining * deposit.confidence;
 }
@@ -366,14 +377,18 @@ enum class ProcessingPolicy {
 // Weight assigned to one processed material when a colony uses Manual policy.
 // Weights are relative, not percentages; simulation normalizes positive weights
 // against the colony's current processor capacity each day.
+// Repeated materials are allowed and their weights add together.
 struct ProcessingAllocation {
     ProcessedMaterial material = ProcessedMaterial::StructuralAlloys;
     double weight = 0.0;
 };
 
 // A settled body with raw and processed stockpiles plus industrial capacity.
-// mines controls extraction, processorCapacity converts raw resources into
-// processed materials, and shipyardCapacity applies build points per day.
+// mines supplies base mineral units per deposit per day before accessibility;
+// processorCapacity is processed output units per day shared across recipes;
+// shipyardCapacity is build points per day shared across local production orders.
+// Stockpiles and capacities must be finite and non-negative. All industry uses
+// this colony's stockpiles; there is no automatic transfer between colonies.
 struct Colony {
     ColonyId id;
     BodyId bodyId;
@@ -405,24 +420,29 @@ struct ShipClass {
     std::string name;
     ShipRole role = ShipRole::Survey;
     ProcessedMaterialSet buildCost;
+    // Work required per hull, paid with the colony's daily shipyard build points.
     double buildPoints = 0.0;
+    // Retained class metadata in kilometers/day; sustained-burn timing currently
+    // uses the shared acceleration constant instead of this value.
     double speedKmPerDay = 0.0;
-    // Maximum propellant capacity contributed by one ship of this class.
-    // Starter ships are initialized full; v1 movement consumes this directly.
+    // Maximum abstract fuel units per hull. Newly completed ships start full;
+    // no refueling command currently transfers colony propellant into this tank.
     double fuelCapacity = 0.0;
 };
 
 // Order lifecycle for shipyard production.
 // Only states produced by valid Prototype 0.1 simulation ticks are modeled here.
-// Recoverable mineral shortages keep an order Active rather than introducing a
-// separate paused/blocked state.
+// Recoverable processed-material shortages keep an order Active rather than
+// introducing a separate paused/blocked state.
 enum class ShipyardOrderStatus {
     Active,
     Completed
 };
 
 // A production order assigned to a colony shipyard. quantityCompleted allows
-// multi-ship orders to continue across multiple completions.
+// multi-ship orders to continue across multiple completions. Progress is for the
+// next hull; material cost is deducted only when that hull completes. Completed
+// orders remain in state for audit references and retain zero build progress.
 struct ShipyardOrder {
     ShipyardOrderId id;
     ColonyId colonyId;
@@ -450,13 +470,15 @@ enum class FleetOrderType {
     MoveToBody
 };
 
-// Active fleet order state. targetBodyId is optional so invalid or cleared orders
-// can be represented explicitly during validation and save/load repair. Movement
-// orders also carry the planned sustained-burn route so save/load, map rendering,
-// and event inspection agree on the projected destination position.
+// Active fleet order state. None has no target and zero remaining days. A move
+// requires a target matching Fleet::destinationBodyId and a persisted transit
+// plan; validation rejects missing metadata rather than repairing a loaded route.
+// The plan is fixed at departure so save/load and map rendering use the same
+// projected endpoint even while bodies continue along their rails.
 struct FleetOrder {
     FleetOrderType type = FleetOrderType::None;
     std::optional<BodyId> targetBodyId;
+    // Whole simulated days; equals arrivalDay - GameState::date.day while moving.
     int daysRemaining = 0;
     std::optional<BodyId> departureBodyId;
     std::int64_t departureDay = 0;
@@ -464,12 +486,14 @@ struct FleetOrder {
     MapPosition departurePosition;
     MapPosition projectedArrivalPosition;
     double transitDistanceKm = 0.0;
+    // Fraction of Earth gravity, independent of the presentation curve.
     double burnAccelerationG = 0.0;
+    // Map units; display-only curvature does not change distance, time, or fuel.
     MapPosition routeCurveControlPoint;
 };
 
 // Queued fleet order state for the small v1 command queue. Queued orders do not
-// store remaining days because duration is assigned only when the order starts.
+// store remaining days or reserve fuel; each leg is replanned when it starts.
 struct QueuedFleetOrder {
     FleetOrderType type = FleetOrderType::MoveToBody;
     std::optional<BodyId> targetBodyId;
@@ -481,8 +505,12 @@ struct QueuedFleetOrder {
 struct Fleet {
     FleetId id;
     std::string name;
+    // Last reached body, retained during transit. Intermediate map positions are
+    // derived from activeOrder; only arrival changes this logical location.
     BodyId currentBodyId;
     std::optional<BodyId> destinationBodyId;
+    // Each ship must point back to this fleet and appear in exactly one roster.
+    // Order also determines which hull pays fuel first from the pooled supply.
     std::vector<ShipId> shipIds;
     FleetOrder activeOrder;
     std::vector<QueuedFleetOrder> queuedOrders;

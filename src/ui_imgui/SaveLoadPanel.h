@@ -20,13 +20,16 @@ public:
     // Draws the path field, action buttons, latest status, and close state.
     void render(SimulationService& service, bool& visible);
 
-    // Starts a fresh scenario through the application service.
+    // Replaces the active scenario immediately; this panel has no unsaved-change
+    // prompt and does not reset other panels' selection or draft state.
     void newGame(SimulationService& service);
 
-    // Saves the current scenario to the path currently typed into the panel.
+    // Saves to the typed path, resolved relative to the process working directory
+    // when not absolute. Empty paths and service failures become visible status.
     void save(SimulationService& service);
 
-    // Loads a scenario from the path currently typed into the panel.
+    // Loads from the typed path; service-reported failure leaves gameplay state
+    // intact. Success replaces the world without reconstructing UI panels.
     void load(SimulationService& service);
 
 private:

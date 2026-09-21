@@ -226,6 +226,9 @@ void InspectorPanel::render(const SimulationQueries& queries,
     const bool destinationIsCurrent = sourceFleet.has_value() && destinationBody.has_value()
         && sourceFleet->currentBodyId == destinationBody->id;
     const bool hasFuelForMove = !movePreview.has_value() || movePreview->canAfford;
+    // These UI checks are advisory; MoveFleetCommand still rejects an active
+    // fleet. Unlike the Fleet Orders panel, this action requests an immediate
+    // move and does not append a leg to the queue.
     const bool canMove = sourceFleet.has_value() && destinationBody.has_value() && !destinationIsCurrent && hasFuelForMove;
 
     if (movePreview.has_value()) {

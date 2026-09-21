@@ -18,6 +18,8 @@ public:
     void render(const SimulationQueries& queries, bool& visible) const;
 
 private:
+    // Presentation limit only. Querying this tail neither prunes durable events
+    // nor bounds the simulation's separate daily-economy telemetry.
     static constexpr std::size_t kRecentEventLimit = 25;
 };
 

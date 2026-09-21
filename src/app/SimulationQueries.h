@@ -1,8 +1,11 @@
 #pragma once
 
-// Declares read-only application query DTOs for simulation state.
-// Future UI code should consume these summaries instead of reaching through
-// SimulationService into raw GameState vectors.
+// Responsibility: project live simulation records into owned, display-ready
+// values for UI consumers. Queries resolve names, score candidates, and preview
+// routes; they do not issue commands, persist data, or own simulation entities.
+// Resource/fuel amounts use abstract simulation units. Confidence uses [0, 1],
+// percentages use 100 for a full allocation/tank and signed percentage points for
+// modifiers. Map positions use kKilometersPerMapUnit scaling, not screen pixels.
 
 #include "app/SimulationService.h"
 #include "sim/Domain.h"
@@ -52,7 +55,9 @@ struct ProcessedMaterialStockpileSummary {
 };
 
 // Display-ready colony row for overview panels. Values are copied out of the
-// simulation snapshot so UI code cannot mutate GameState accidentally.
+// current state so UI code cannot mutate GameState accidentally. Processor
+// capacity is output units per game day; shipyard capacity is build points per
+// game day. Summed stockpiles are display totals across unlike resource types.
 struct ColonySummary {
     ColonyId id;
     BodyId bodyId;
@@ -208,12 +213,13 @@ struct FleetQueuedOrderSummary {
     RouteVisualStyle routeVisualStyle = RouteVisualStyle::SustainedBurn;
     std::string routeVisualStyleName;
 
-    // Absolute simulation days projected from the current snapshot. These are
-    // preview values only; future movement/range rules may replace the fixed
-    // prototype duration used by the query layer.
+    // Absolute simulation days projected by shared sustained-burn planning from
+    // the current state. Each leg starts at its predecessor's projected arrival;
+    // future command changes or start-time fuel rejection can invalidate this.
     std::int64_t projectedStartDay = 0;
     std::int64_t projectedArrivalDay = 0;
     double fuelCost = 0.0;
+    // Clamped at zero for display; use fuelAffordable to detect a deficit.
     double projectedFuelRemaining = 0.0;
     bool fuelAffordable = true;
 };
@@ -241,8 +247,9 @@ struct FleetSummary {
     double fuelEfficiencyModifierPercent = 0.0;
     std::vector<AppointmentModifierBreakdownRow> fuelModifierBreakdown;
 
-    // ETA fields summarize the active order plus queued moves from the current
-    // simulation day. They are zero when the fleet has no active/queued orders.
+    // Durations count whole game days from now. activeOrderEtaDays is empty when
+    // idle; totalRouteDurationDays includes the active and projected queued legs.
+    // activeOrderProjectedArrivalDay is the current absolute day when idle.
     std::optional<int> activeOrderEtaDays;
     int totalRouteDurationDays = 0;
     std::int64_t activeOrderProjectedArrivalDay = 0;
@@ -257,12 +264,15 @@ struct FleetSummary {
 
 // Preview for ordering one additional fleet move from the current queue state.
 // The preview is advisory UI data; Simulation still performs authoritative
-// command validation before accepting movement.
+// command validation before accepting movement. canAfford only describes fuel;
+// it does not establish all command preconditions such as a different target.
 struct FleetMovePreview {
     FleetId fleetId;
     BodyId destinationBodyId;
     std::string destinationBodyName;
     double fuelAvailable = 0.0;
+    // Includes both existing queued moves and this proposed additional move.
+    // The active leg has already paid its fuel cost and is not charged again.
     double queuedFuelRequired = 0.0;
     double newMoveFuelCost = 0.0;
     double transitDistanceKm = 0.0;
@@ -320,9 +330,9 @@ struct BodySystemSummary {
     std::size_t fleetCount = 0;
 };
 
-// Display-ready mineral deposit row. Quantity fields separate confirmed supply
-// from low-confidence future supply so exploration pressure is visible before
-// survey commands exist.
+// Display-ready mineral deposit row. Confidence partitions physical remaining
+// quantity into confirmed and uncertain supply; estimated quantity is hidden for
+// unknown deposits. A survey improves confidence without creating new reserves.
 struct BodyDepositSummary {
     BodyId bodyId;
     std::string bodyName;
@@ -380,8 +390,9 @@ struct ExplorationIntelligenceSummary {
     std::vector<std::string> warnings;
 };
 
-// Map-ready body row with coarse simulation coordinates copied from GameState.
-// These DTOs let the strategic map draw the system without exposing body vectors.
+// Map-ready body row with rail positions projected at the current game day.
+// x/y are scaled map coordinates; orbitalRadiusKm remains physical kilometers.
+// Body fallback coordinates are used when rail projection cannot resolve.
 struct StrategicBodySummary {
     BodyId id;
     std::string name;
@@ -400,8 +411,11 @@ struct StrategicBodySummary {
     double y = 0.0;
 };
 
-// Map-ready fleet marker. Fleet coordinates are resolved through current and
-// destination bodies so UI panels do not need direct body lookups.
+// Map-ready fleet marker. Idle markers follow their body's current rail position;
+// moving markers use elapsed-day interpolation along a presentation-only curve.
+// currentBodyId remains the authoritative departure body until arrival. The
+// destinationX/Y fields locate the target now, while projectedArrivalX/Y locate
+// the planned future intercept. All coordinate fields use scaled map units.
 struct StrategicFleetSummary {
     FleetId id;
     std::string name;
@@ -435,8 +449,11 @@ struct EventLogEntrySummary {
     std::string message;
 };
 
-// Read-only query facade over SimulationService. The facade does not own the
-// service; callers must ensure the referenced service outlives the query object.
+// Read-only query facade borrowing a live SimulationService. Keep that service
+// alive and at a stable address. Construction captures no state: each call reads
+// the current game and returns independent DTO values. Serialize reads with
+// commands/new/load; consecutive calls can describe different worlds or days if
+// the caller mutates the service between them. No internal locking is provided.
 class SimulationQueries {
 public:
     // Binds queries to an application service. Returned summaries are snapshots
@@ -467,8 +484,9 @@ public:
     // Returns current appointment rows with resolved person and scope names.
     [[nodiscard]] std::vector<AppointmentSummary> appointments() const;
 
-    // Returns ranked, explainable candidates for an appointment slot. The query
-    // is deterministic and non-mutating; Simulation still owns appointment writes.
+    // Returns ranked, explainable candidates for an existing appointment scope;
+    // an unresolved scope returns an empty vector. Ranking is advice, not command
+    // authorization, and never changes an appointment or a person's record.
     [[nodiscard]] std::vector<AppointmentCandidateScore> appointmentCandidatesFor(
         AppointmentRole role,
         AppointmentScopeType scopeType,
@@ -481,30 +499,34 @@ public:
     // stable placeholder so UI/tests can show broken references clearly.
     [[nodiscard]] std::string institutionDisplayName(InstitutionId id) const;
 
-    // Returns fuel affordability for appending one move to the current fleet queue.
+    // Returns fuel affordability for appending one move to the current queue.
+    // Missing fleet/body IDs or malformed queued orders return nullopt; fuel
+    // shortage instead returns a populated preview with canAfford == false.
     [[nodiscard]] std::optional<FleetMovePreview> fleetMovePreview(FleetId fleetId, BodyId destinationBodyId) const;
 
-    // Returns whether an immediate resource survey is valid for a fleet/body.
+    // Returns preflight advice for an immediate survey. Missing fleet/body IDs
+    // return nullopt; ordinary precondition failures return a warning in the DTO.
     [[nodiscard]] std::optional<ResourceSurveyPreview> resourceSurveyPreview(FleetId fleetId, BodyId bodyId) const;
 
     // Returns one overview row per body with colony, deposit, and fleet counts.
     [[nodiscard]] std::vector<BodySystemSummary> bodySystemOverview() const;
 
     // Returns display-ready deposit rows for a body. Unknown rows intentionally
-    // hide estimated quantity until future survey commands improve confidence.
+    // hide estimated quantity until a resource survey improves confidence.
     [[nodiscard]] std::vector<BodyDepositSummary> bodyDeposits(BodyId bodyId) const;
 
     // Returns survey intelligence over low-confidence deposits and recent survey
     // events so UI panels can explain what exploration changed.
     [[nodiscard]] ExplorationIntelligenceSummary explorationIntelligence() const;
 
-    // Returns one map row per body, including abstract prototype coordinates.
+    // Returns one map row per body with current-day projected rail coordinates.
     [[nodiscard]] std::vector<StrategicBodySummary> strategicBodies() const;
 
     // Returns a single map-ready body summary when the ID exists.
     [[nodiscard]] std::optional<StrategicBodySummary> strategicBody(BodyId id) const;
 
-    // Returns one map row per fleet, resolving marker coordinates from bodies.
+    // Returns one map row per fleet; moving markers interpolate planned routes
+    // for display without changing the simulation's discrete body location.
     [[nodiscard]] std::vector<StrategicFleetSummary> strategicFleets() const;
 
     // Returns the newest event-log entries, preserving chronological order

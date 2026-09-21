@@ -1,7 +1,7 @@
 #pragma once
 
 // Defines typed simulation audit events and lightweight economy telemetry.
-// Audit events are consumed by tests, the CLI, the future UI, and the planned
+// Audit events are consumed by tests, the CLI, the desktop UI, and the
 // SQLite persistence layer; telemetry is for high-volume daily facts that should
 // not spam the player-facing event log.
 
@@ -22,7 +22,7 @@ enum class EventSeverity {
     Critical
 };
 
-// Schema-v1 event payload for historical mineral extraction audit entries.
+// Retained event payload for historical mineral extraction audit entries.
 // New daily mining output is captured as DailyEconomySnapshot telemetry so the
 // player-facing event log stays focused on major audit events.
 struct MineralExtractedEvent {
@@ -108,6 +108,8 @@ using SimEventPayload = std::variant<
 
 // Full event record. id is monotonic within a GameState; day is captured when
 // the event is emitted so later UI filtering does not depend on current time.
+// Payload IDs must still resolve to live records during state validation; entity
+// deletion will need an explicit historical-reference policy before it is added.
 struct SimEvent {
     EventId id;
     std::int64_t day = 0;

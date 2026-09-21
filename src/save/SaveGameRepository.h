@@ -1,8 +1,8 @@
 #pragma once
 
-// Declares the SQLite repository that maps GameState to schema v2 save files.
-// This boundary is the only layer that knows both simulation records and SQLite;
-// sim/ remains database-independent and app/ calls this repository for save/load.
+// Responsibility: map durable GameState records to and from SQLite schema v10.
+// This boundary knows both simulation records and SQLite; sim/ remains database
+// independent. App callers translate exceptions into user-facing results.
 
 #include "sim/GameState.h"
 
@@ -10,16 +10,25 @@
 
 namespace deep::save {
 
-// Stateless repository for full-file save/load operations. Prototype 0.1 uses a
-// replace-all save strategy because the state graph is small and deterministic.
+// Stateless repository for full-snapshot operations. Each call owns its database
+// connection and statements. The current small state graph uses replacement rows
+// instead of incremental diffs; no migration or concurrent-save coordination is
+// provided. Daily economy telemetry is session-only and is not persisted.
 class SaveGameRepository {
 public:
-    // Saves a complete GameState snapshot to path. The operation uses a write
-    // transaction and prepared statements for every value-bearing SQL command.
+    // Borrows state, which the caller must keep unchanged for the entire call.
+    // Validates it before opening path, then initializes schema and replaces all
+    // durable rows in a write transaction. Failed replacement attempts rollback;
+    // file creation/schema setup precede that transaction and
+    // may remain after failure. Existing paths are assumed schema-compatible;
+    // save does not run load's version check or migrate incompatible databases.
     static void save(const std::filesystem::path& path, const GameState& state);
 
-    // Loads a complete GameState snapshot from path. The operation uses a read
-    // transaction so all rows are read from one consistent schema v2 snapshot.
+    // Reconstructs and returns an owned snapshot from one read transaction after
+    // checking schema identity and foreign keys. Validates the assembled graph
+    // before returning; failure throws without exposing a partial GameState.
+    // No application state is replaced here. Runtime economy telemetry starts
+    // empty, and unsupported schema versions are rejected rather than migrated.
     [[nodiscard]] static GameState load(const std::filesystem::path& path);
 };
 

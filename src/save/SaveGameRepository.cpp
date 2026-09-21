@@ -1,8 +1,10 @@
 #include "save/SaveGameRepository.h"
 
-// Implements schema v9 save/load mapping for the headless simulation state.
-// The repository uses prepared statements and transactions throughout; raw SQL
-// execution is limited to static schema/table maintenance statements with no data.
+// Responsibility: map durable simulation records to/from schema v10 rows.
+// Each operation owns its connection and reconstructed data; the input snapshot
+// is borrowed unchanged during save. Parameter binding separates values from SQL.
+// Row replacement and reads are transactional, while initial schema setup occurs
+// before save's transaction. Gameplay rules and graph invariants remain in sim/.
 
 #include "save/Database.h"
 #include "save/EventJson.h"
@@ -42,7 +44,7 @@ template <typename EnumT>
     return static_cast<std::int64_t>(value);
 }
 
-// Returns true when a persisted enum ordinal is part of the current schema v9
+// Returns true when a persisted enum ordinal is part of the current schema v10
 // contract. Keep this explicit instead of raw-casting database values; SQLite
 // files are inspectable and may be hand-edited or corrupted.
 template <typename EnumT>
@@ -66,7 +68,7 @@ template <typename EnumT>
     } else if constexpr (std::is_same_v<EnumT, ProcessingPolicy>) {
         return value >= 0 && value <= static_cast<std::int64_t>(ProcessingPolicy::Manual);
     } else if constexpr (std::is_same_v<EnumT, ShipyardOrderStatus>) {
-        // Schema v1 persists only the lifecycle states the simulation can
+        // The schema persists only the lifecycle states the simulation can
         // produce from valid input. Temporary shortages remain Active.
         return value >= 0 && value <= static_cast<std::int64_t>(ShipyardOrderStatus::Completed);
     } else if constexpr (std::is_same_v<EnumT, FleetOrderType>) {
@@ -89,8 +91,9 @@ template <typename EnumT>
     return static_cast<EnumT>(value);
 }
 
-// Converts a database INTEGER to int after checking range. This prevents silent
-// truncation when malformed saves contain values outside command/domain limits.
+// Checks narrowing from an already decoded int64 to the domain's int fields.
+// This does not validate SQLite storage types or recover precision lost by its
+// column conversion; metadata uses a separate strict text parser below.
 [[nodiscard]] int checkedIntFromSql(const std::int64_t value, const std::string_view fieldName) {
     if (value < static_cast<std::int64_t>(std::numeric_limits<int>::min()) ||
         value > static_cast<std::int64_t>(std::numeric_limits<int>::max())) {
@@ -155,7 +158,7 @@ void reuse(Statement& stmt) {
 }
 
 void clearExistingSave(Database& db) {
-    // Delete child tables first because schema v9 intentionally uses explicit
+    // Delete child tables first because schema v10 intentionally uses explicit
     // foreign keys rather than ON DELETE CASCADE. This makes destructive save
     // behavior visible and easy to audit.
     db.execute(R"sql(
@@ -545,8 +548,9 @@ void saveEvents(Database& db, const GameState& state) {
 
 void requireNoForeignKeyViolations(Database& db) {
     // Foreign keys can be disabled by external tools while editing SQLite files.
-    // Re-run SQLite's integrity check during load so broken references fail
-    // before rows are mapped into GameState vectors.
+    // Check declared foreign keys before mapping rows into GameState vectors.
+    // This is not SQLite's full integrity check and does not cover references
+    // represented only by application-level invariants.
     Statement stmt{db, "PRAGMA foreign_key_check;"};
     if (stmt.step()) {
         throw std::runtime_error{"Save file contains foreign key violations"};
@@ -667,6 +671,9 @@ void loadBodies(Database& db, GameState& state) {
 }
 
 void loadColonies(Database& db, GameState& state) {
+    // Resource arrays begin at zero and child rows fill individual entries.
+    // Missing entries currently remain zero; this reader does not enforce the
+    // dense row set written by saveColonies. Domain validation sees only values.
     Statement colonies{db, R"sql(
         SELECT id, body_id, name, owner_institution_id, mines, processor_capacity,
                shipyard_capacity, processing_policy
@@ -741,6 +748,8 @@ void loadMineralDeposits(Database& db, GameState& state) {
 }
 
 void loadShipClasses(Database& db, GameState& state) {
+    // As with colony resources, absent cost rows remain zero. Reconstruction
+    // does not distinguish an omitted component from a persisted zero cost.
     Statement classes{db, R"sql(
         SELECT id, name, role, build_points, speed_km_per_day, fuel_capacity
         FROM ship_classes
@@ -885,6 +894,9 @@ void SaveGameRepository::save(const std::filesystem::path& path, const GameState
     validateGameState(state);
 
     Database db{path};
+    // Schema initialization can create objects before the replacement transaction
+    // begins. It neither validates an existing version nor migrates old tables;
+    // rollback below protects row replacement, not this earlier setup.
     initializeSchema(db);
 
     Transaction transaction{db, Transaction::Mode::Write};
@@ -905,7 +917,7 @@ void SaveGameRepository::save(const std::filesystem::path& path, const GameState
     saveShips(db, state);
     saveEvents(db, state);
     // dailyEconomySnapshots is runtime-only telemetry for the active session.
-    // Schema v1 deliberately omits it, so saves contain durable state and audit
+    // The schema deliberately omits it, so saves contain durable state and audit
     // events only; graphs can regenerate new samples after loading and advancing.
     transaction.commit();
 }
@@ -938,7 +950,7 @@ GameState SaveGameRepository::load(const std::filesystem::path& path) {
     loadEvents(db, state);
 
     // There is intentionally no load step for dailyEconomySnapshots. Economy
-    // telemetry is transient runtime data in schema v9 and remains empty until
+    // telemetry is transient runtime data in schema v10 and remains empty until
     // the loaded simulation advances new days.
 
     // SQLite constraints are first-line protection only. The authoritative pass

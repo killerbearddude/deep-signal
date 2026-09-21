@@ -9,7 +9,9 @@
 
 namespace deep {
 
-// Throws std::runtime_error when state violates simulation invariants.
+// Read-only trust-boundary check; throws std::runtime_error at the first failed
+// invariant and never repairs the snapshot. Checks persistent records and audit
+// history; runtime-only dailyEconomySnapshots are outside this validation pass.
 // Call this at trust boundaries: scenario construction tests, save-file loading,
 // and APIs that accept caller-provided GameState snapshots.
 void validateGameState(const GameState& state);

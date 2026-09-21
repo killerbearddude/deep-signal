@@ -78,6 +78,9 @@ constexpr ImGuiTableFlags kForecastTableFlags = ImGuiTableFlags_Borders |
 void renderCauseRows(const std::string& title, const std::vector<MineralForecastCauseRow>& causes) {
     ImGui::Text("Drivers: %s", title.c_str());
     for (const MineralForecastCauseRow& cause : causes) {
+        // FIXME: Raw-mineral cause rows also contain total reserve quantities.
+        // They need an explicit quantity/rate distinction before every row can
+        // truthfully use this per-day label; do not infer units from the label.
         ImGui::BulletText("%+.1f/day %s", cause.amountPerDay, cause.label.c_str());
         if (!cause.explanation.empty()) {
             ImGui::TextWrapped("  %s", cause.explanation.c_str());

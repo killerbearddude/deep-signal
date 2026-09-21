@@ -127,6 +127,9 @@ void drawFleet(ImDrawList& drawList,
         const MapPoint departure = fleetDeparturePoint(fleet);
         const MapPoint control = fleetControlPoint(fleet);
         const MapPoint arrival = fleetDestinationPoint(fleet);
+        // The curve and its midpoint are visual annotations from the planned
+        // order, not a second physics model. Segment count affects smoothness
+        // only; arrival time and fuel cost remain simulation-owned.
         constexpr int kSegmentsPerHalf = 14;
         for (int i = 0; i < kSegmentsPerHalf; ++i) {
             const double t0 = 0.5 * static_cast<double>(i) / static_cast<double>(kSegmentsPerHalf);
@@ -217,8 +220,8 @@ std::optional<StrategicMapSelection> StrategicMapView::pick(const MapCamera& cam
     double bestDistanceSquared = std::numeric_limits<double>::max();
     std::optional<StrategicMapSelection> bestSelection;
 
-    // Prefer the closest marker regardless of type so overlapping future map
-    // objects produce deterministic picks without exposing UI-specific state.
+    // Strictly closer candidates replace the pick. Iterating fleets first makes
+    // ties favor fleets, then collection order, including colocated idle fleets.
     for (const StrategicFleetSummary& fleet : fleets) {
         const ImVec2 marker = toImVec2(camera.worldToScreen(fleetPoint(fleet), viewCenter));
         const double distance = distanceSquared(marker, screenPoint);

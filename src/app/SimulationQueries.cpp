@@ -2,9 +2,10 @@
 
 #include "app/ForecastService.h"
 
-// Implements read-only query projection from GameState into app-layer DTOs.
-// The functions in this file are intentionally presentation-adjacent but UI-free:
-// they resolve names and flatten variants without depending on ImGui or SDL.
+// Responsibility: resolve names, display summaries, appointment advice, and map
+// geometry from live GameState. DTOs own their output; lookup pointers borrow
+// state only during the serialized call. This layer depends on neither ImGui nor
+// SDL and must not turn a preview into an authoritative gameplay mutation.
 
 #include "sim/GameState.h"
 #include "sim/Minerals.h"
@@ -704,6 +705,9 @@ void addProcessingWeight(ProcessingShares& weights, const ProcessedMaterial mate
 }
 
 [[nodiscard]] ProcessingShares processingWeightsForPolicy(const Colony& colony, const ProcessingPolicy policy) noexcept {
+    // These weights mirror Simulation's policy presets for display. Keep this
+    // table synchronized with simulation and forecast policy changes; a displayed
+    // allocation percentage is not evidence that raw inputs can fund its output.
     ProcessingShares weights{};
 
     switch (policy) {
@@ -1199,9 +1203,9 @@ std::vector<AppointmentCandidateScore> SimulationQueries::appointmentCandidatesF
     candidates.reserve(state.people.size());
 
     for (const Person& person : state.people) {
-        // Validation guarantees saved/current games reference existing
-        // institutions. The guard keeps query output robust for test-built or
-        // partially loaded states that have not passed validation yet.
+        // Simulation validates institutional references when state is imported.
+        // Retain this defensive guard so candidate display never dereferences a
+        // missing lookup if the state-entry contract changes in the future.
         if (findById(state.institutions, person.institutionId) == nullptr) {
             continue;
         }
@@ -1643,9 +1647,10 @@ std::vector<StrategicFleetSummary> SimulationQueries::strategicFleets() const {
             const double t = elapsed / total;
             const MapPosition p0 = fleet.activeOrder.departurePosition;
             const MapPosition p2 = fleet.activeOrder.projectedArrivalPosition;
-            // Recompute the presentation control point from the route endpoints
-            // so older active saves with the previous curve orientation render
-            // consistently after the UI direction correction.
+            // Presentation-only compatibility: recompute the curve so old saves
+            // use current visual styling while retaining saved endpoints, ETA,
+            // and fuel accounting. Elapsed time is a curve parameter, not a
+            // physical acceleration integration or a mutable fleet position.
             const MapPosition p1 = routeCurveControlPoint(p0, p2);
             position = MapPosition{
                 .x = ((1.0 - t) * (1.0 - t) * p0.x) + (2.0 * (1.0 - t) * t * p1.x) + (t * t * p2.x),

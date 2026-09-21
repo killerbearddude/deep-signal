@@ -218,6 +218,7 @@ void validateProcessedMaterialSet(const ProcessedMaterialSet& set, const std::st
 
 
 void validateBodyParentGraph(const std::vector<Body>& bodies) {
+    // Keep this limit aligned with TransitPlanning's recursive projection guard.
     constexpr int kMaximumParentChainDepth = 16;
 
     std::unordered_map<std::int64_t, const Body*> bodyById;
@@ -263,8 +264,9 @@ void validateProcessingPolicy(const Colony& colony) {
         manualWeightTotal += allocation.weight;
     }
 
-    // Manual policy has no preset fallback. Require at least one positive weight
-    // so a loaded or imported state cannot silently spend zero processor capacity.
+    // Manual policy has no preset fallback. Require a positive total to reject
+    // an intentionally empty allocation. Individual finiteness checks above do
+    // not protect this sum from overflow; normalization has the same limitation.
     if (colony.processingPolicy == ProcessingPolicy::Manual) {
         requireState(manualWeightTotal > kProcessedMaterialComparisonEpsilon,
                      "manual processing policy requires positive total weight");
@@ -272,8 +274,8 @@ void validateProcessingPolicy(const Colony& colony) {
 }
 
 void validatePersonCompetencies(const PersonCompetencies& competencies) {
-    // Competencies are stored as non-negative levels only. They intentionally do
-    // not influence simulation output until appointment/merit rules are added.
+    // Competencies are non-negative levels without a stored upper bound.
+    // Appointment calculations cap the resulting modifier, not the input level.
     requireState(competencies.logistics >= 0, "person logistics competency must be non-negative");
     requireState(competencies.industry >= 0, "person industry competency must be non-negative");
     requireState(competencies.survey >= 0, "person survey competency must be non-negative");
@@ -304,6 +306,8 @@ void validatePersonServiceRecord(const PersonServiceRecord& record) {
 }
 
 void validateFleetOrder(const GameState& state, const Fleet& fleet) {
+    // Validate persisted timing and geometry instead of replanning on load:
+    // recalculation could silently change the route the player already paid for.
     requireState(isValidFleetOrderType(fleet.activeOrder.type), "fleet order type must be valid");
     requireState(fleet.activeOrder.daysRemaining >= 0, "fleet order days must be non-negative");
 
@@ -353,6 +357,8 @@ void validateFleetOrder(const GameState& state, const Fleet& fleet) {
     }
 }
 
+// Historical payload IDs must still resolve. The current model retains entities;
+// deletion or archival needs a deliberate policy for these audit references.
 void validateEventPayload(const GameState& state, const SimEventPayload& payload) {
     std::visit([&state](const auto& event) {
         using Event = std::decay_t<decltype(event)>;

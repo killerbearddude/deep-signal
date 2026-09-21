@@ -1,8 +1,8 @@
 #pragma once
 
-// Declares the application-facing service wrapper around the headless simulation.
-// Future CLI, UI, and save/load workflows should depend on this layer instead of
-// directly owning Simulation where application coordination is needed.
+// Responsibility: own the application's active simulation and coordinate
+// new/save/load operations. Gameplay mutations remain in Simulation; persistence
+// encoding remains in SaveGameRepository. This layer has no UI dependencies.
 
 #include "sim/Commands.h"
 #include "sim/Error.h"
@@ -18,34 +18,45 @@ namespace deep {
 // Owns the active Simulation instance for application-level use cases.
 // The service coordinates repository operations so UI/CLI code does not need to
 // know how GameState is persisted or how Simulation is rehydrated after loading.
+// Threading: callers must serialize reads, commands, and file operations. There
+// is no locking, background saving, or immutable snapshot publication here.
 class SimulationService {
 public:
     // Creates a service with the default deterministic home-system scenario.
     SimulationService();
 
-    // Creates a service from caller-provided state, usually for tests or a loaded
-    // save file.
+    // Takes ownership of caller-provided state. Simulation validation may throw
+    // if the state violates domain invariants; construction does not catch it.
     explicit SimulationService(GameState initialState);
 
-    // Returns a read-only view of active state. The reference remains valid until
-    // the next mutating service call.
+    // Borrows live state, not a frozen snapshot. Later commands change the viewed
+    // values and may invalidate references into its vectors. Copy the GameState
+    // to retain an independent snapshot; never retain entity pointers across a
+    // mutating call or use the borrow after this service is destroyed.
     [[nodiscard]] const GameState& state() const noexcept;
 
-    // Executes one command through the simulation mutation boundary.
+    // Executes one command through the simulation mutation boundary. Validation
+    // rejections return a failed result and may append a warning event; unexpected
+    // simulation exceptions propagate. This call does not save automatically.
     CommandResult execute(const SimCommand& command);
 
-    // Advances simulation time and returns events emitted during this call.
+    // Advances by a count of whole simulation days and returns emitted audit
+    // events, which are also kept in state. Nonpositive input produces a warning
+    // without advancing; simulation exceptions propagate to the caller.
     std::vector<SimEvent> advanceDays(int days);
 
-    // Replaces the active simulation with a fresh deterministic scenario.
+    // Replaces the active simulation with a fresh deterministic scenario. This
+    // does not save the old game or reset selection held by separate UI objects.
     CommandResult newGame();
 
-    // Saves the active state snapshot to a SQLite file. Returns a failed
-    // CommandResult instead of throwing so UI callers can present the error.
+    // Synchronously saves live state to SQLite without changing simulation state.
+    // Repository std::exception failures become a failed CommandResult; file
+    // replacement and transaction guarantees belong to SaveGameRepository.
     CommandResult saveGame(const std::filesystem::path& path) const;
 
     // Loads a SQLite save file and replaces the active simulation on success.
-    // The existing state is preserved when loading fails.
+    // The existing state is preserved when loading or validation fails. Loading
+    // does not reconcile app-owned selections or cached DTOs with the new world.
     CommandResult loadGame(const std::filesystem::path& path);
 
 private:

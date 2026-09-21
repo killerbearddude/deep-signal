@@ -21,6 +21,8 @@ public:
     void render(const SimulationQueries& queries, SelectionState& selection, bool& visible);
 
 private:
+    // UI-only view state survives closing the panel and replacing the world.
+    // Reset View restores the default camera; save files do not persist it.
     render::MapCamera camera_;
     render::StrategicMapView view_;
 };

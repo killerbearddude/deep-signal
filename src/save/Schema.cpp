@@ -1,9 +1,10 @@
 #include "save/Schema.h"
 
-// Implements schema v9 for Prototype 0.1 saves.
-// The schema mirrors GameState-owned records and keeps event payloads as typed
-// JSON text for inspectable, forward-migratable audit history. CHECK constraints
-// intentionally duplicate core invariants so hand-edited save files fail early.
+// Responsibility: define schema v10 tables and verify the version marker.
+// Tables mirror durable GameState records; event payloads remain inspectable JSON
+// text. Foreign keys and CHECK constraints provide a first line of validation,
+// not complete type/graph validation. Repository reconstruction and the domain
+// validator perform additional checks. Schema creation does not migrate saves.
 
 #include <charconv>
 #include <stdexcept>
@@ -279,8 +280,8 @@ void initializeSchema(Database& db) {
         CREATE INDEX IF NOT EXISTS idx_events_day ON event_log(day);
     )sql");
 
-    // Newly-created databases have an empty schema_version table. Existing save
-    // files keep their current row until save() replaces contents atomically.
+    // Seed empty metadata without replacing an existing version marker. This
+    // deliberately does not establish that pre-existing tables match v10.
     Statement count{db, "SELECT COUNT(*) FROM schema_version;"};
     if (!count.step()) {
         throw std::runtime_error{"Failed to read schema_version count"};

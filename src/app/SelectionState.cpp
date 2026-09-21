@@ -1,8 +1,8 @@
 #include "app/SelectionState.h"
 
-// Implements shared selection state for UI panels.
-// The class is intentionally tiny and value-owned so selection can move through
-// the app layer without introducing QObject-style lifetime or raw pointer risks.
+// Responsibility: store and compare the UI's typed selection without retaining
+// entity pointers. Selection validity belongs to the caller because this object
+// has no GameState reference. Access is serialized by the owning UI thread.
 
 namespace deep {
 

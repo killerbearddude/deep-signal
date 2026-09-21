@@ -1,8 +1,8 @@
 #include "ui_imgui/ImGuiApp.h"
 
-// Implements the first SDL3/Dear ImGui shell for Deep Signal.
-// The shell now hosts small functional panels while keeping all reads behind
-// SimulationQueries and all mutations behind SimulationService commands.
+// Responsibility: process window input and render panels on the UI thread.
+// Commands execute synchronously through SimulationService. This loop owns
+// frame scheduling, not the simulation clock or gameplay rules.
 
 #include "app/SimulationQueries.h"
 
@@ -84,9 +84,10 @@ void ImGuiApp::renderMainMenu() {
 }
 
 void ImGuiApp::renderPanels() {
-    // Recreate the query facade each frame so panels read a fresh snapshot after
-    // time-control commands mutate SimulationService. The facade is lightweight
-    // and does not expose mutable GameState access to panel code.
+    // These facades borrow the service; they do not capture a frozen snapshot.
+    // Each query observes state at call time, so later panels see commands from
+    // earlier panels this frame. Already-copied DTOs update on their next query.
+    // Keep reads and commands serialized if panel scheduling changes.
     const SimulationQueries queries{service_};
     const ForecastService forecasts{service_};
 

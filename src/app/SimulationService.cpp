@@ -1,8 +1,9 @@
 #include "app/SimulationService.h"
 
-// Implements the application service wrapper for the current headless prototype.
-// This layer coordinates new/load/save workflows while keeping Simulation focused
-// only on deterministic rules and command processing.
+// Responsibility: coordinate the owned simulation with synchronous repository
+// operations. Only file-operation exceptions are translated to CommandResult;
+// command execution remains a direct call into the authoritative simulation.
+// Callers serialize access, including reads through app query/forecast facades.
 
 #include "save/SaveGameRepository.h"
 #include "sim/ScenarioFactory.h"

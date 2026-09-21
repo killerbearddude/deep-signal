@@ -141,6 +141,9 @@ void ShipyardPanel::render(const SimulationQueries& queries, SimulationService& 
 }
 
 void ShipyardPanel::buildSurveyCutter(const SimulationQueries& queries, SimulationService& service) {
+    // Prototype assumption: scenario order selects the default shipyard and the
+    // class is identified by display name. Replace both with explicit typed-ID
+    // selectors when exposing multiple production locations or editable classes.
     const std::optional<ColonySummary> colony = firstProductionColony(queries.colonies());
     if (!colony.has_value()) {
         applyResult(CommandResult::failure("No colony with shipyard capacity is available"));

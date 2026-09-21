@@ -1,8 +1,8 @@
 #pragma once
 
-// Declares the minimal Dear ImGui application shell.
-// The shell renders functional prototype panels against SimulationService without
-// exposing raw GameState vectors.
+// Responsibility: compose the desktop event loop, panels, and shared selection.
+// Owns ImGui lifetime and UI state; SimulationService owns gameplay state and
+// SdlApp owns native resources. Panels read DTOs and submit commands, not records.
 
 #include "app/SelectionState.h"
 #include "app/SimulationService.h"
@@ -26,9 +26,13 @@ namespace deep::ui_imgui {
 // Owns the ImGui context for the desktop prototype shell.
 // SDL resources are delegated to platform::SdlApp and application state is kept
 // behind SimulationService so UI code does not own raw simulation internals.
+// Threading: construction, rendering, commands, and teardown run on the same
+// thread. There is no background simulation or synchronization in this shell.
 class ImGuiApp {
 public:
     // Creates the SDL window and initializes the Dear ImGui SDL3 renderer backend.
+    // Backend initialization failures release initialized backends/context and
+    // throw; member unwinding then releases the SDL resources.
     ImGuiApp();
 
     ImGuiApp(const ImGuiApp&) = delete;
@@ -39,7 +43,9 @@ public:
     // Shuts down ImGui backends before SDL resources are destroyed.
     ~ImGuiApp();
 
-    // Runs the UI event loop until the user closes the window.
+    // Runs the UI event loop until the user closes the window. Rendering alone
+    // never advances days; time controls advance them and New/Load can replace
+    // the current date.
     int run();
 
 private:
@@ -52,6 +58,7 @@ private:
     // Draws the first functional simulation panels using app-layer query DTOs.
     void renderPanels();
 
+    // SDL must outlive ImGui backend shutdown in the destructor body.
     platform::SdlApp sdl_;
     SimulationService service_;
     MainMenuBar mainMenuBar_;
