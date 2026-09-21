@@ -80,7 +80,7 @@ void ImGuiApp::renderDockspace() {
 }
 
 void ImGuiApp::renderMainMenu() {
-    mainMenuBar_.render(service_, saveLoadPanel_, visibility_);
+    mainMenuBar_.render(service_, saveLoadPanel_, workspace_, visibility_);
 }
 
 void ImGuiApp::renderPanels() {

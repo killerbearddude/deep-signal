@@ -52,7 +52,7 @@ private:
     // Draws a full-window dockspace that future panels can dock into.
     void renderDockspace();
 
-    // Draws application-level menu commands and panel visibility toggles.
+    // Draws application commands, workspace presets, and manual panel toggles.
     void renderMainMenu();
 
     // Draws the first functional simulation panels using app-layer query DTOs.
@@ -74,6 +74,7 @@ private:
     InspectorPanel inspectorPanel_;
     StrategicMapPanel strategicMapPanel_;
     SelectionState selection_;
+    Workspace workspace_ = Workspace::System;
     PanelVisibility visibility_;
 };
 
