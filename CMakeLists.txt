@@ -71,6 +71,7 @@ if(DEEP_SIGNAL_BUILD_APP)
 
     add_library(deep_signal_app
         src/app/ForecastService.cpp
+        src/app/InformationInteractionState.cpp
         src/app/SelectionState.cpp
         src/app/SimulationQueries.cpp
         src/app/SimulationService.cpp
@@ -124,6 +125,17 @@ endif()
 
 if(DEEP_SIGNAL_BUILD_TESTS)
     enable_testing()
+
+    # Compile the identity-only model directly so its boundary tests also run
+    # with app/save/UI disabled, without linking SQLite, SDL, or ImGui.
+    add_executable(deep_signal_information_interaction_tests
+        tests/information_interaction_tests.cpp
+        src/app/InformationInteractionState.cpp
+        src/app/SelectionState.cpp
+    )
+    target_include_directories(deep_signal_information_interaction_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_options(deep_signal_information_interaction_tests PRIVATE ${DEEP_SIGNAL_WARNINGS})
+    add_test(NAME deep_signal_information_interaction_tests COMMAND deep_signal_information_interaction_tests)
 
     add_executable(deep_signal_sim_tests
         tests/sim_tests.cpp
