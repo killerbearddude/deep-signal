@@ -12,3 +12,7 @@ compile_commands.json
 
 # Dear ImGui local window layout state
 imgui.ini
+
+# Syncthing local metadata and versioned backups
+/.stfolder/
+/.stversions/
