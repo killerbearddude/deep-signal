@@ -5,6 +5,8 @@
 // while Workspace presets and manual View toggles compose existing panels
 // without coupling them to global state.
 
+#include "sim/Commands.h"
+
 #include <imgui.h>
 
 namespace deep::ui_imgui {
@@ -59,7 +61,7 @@ void applyWorkspace(Workspace workspace, PanelVisibility& visibility) {
 }
 
 void MainMenuBar::render(SimulationService& service, SaveLoadPanel& saveLoadPanel,
-                         Workspace& workspace, PanelVisibility& visibility) const {
+                         Workspace& workspace, PanelVisibility& visibility) {
     if (!ImGui::BeginMainMenuBar()) {
         return;
     }
@@ -67,6 +69,7 @@ void MainMenuBar::render(SimulationService& service, SaveLoadPanel& saveLoadPane
     if (ImGui::BeginMenu("File")) {
         if (ImGui::MenuItem("New Game")) {
             saveLoadPanel.newGame(service);
+            timeError_.clear();
         }
         ImGui::Separator();
         if (ImGui::MenuItem("Save")) {
@@ -74,6 +77,7 @@ void MainMenuBar::render(SimulationService& service, SaveLoadPanel& saveLoadPane
         }
         if (ImGui::MenuItem("Load")) {
             saveLoadPanel.load(service);
+            timeError_.clear();
         }
         ImGui::EndMenu();
     }
@@ -120,7 +124,45 @@ void MainMenuBar::render(SimulationService& service, SaveLoadPanel& saveLoadPane
         ImGui::EndMenu();
     }
 
+    // Keep the controls at a stable position after the menus, independent of
+    // workspace, day digit count, or optional rejection feedback.
+    ImGui::SameLine(0.0f, ImGui::GetStyle().ItemSpacing.x * 3.0f);
+    if (ImGui::SmallButton("+1")) {
+        advanceTime(service, 1);
+    }
+    ImGui::SetItemTooltip("Advance 1 simulation day");
+    ImGui::SameLine();
+    if (ImGui::SmallButton("+5")) {
+        advanceTime(service, 5);
+    }
+    ImGui::SetItemTooltip("Advance 5 simulation days");
+    ImGui::SameLine();
+    if (ImGui::SmallButton("+30")) {
+        advanceTime(service, 30);
+    }
+    ImGui::SetItemTooltip("Advance 30 simulation days");
+    ImGui::SameLine();
+    // Read after dispatch so a successful click updates the date in this frame.
+    // This const service view also observes New Game, Load, and legacy controls.
+    ImGui::Text("Day %lld", static_cast<long long>(service.state().date.day));
+
+    if (!timeError_.empty()) {
+        ImGui::SameLine();
+        ImGui::TextColored(ImVec4{1.0f, 0.45f, 0.35f, 1.0f}, "Time advance rejected");
+        ImGui::SetItemTooltip("%s", timeError_.c_str());
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Dismiss##time_error")) {
+            timeError_.clear();
+        }
+    }
+
     ImGui::EndMainMenuBar();
+}
+
+void MainMenuBar::advanceTime(SimulationService& service, const int days) {
+    const CommandResult result = service.execute(AdvanceDaysCommand{.days = days});
+    timeError_ = result.ok ? std::string{}
+                          : (result.message.empty() ? "Time command rejected" : result.message);
 }
 
 } // namespace deep::ui_imgui
