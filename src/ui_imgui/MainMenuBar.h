@@ -4,9 +4,12 @@
 // The menu delegates save/load actions to SaveLoadPanel so the active file path
 // and status reporting stay in one UI component. Workspace presets curate panel
 // visibility; the View menu retains manual toggles for every dock window.
+// Global time controls issue simulation commands and display the live date.
 
 #include "app/SimulationService.h"
 #include "ui_imgui/SaveLoadPanel.h"
+
+#include <string>
 
 namespace deep::ui_imgui {
 
@@ -41,7 +44,7 @@ struct PanelVisibility {
 // Time Control windows retain their manual visibility across workspace changes.
 void applyWorkspace(Workspace workspace, PanelVisibility& visibility);
 
-// Renders File, Workspace, and View actions for the desktop shell.
+// Renders File, Workspace, View, and global time actions for the desktop shell.
 // File actions are intentionally limited to New/Save/Load; autosave and native
 // file dialogs are deferred until the persistence workflow has settled.
 class MainMenuBar {
@@ -49,7 +52,14 @@ public:
     // Draws the main menu bar, dispatching persistence actions and panel
     // visibility changes through the supplied UI state.
     void render(SimulationService& service, SaveLoadPanel& saveLoadPanel,
-                Workspace& workspace, PanelVisibility& visibility) const;
+                Workspace& workspace, PanelVisibility& visibility);
+
+private:
+    // Executes the same day-batch command as the legacy Time Control panel.
+    // Only rejection feedback is retained; the service owns the simulation date.
+    void advanceTime(SimulationService& service, int days);
+
+    std::string timeError_;
 };
 
 } // namespace deep::ui_imgui
