@@ -77,13 +77,29 @@ MapPosition routeCurveControlPoint(const MapPosition departure, const MapPositio
         return MapPosition{.x = departure.x, .y = departure.y};
     }
 
-    // Bend the rendered route away from the chord so the visual language reads
-    // as a planned sustained-burn transit rather than a straight targeting ray.
-    const double bend = length * 0.18;
-    return MapPosition{
-        .x = (departure.x + arrival.x) * 0.5 + (dy / length) * bend,
-        .y = (departure.y + arrival.y) * 0.5 - (dx / length) * bend
+    const MapPosition midpoint{
+        .x = (departure.x + arrival.x) * 0.5,
+        .y = (departure.y + arrival.y) * 0.5
     };
+    const double bend = std::min(length * kSustainedBurnRouteCurveFraction,
+                                 kSustainedBurnRouteCurveMaxMapUnits);
+
+    const MapPosition candidateA{
+        .x = midpoint.x + (dy / length) * bend,
+        .y = midpoint.y - (dx / length) * bend
+    };
+    const MapPosition candidateB{
+        .x = midpoint.x - (dy / length) * bend,
+        .y = midpoint.y + (dx / length) * bend
+    };
+
+    // Sustained-burn v1 uses a direct projected-intercept visual. When the
+    // shallow curve could bow toward the Sun at the origin, pick the opposite
+    // perpendicular so the route reads as an outbound torch arc rather than a
+    // Sun-centered low-energy transfer.
+    const double distanceAFromSunSquared = (candidateA.x * candidateA.x) + (candidateA.y * candidateA.y);
+    const double distanceBFromSunSquared = (candidateB.x * candidateB.x) + (candidateB.y * candidateB.y);
+    return distanceAFromSunSquared >= distanceBFromSunSquared ? candidateA : candidateB;
 }
 
 double sustainedBurnTravelDays(const double transitDistanceKm, const double accelerationG) noexcept {

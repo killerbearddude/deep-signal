@@ -89,6 +89,17 @@ template <typename T, typename IdT>
     return "Unknown";
 }
 
+[[nodiscard]] std::string routeVisualStyleName(const RouteVisualStyle style) {
+    switch (style) {
+    case RouteVisualStyle::SustainedBurn:
+        return "Sustained burn";
+    case RouteVisualStyle::LowEnergyTransferLater:
+        return "Low-energy transfer (reserved)";
+    }
+
+    return "Unknown route";
+}
+
 [[nodiscard]] std::string mineralDisplayName(const Mineral mineral) {
     return std::string{toString(mineral)};
 }
@@ -1062,6 +1073,8 @@ std::vector<FleetSummary> SimulationQueries::fleets() const {
                 .etaDays = static_cast<int>(std::max<std::int64_t>(0, arrivalDay - startDay)),
                 .transitDistanceKm = plan.transitDistanceKm,
                 .burnAccelerationG = plan.burnAccelerationG,
+                .routeVisualStyle = RouteVisualStyle::SustainedBurn,
+                .routeVisualStyleName = routeVisualStyleName(RouteVisualStyle::SustainedBurn),
                 .projectedStartDay = startDay,
                 .projectedArrivalDay = arrivalDay,
                 .fuelCost = fuelCost,
@@ -1110,6 +1123,10 @@ std::vector<FleetSummary> SimulationQueries::fleets() const {
             .activeOrderProjectedArrivalDay = activeArrivalDay,
             .activeOrderTransitDistanceKm = hasActiveOrder ? fleet.activeOrder.transitDistanceKm : 0.0,
             .activeOrderBurnAccelerationG = hasActiveOrder ? fleet.activeOrder.burnAccelerationG : 0.0,
+            .activeOrderRouteVisualStyle = RouteVisualStyle::SustainedBurn,
+            .activeOrderRouteVisualStyleName = hasActiveOrder
+                ? routeVisualStyleName(RouteVisualStyle::SustainedBurn)
+                : std::string{},
             .activeOrderBurnPhase = hasActiveOrder ? burnPhaseName(fleet.activeOrder, currentDay) : std::string{},
             .queuedOrders = std::move(queuedOrders)
         });
@@ -1316,6 +1333,12 @@ std::optional<FleetMovePreview> SimulationQueries::fleetMovePreview(const FleetI
         .transitDistanceKm = newMovePlan.transitDistanceKm,
         .etaDays = newMovePlan.daysRemaining,
         .burnAccelerationG = newMovePlan.burnAccelerationG,
+        .routeVisualStyle = RouteVisualStyle::SustainedBurn,
+        .routeVisualStyleName = routeVisualStyleName(RouteVisualStyle::SustainedBurn),
+        .projectedArrivalX = newMovePlan.projectedArrivalPosition.x,
+        .projectedArrivalY = newMovePlan.projectedArrivalPosition.y,
+        .routeControlX = newMovePlan.routeCurveControlPoint.x,
+        .routeControlY = newMovePlan.routeCurveControlPoint.y,
         .fuelEfficiencyModifierPercent = fuelEfficiencyModifier * 100.0,
         .projectedFuelRemaining = std::max(0.0, projectedRemaining),
         .canAfford = canAfford,
@@ -1650,6 +1673,8 @@ std::vector<StrategicFleetSummary> SimulationQueries::strategicFleets() const {
             .projectedArrivalY = projectedArrival.y,
             .moving = moving,
             .daysRemaining = fleet.activeOrder.daysRemaining,
+            .routeVisualStyle = RouteVisualStyle::SustainedBurn,
+            .routeVisualStyleName = moving ? routeVisualStyleName(RouteVisualStyle::SustainedBurn) : std::string{},
             .burnPhase = std::move(phase)
         });
     }

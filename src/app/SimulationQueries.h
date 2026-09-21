@@ -25,6 +25,14 @@ struct AppointmentModifierBreakdownRow {
     double percent = 0.0;
 };
 
+// Route visual style describes how map/UI should present a planned movement. V1
+// movement is sustained-burn only; the low-energy value is reserved so future
+// transfer mechanics can be added without overloading current DTO semantics.
+enum class RouteVisualStyle {
+    SustainedBurn,
+    LowEnergyTransferLater
+};
+
 // Display-ready processing allocation row. Weights are relative and are
 // normalized by the simulation when daily processor capacity is spent.
 struct ProcessingAllocationSummary {
@@ -197,6 +205,8 @@ struct FleetQueuedOrderSummary {
     int etaDays = 0;
     double transitDistanceKm = 0.0;
     double burnAccelerationG = 0.0;
+    RouteVisualStyle routeVisualStyle = RouteVisualStyle::SustainedBurn;
+    std::string routeVisualStyleName;
 
     // Absolute simulation days projected from the current snapshot. These are
     // preview values only; future movement/range rules may replace the fixed
@@ -238,6 +248,8 @@ struct FleetSummary {
     std::int64_t activeOrderProjectedArrivalDay = 0;
     double activeOrderTransitDistanceKm = 0.0;
     double activeOrderBurnAccelerationG = 0.0;
+    RouteVisualStyle activeOrderRouteVisualStyle = RouteVisualStyle::SustainedBurn;
+    std::string activeOrderRouteVisualStyleName;
     std::string activeOrderBurnPhase;
     std::vector<FleetQueuedOrderSummary> queuedOrders;
 };
@@ -256,6 +268,12 @@ struct FleetMovePreview {
     double transitDistanceKm = 0.0;
     int etaDays = 0;
     double burnAccelerationG = 0.0;
+    RouteVisualStyle routeVisualStyle = RouteVisualStyle::SustainedBurn;
+    std::string routeVisualStyleName;
+    double projectedArrivalX = 0.0;
+    double projectedArrivalY = 0.0;
+    double routeControlX = 0.0;
+    double routeControlY = 0.0;
     double fuelEfficiencyModifierPercent = 0.0;
     double projectedFuelRemaining = 0.0;
     bool canAfford = false;
@@ -401,6 +419,8 @@ struct StrategicFleetSummary {
     double projectedArrivalY = 0.0;
     bool moving = false;
     int daysRemaining = 0;
+    RouteVisualStyle routeVisualStyle = RouteVisualStyle::SustainedBurn;
+    std::string routeVisualStyleName;
     std::string burnPhase;
 };
 

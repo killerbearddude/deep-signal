@@ -950,6 +950,69 @@ void test_resource_survey_preview_and_queries_update_after_survey() {
             "recent survey result reports changed deposit count");
 }
 
+void test_sustained_burn_route_visualization_is_shallow_projected_intercept() {
+    // Verifies the strategic map receives a direct sustained-burn route preview:
+    // it targets the destination's projected arrival position, keeps the curve
+    // shallow, and bends away from the Sun instead of reading as a transfer orbit.
+    deep::SimulationService service;
+    const deep::ColonyId colonyId = service.state().colonies.front().id;
+    const deep::ShipClassId shipClassId = service.state().shipClasses.front().id;
+    const deep::BodyId marsId = service.state().bodies.at(1).id;
+
+    require(service.execute(deep::AssignShipyardBuildCommand{
+        .colonyId = colonyId,
+        .shipClassId = shipClassId,
+        .quantity = 1
+    }).ok, "build order is accepted before route-visualization query");
+    static_cast<void>(service.advanceDays(5));
+
+    const deep::FleetId fleetId = service.state().fleets.front().id;
+    const deep::SimulationQueries previewQueries{service};
+    const auto preview = previewQueries.fleetMovePreview(fleetId, marsId);
+    require(preview.has_value(), "move preview exists before route-visualization test");
+    require(preview->routeVisualStyle == deep::RouteVisualStyle::SustainedBurn,
+            "move preview exposes sustained-burn route style");
+    require(preview->routeVisualStyleName == "Sustained burn",
+            "move preview exposes display name for route style");
+
+    require(service.execute(deep::MoveFleetCommand{
+        .fleetId = fleetId,
+        .destinationBodyId = marsId
+    }).ok, "move order is accepted before strategic route query");
+
+    const deep::SimulationQueries movingQueries{service};
+    const auto fleets = movingQueries.strategicFleets();
+    require(!fleets.empty(), "moving strategic fleet summary exists");
+    const deep::StrategicFleetSummary& fleet = fleets.front();
+    require(fleet.moving, "strategic fleet summary marks active movement");
+    require(fleet.routeVisualStyle == deep::RouteVisualStyle::SustainedBurn,
+            "strategic fleet route style remains sustained burn");
+    require(fleet.routeVisualStyleName == "Sustained burn",
+            "strategic fleet route style has UI display text");
+
+    const double currentDestinationSeparation = std::hypot(
+        fleet.projectedArrivalX - fleet.destinationX,
+        fleet.projectedArrivalY - fleet.destinationY);
+    require(currentDestinationSeparation > 1.0e-6,
+            "route endpoint uses projected arrival position instead of current body position");
+
+    const double chordX = fleet.projectedArrivalX - fleet.departureX;
+    const double chordY = fleet.projectedArrivalY - fleet.departureY;
+    const double routeLength = std::hypot(chordX, chordY);
+    const double midpointX = (fleet.departureX + fleet.projectedArrivalX) * 0.5;
+    const double midpointY = (fleet.departureY + fleet.projectedArrivalY) * 0.5;
+    const double offset = std::hypot(fleet.controlX - midpointX, fleet.controlY - midpointY);
+    const double maximumOffset = std::min(routeLength * deep::kSustainedBurnRouteCurveFraction,
+                                          deep::kSustainedBurnRouteCurveMaxMapUnits);
+    require(offset <= maximumOffset + 1.0e-6,
+            "sustained-burn route control point is shallow and capped");
+
+    const double midpointSunDistance = std::hypot(midpointX, midpointY);
+    const double controlSunDistance = std::hypot(fleet.controlX, fleet.controlY);
+    require(controlSunDistance + 1.0e-6 >= midpointSunDistance,
+            "sustained-burn route curve bows away from the Sun when possible");
+}
+
 void test_recent_events_returns_limited_chronological_tail() {
     // Verifies that recentEvents(limit) returns the newest audit entries but
     // preserves log order inside that returned window. Routine mining telemetry
@@ -1011,6 +1074,7 @@ int main() {
         test_single_record_queries_return_matching_summaries();
         test_body_system_overview_exposes_counts();
         test_strategic_map_summaries_resolve_positions();
+        test_sustained_burn_route_visualization_is_shallow_projected_intercept();
         test_body_deposit_queries_expose_confidence_status();
         test_exploration_intelligence_lists_survey_targets();
         test_resource_survey_preview_and_queries_update_after_survey();

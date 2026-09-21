@@ -148,6 +148,14 @@ void drawFleet(ImDrawList& drawList,
         drawList.AddCircleFilled(flip, 4.0F, IM_COL32(255, 210, 100, 230), 16);
         drawList.AddCircle(projectedArrival, 7.0F, IM_COL32(160, 190, 255, 180), 20, 1.5F);
         drawList.AddText(ImVec2{flip.x + 6.0F, flip.y - 8.0F}, IM_COL32(255, 220, 150, 230), "Flip");
+        if (!fleet.routeVisualStyleName.empty()) {
+            // Label current v1 transits explicitly so shallow projected-intercept
+            // arcs are not read as Hohmann or other low-energy transfers.
+            const ImVec2 labelAnchor = toImVec2(camera.worldToScreen(quadraticBezier(departure, control, arrival, 0.28), viewCenter));
+            drawList.AddText(ImVec2{labelAnchor.x + 6.0F, labelAnchor.y + 6.0F},
+                             IM_COL32(170, 230, 190, 220),
+                             fleet.routeVisualStyleName.c_str());
+        }
     }
 
     drawList.AddRectFilled(ImVec2{position.x - radius, position.y - radius},

@@ -30,6 +30,12 @@ inline constexpr double kStandardGravityMetersPerSecondSquared = 9.80665;
 inline constexpr double kPrototypeBurnAccelerationG = 0.05;
 inline constexpr int kTransitPlanningIterations = 5;
 
+// Sustained-burn routes are rendered as shallow projected-intercept arcs, not
+// low-energy orbital transfers. These caps keep the route visual close to the
+// direct chord while still showing acceleration/deceleration phases.
+inline constexpr double kSustainedBurnRouteCurveFraction = 0.10;
+inline constexpr double kSustainedBurnRouteCurveMaxMapUnits = 120.0;
+
 // Shared tolerance for fleet fuel affordability and post-consumption clamping.
 inline constexpr double kFuelComparisonEpsilon = 1.0e-6;
 

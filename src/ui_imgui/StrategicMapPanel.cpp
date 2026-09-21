@@ -121,6 +121,7 @@ void StrategicMapPanel::render(const SimulationQueries& queries, SelectionState&
         return;
     }
     ImGui::TextUnformatted("Right-drag to pan. Mouse wheel to zoom. Left-click a marker to inspect or choose a move destination.");
+    ImGui::TextUnformatted("Fleet routes show sustained-burn projected intercept arcs; low-energy transfers are not modeled yet.");
     const std::optional<render::MapPoint> selectedAnchor = selectedMapAnchor(selection, bodies, fleets);
     if (ImGui::Button("Zoom Out")) {
         // Toolbar zoom has no cursor anchor. When a map object is selected, keep
