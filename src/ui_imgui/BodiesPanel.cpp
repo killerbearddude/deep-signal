@@ -26,7 +26,7 @@ constexpr ImGuiTableFlags kBodyTableFlags = ImGuiTableFlags_Borders |
 
 } // namespace
 
-void BodiesPanel::render(const SimulationQueries& queries, SelectionState& selection, bool& visible) const {
+void BodiesPanel::render(const SimulationQueries& queries, InformationInteractionAdapter& interactions, bool& visible) const {
     if (!visible) {
         return;
     }
@@ -36,6 +36,8 @@ void BodiesPanel::render(const SimulationQueries& queries, SelectionState& selec
         return;
     }
 
+    const auto displayedWorld = interactions.world();
+    auto selection = interactions.mainSelection();
     const std::vector<BodySystemSummary> bodies = queries.bodySystemOverview();
     ImGui::Text("Bodies: %zu", bodies.size());
 
@@ -60,7 +62,8 @@ void BodiesPanel::render(const SimulationQueries& queries, SelectionState& selec
 
             if (ImGui::Selectable(rowId(body).c_str(), selection.isBodySelected(body.id),
                                   ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowOverlap)) {
-                selection.selectBody(body.id);
+                (void)interactions.select({displayedWorld, ObjectTarget{body.id}});
+                selection = interactions.mainSelection();
             }
             ImGui::SameLine();
             ImGui::TextUnformatted(body.name.c_str());

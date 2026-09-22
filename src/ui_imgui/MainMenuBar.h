@@ -52,7 +52,7 @@ public:
     // Draws the main menu bar, dispatching persistence actions and panel
     // visibility changes through the supplied UI state.
     void render(SimulationService& service, SaveLoadPanel& saveLoadPanel,
-                Workspace& workspace, PanelVisibility& visibility);
+                InformationInteractionAdapter& interactions, Workspace& workspace, PanelVisibility& visibility);
 
 private:
     // Executes the same day-batch command as the legacy Time Control panel.

@@ -27,7 +27,17 @@ public:
                 const SelectionState& selection,
                 bool& visible);
 
+    // Success-only invalidation: an old fleet/destination must not bind to reused
+    // IDs after New/Load, including when this panel is currently hidden.
+    void resetWorldState() {
+        selectedFleetId_.reset();
+        destinationBodyId_.reset();
+        commandStatus_ = "Ready";
+        commandSucceeded_ = true;
+    }
+
 private:
+    friend struct InformationLifecycleTestAccess;
     // Applies the global map/table selection to this panel's command workflow.
     // Fleet and body selections are remembered independently because the shared
     // SelectionState can represent only one object at a time.

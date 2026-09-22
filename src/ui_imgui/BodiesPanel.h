@@ -2,9 +2,9 @@
 
 // Declares the Bodies/System overview panel for the ImGui shell.
 // The panel displays body-level counts from SimulationQueries and writes only
-// typed selection IDs into SelectionState when a body row is clicked.
+// stamped selection intentions when a body row is actually clicked.
 
-#include "app/SelectionState.h"
+#include "app/InformationInteractionAdapter.h"
 #include "app/SimulationQueries.h"
 
 namespace deep::ui_imgui {
@@ -14,7 +14,7 @@ namespace deep::ui_imgui {
 class BodiesPanel {
 public:
     // Draws body rows and updates shared selection when the user clicks a body.
-    void render(const SimulationQueries& queries, SelectionState& selection, bool& visible) const;
+    void render(const SimulationQueries& queries, InformationInteractionAdapter& interactions, bool& visible) const;
 };
 
 } // namespace deep::ui_imgui

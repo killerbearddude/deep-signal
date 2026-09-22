@@ -4,7 +4,7 @@
 // The panel consumes app-layer DTOs for display and sends policy changes through
 // SimulationService commands instead of mutating GameState directly.
 
-#include "app/SelectionState.h"
+#include "app/InformationInteractionAdapter.h"
 #include "app/SimulationQueries.h"
 #include "app/SimulationService.h"
 #include "sim/Minerals.h"
@@ -24,10 +24,20 @@ public:
     // clicked, and submits processing policy edits through the service layer.
     void render(const SimulationQueries& queries,
                 SimulationService& service,
-                SelectionState& selection,
+                InformationInteractionAdapter& interactions,
                 bool& visible);
 
+    // Discard only this editor's old-world target/draft/status on success. A
+    // failed Load never calls this; ordinary selection keeps existing behavior.
+    void resetWorldState() {
+        editingColony_.reset();
+        selectedPolicy_ = ProcessingPolicy::Balanced;
+        manualWeights_.fill(0.0);
+        statusMessage_.clear();
+    }
+
 private:
+    friend struct InformationLifecycleTestAccess;
     // Identity only: never retain pointers into a query result across frames.
     std::optional<ColonyId> editingColony_;
     ProcessingPolicy selectedPolicy_ = ProcessingPolicy::Balanced;

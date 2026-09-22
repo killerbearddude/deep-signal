@@ -4,7 +4,7 @@
 // Owns ImGui lifetime and UI state; SimulationService owns gameplay state and
 // SdlApp owns native resources. Panels read DTOs and submit commands, not records.
 
-#include "app/SelectionState.h"
+#include "app/InformationInteractionAdapter.h"
 #include "app/SimulationService.h"
 #include "app/ForecastService.h"
 #include "platform/SdlApp.h"
@@ -61,6 +61,7 @@ private:
     // SDL must outlive ImGui backend shutdown in the destructor body.
     platform::SdlApp sdl_;
     SimulationService service_;
+    InformationInteractionAdapter interactions_;
     MainMenuBar mainMenuBar_;
     SaveLoadPanel saveLoadPanel_;
     TimeControlPanel timeControlPanel_;
@@ -73,7 +74,6 @@ private:
     EventLogPanel eventLogPanel_;
     InspectorPanel inspectorPanel_;
     StrategicMapPanel strategicMapPanel_;
-    SelectionState selection_;
     Workspace workspace_ = Workspace::System;
     PanelVisibility visibility_;
 };

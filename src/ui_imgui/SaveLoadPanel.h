@@ -4,7 +4,7 @@
 // The panel stores only UI-local path/status text and routes persistence actions
 // through SimulationService so UI code never talks to the save repository.
 
-#include "app/SimulationService.h"
+#include "app/InformationInteractionAdapter.h"
 
 #include <array>
 #include <cstddef>
@@ -18,11 +18,11 @@ namespace deep::ui_imgui {
 class SaveLoadPanel {
 public:
     // Draws the path field, action buttons, latest status, and close state.
-    void render(SimulationService& service, bool& visible);
+    void render(SimulationService& service, InformationInteractionAdapter& interactions, bool& visible);
 
-    // Replaces the active scenario immediately; this panel has no unsaved-change
-    // prompt and does not reset other panels' selection or draft state.
-    void newGame(SimulationService& service);
+    // Both menu and panel buttons use this adapter path. Actual success clears
+    // selection and world-bound workflows before another panel can consume them.
+    void newGame(InformationInteractionAdapter& interactions);
 
     // Saves to the typed path, resolved relative to the process working directory
     // when not absolute. Empty paths and service failures become visible status.
@@ -30,7 +30,7 @@ public:
 
     // Loads from the typed path; service-reported failure leaves gameplay state
     // intact. Success replaces the world without reconstructing UI panels.
-    void load(SimulationService& service);
+    void load(InformationInteractionAdapter& interactions);
 
 private:
     static constexpr std::size_t kPathBufferSize = 512;

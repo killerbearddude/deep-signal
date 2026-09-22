@@ -2,7 +2,8 @@
 
 // Responsibility: own main selection and object-preview lifecycle independently
 // of rendering. Stores identities only, never query DTOs or simulation records.
-// This foundation is not yet wired to ImGuiApp, selection producers, or New/Load.
+// InformationInteractionAdapter connects the shell's selection and New/Load
+// paths. Preview rendering, navigation execution, and editors remain separate.
 
 #include "app/SelectionState.h"
 
@@ -82,8 +83,8 @@ public:
     [[nodiscard]] std::optional<InformationPreview> temporaryPreview() const;
 
     // Call only for a fresh selection intention, never to poll unchanged state.
-    // Retargets an existing temporary record, but creates none. The future UI's
-    // same-row-click and no-preview auto-opening policies remain separate choices.
+    // Retargets an existing temporary record, but creates none. Existing widget
+    // activations, including reselecting a row, are routed explicitly by the shell.
     [[nodiscard]] bool selectMain(ObjectReference target, const TargetExists& exists);
 
     // Empty main selection closes the temporary preview, preserving all pins.
@@ -111,7 +112,7 @@ public:
     [[nodiscard]] std::optional<GoToRequest> requestGoTo(
         ObjectReference target, const TargetExists& exists) const;
 
-    // The future New/Load adapter must report both entry paths' actual outcomes.
+    // The New/Load adapter reports both entry paths' actual outcomes.
     // Success advances generation and clears selection/previews; failure changes
     // nothing. Return value says whether this notification belongs to this world,
     // not whether loading succeeded. Old queued intentions then fail validation.

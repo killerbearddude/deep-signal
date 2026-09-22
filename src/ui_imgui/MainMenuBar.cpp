@@ -61,14 +61,14 @@ void applyWorkspace(Workspace workspace, PanelVisibility& visibility) {
 }
 
 void MainMenuBar::render(SimulationService& service, SaveLoadPanel& saveLoadPanel,
-                         Workspace& workspace, PanelVisibility& visibility) {
+                         InformationInteractionAdapter& interactions, Workspace& workspace, PanelVisibility& visibility) {
     if (!ImGui::BeginMainMenuBar()) {
         return;
     }
 
     if (ImGui::BeginMenu("File")) {
         if (ImGui::MenuItem("New Game")) {
-            saveLoadPanel.newGame(service);
+            saveLoadPanel.newGame(interactions);
             timeError_.clear();
         }
         ImGui::Separator();
@@ -76,7 +76,7 @@ void MainMenuBar::render(SimulationService& service, SaveLoadPanel& saveLoadPane
             saveLoadPanel.save(service);
         }
         if (ImGui::MenuItem("Load")) {
-            saveLoadPanel.load(service);
+            saveLoadPanel.load(interactions);
             timeError_.clear();
         }
         ImGui::EndMenu();

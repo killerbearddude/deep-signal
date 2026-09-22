@@ -4,7 +4,7 @@
 // Fleet rows are read from SimulationQueries so the UI cannot mutate or retain
 // references into GameState vectors.
 
-#include "app/SelectionState.h"
+#include "app/InformationInteractionAdapter.h"
 #include "app/SimulationQueries.h"
 
 namespace deep::ui_imgui {
@@ -13,7 +13,7 @@ namespace deep::ui_imgui {
 class FleetPanel {
 public:
     // Draws one table row per fleet summary and updates visibility when closed.
-    void render(const SimulationQueries& queries, SelectionState& selection, bool& visible) const;
+    void render(const SimulationQueries& queries, InformationInteractionAdapter& interactions, bool& visible) const;
 };
 
 } // namespace deep::ui_imgui

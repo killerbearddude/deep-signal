@@ -1,7 +1,7 @@
 #include "ui_imgui/FleetPanel.h"
 
 // Implements a read-only fleet table for the ImGui shell.
-// Row clicks update shared SelectionState; the inspector remembers the selected
+// Actual row clicks submit stamped intentions; the inspector remembers the selected
 // fleet as the source for the first move-order workflow.
 
 #include <imgui.h>
@@ -18,7 +18,7 @@ namespace {
 
 } // namespace
 
-void FleetPanel::render(const SimulationQueries& queries, SelectionState& selection, bool& visible) const {
+void FleetPanel::render(const SimulationQueries& queries, InformationInteractionAdapter& interactions, bool& visible) const {
     if (!visible) {
         return;
     }
@@ -28,6 +28,8 @@ void FleetPanel::render(const SimulationQueries& queries, SelectionState& select
         return;
     }
 
+    const auto displayedWorld = interactions.world();
+    auto selection = interactions.mainSelection();
     const std::vector<FleetSummary> fleets = queries.fleets();
     ImGui::Text("Fleets: %zu", fleets.size());
 
@@ -55,7 +57,8 @@ void FleetPanel::render(const SimulationQueries& queries, SelectionState& select
 
             if (ImGui::Selectable(rowId(fleet).c_str(), selection.isFleetSelected(fleet.id),
                                   ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowOverlap)) {
-                selection.selectFleet(fleet.id);
+                (void)interactions.select({displayedWorld, ObjectTarget{fleet.id}});
+                selection = interactions.mainSelection();
             }
             ImGui::SameLine();
             ImGui::Text("%lld", static_cast<long long>(fleet.id.value));

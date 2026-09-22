@@ -27,7 +27,19 @@ public:
                 const SelectionState& selection,
                 bool& visible);
 
+    // Called synchronously only after a successful world replacement, even when
+    // hidden. Preserve normal source-fleet memory across ordinary selection.
+    void resetWorldState() {
+        fleetMoveSource_.reset();
+        lastMoveStatus_ = "Ready";
+        lastMoveSucceeded_ = true;
+        lastCancelStatus_ = "No fleet order cancelled yet";
+        lastCancelSucceeded_ = true;
+    }
+
 private:
+    // Headless integration fixtures verify the real hook without rendering UI.
+    friend struct InformationLifecycleTestAccess;
     // Remembers the fleet selected for a future body-click movement command.
     // This is UI workflow state only; the authoritative fleet state remains in
     // SimulationService and is re-queried before a command is submitted.

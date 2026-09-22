@@ -18,7 +18,13 @@
 namespace deep::ui_imgui {
 
 ImGuiApp::ImGuiApp()
-    : sdl_{"Deep Signal", 1280, 720}, service_{} {
+    : sdl_{"Deep Signal", 1280, 720}, service_{}, interactions_{service_, [this] {
+        // Invoked only after all members are constructed, on actual New/Load
+        // success. Hidden workflows are invalidated now, not when next rendered.
+        inspectorPanel_.resetWorldState();
+        fleetOrdersPanel_.resetWorldState();
+        colonyPanel_.resetWorldState();
+    }} {
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
 
@@ -80,7 +86,8 @@ void ImGuiApp::renderDockspace() {
 }
 
 void ImGuiApp::renderMainMenu() {
-    mainMenuBar_.render(service_, saveLoadPanel_, workspace_, visibility_);
+    interactions_.reconcile();
+    mainMenuBar_.render(service_, saveLoadPanel_, interactions_, workspace_, visibility_);
 }
 
 void ImGuiApp::renderPanels() {
@@ -91,17 +98,23 @@ void ImGuiApp::renderPanels() {
     const SimulationQueries queries{service_};
     const ForecastService forecasts{service_};
 
-    saveLoadPanel_.render(service_, visibility_.saveLoad);
+    // File-menu replacement already completed its lifecycle synchronously. The
+    // legacy panel uses that same path and may replace the world in this frame.
+    interactions_.reconcile();
+    saveLoadPanel_.render(service_, interactions_, visibility_.saveLoad);
+    interactions_.reconcile();
     timeControlPanel_.render(service_, visibility_.timeControl);
     shipyardPanel_.render(queries, service_, visibility_.shipyard);
-    strategicMapPanel_.render(queries, selection_, visibility_.strategicMap);
-    bodiesPanel_.render(queries, selection_, visibility_.bodies);
-    colonyPanel_.render(queries, service_, selection_, visibility_.colonies);
-    fleetPanel_.render(queries, selection_, visibility_.fleets);
-    fleetOrdersPanel_.render(queries, service_, selection_, visibility_.fleetOrders);
+    // Producers stamp displayed data and dispatch only actual widget activations.
+    // Each later reader gets a newly reconciled projection, not a frame-start copy.
+    strategicMapPanel_.render(queries, interactions_, visibility_.strategicMap);
+    bodiesPanel_.render(queries, interactions_, visibility_.bodies);
+    colonyPanel_.render(queries, service_, interactions_, visibility_.colonies);
+    fleetPanel_.render(queries, interactions_, visibility_.fleets);
+    fleetOrdersPanel_.render(queries, service_, interactions_.mainSelection(), visibility_.fleetOrders);
     economyForecastPanel_.render(forecasts, visibility_.economyForecast);
     eventLogPanel_.render(queries, visibility_.eventLog);
-    inspectorPanel_.render(queries, service_, selection_, visibility_.inspector);
+    inspectorPanel_.render(queries, service_, interactions_.mainSelection(), visibility_.inspector);
 }
 
 } // namespace deep::ui_imgui

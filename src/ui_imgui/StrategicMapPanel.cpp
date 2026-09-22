@@ -1,8 +1,8 @@
 #include "ui_imgui/StrategicMapPanel.h"
 
 // Implements the basic strategic map panel using ImGui draw lists.
-// Map picks are translated into shared SelectionState so the inspector and table
-// panels all observe the same selected object.
+// Actual map picks become stamped intentions; the inspector and tables read the
+// model's projections. Hovering and camera controls do not generate intentions.
 
 #include <imgui.h>
 
@@ -93,26 +93,29 @@ constexpr double kButtonZoomOut = 1.0 / kButtonZoomIn;
     return std::nullopt;
 }
 
-void applyMapSelection(const std::optional<render::StrategicMapSelection>& picked, SelectionState& selection) noexcept {
+void applyMapSelection(const std::optional<render::StrategicMapSelection>& picked,
+                       const WorldGeneration displayedWorld, InformationInteractionAdapter& interactions) {
     if (!picked.has_value()) {
-        selection.clear();
+        (void)interactions.select({displayedWorld, std::nullopt});
         return;
     }
 
     if (picked->kind == render::StrategicMapSelection::Kind::Body) {
-        selection.selectBody(BodyId{picked->id});
+        (void)interactions.select({displayedWorld, ObjectTarget{BodyId{picked->id}}});
     } else {
-        selection.selectFleet(FleetId{picked->id});
+        (void)interactions.select({displayedWorld, ObjectTarget{FleetId{picked->id}}});
     }
 }
 
 } // namespace
 
-void StrategicMapPanel::render(const SimulationQueries& queries, SelectionState& selection, bool& visible) {
+void StrategicMapPanel::render(const SimulationQueries& queries, InformationInteractionAdapter& interactions, bool& visible) {
     if (!visible) {
         return;
     }
 
+    const auto displayedWorld = interactions.world();
+    auto selection = interactions.mainSelection();
     const auto bodies = queries.strategicBodies();
     const auto fleets = queries.strategicFleets();
 
@@ -175,7 +178,9 @@ void StrategicMapPanel::render(const SimulationQueries& queries, SelectionState&
     }
 
     if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
-        applyMapSelection(view_.pick(camera_, canvasMin, available, ImGui::GetIO().MousePos, bodies, fleets), selection);
+        applyMapSelection(view_.pick(camera_, canvasMin, available, ImGui::GetIO().MousePos, bodies, fleets),
+                          displayedWorld, interactions);
+        selection = interactions.mainSelection();
     }
 
     const std::optional<render::StrategicMapSelection> mapSelection = mapSelectionFromSharedState(selection, bodies, fleets);

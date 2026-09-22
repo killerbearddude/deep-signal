@@ -2,9 +2,9 @@
 
 // Declares the first functional strategic map panel for the ImGui shell.
 // The panel reads map DTOs through SimulationQueries and writes shared
-// app-layer selection state for the inspector.
+// generation-stamped selection intentions for the inspector.
 
-#include "app/SelectionState.h"
+#include "app/InformationInteractionAdapter.h"
 #include "app/SimulationQueries.h"
 #include "render/MapCamera.h"
 #include "render/StrategicMapView.h"
@@ -18,7 +18,7 @@ namespace deep::ui_imgui {
 class StrategicMapPanel {
 public:
     // Draws the strategic map using app-layer query DTOs and updates close state.
-    void render(const SimulationQueries& queries, SelectionState& selection, bool& visible);
+    void render(const SimulationQueries& queries, InformationInteractionAdapter& interactions, bool& visible);
 
 private:
     // UI-only view state survives closing the panel and replacing the world.

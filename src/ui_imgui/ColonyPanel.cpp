@@ -173,7 +173,7 @@ void addProcessingWeight(std::array<double, processedMaterialCount()>& weights,
 
 void ColonyPanel::render(const SimulationQueries& queries,
                          SimulationService& service,
-                         SelectionState& selection,
+                         InformationInteractionAdapter& interactions,
                          bool& visible) {
     if (!visible) {
         return;
@@ -184,6 +184,8 @@ void ColonyPanel::render(const SimulationQueries& queries,
         return;
     }
 
+    const auto displayedWorld = interactions.world();
+    auto selection = interactions.mainSelection();
     const std::vector<ColonySummary> colonies = queries.colonies();
     ImGui::Text("Colonies: %zu", colonies.size());
 
@@ -207,7 +209,10 @@ void ColonyPanel::render(const SimulationQueries& queries,
             // text visible and stable for table sorting/inspection later.
             if (ImGui::Selectable(rowId(colony).c_str(), selection.isColonySelected(colony.id),
                                   ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowOverlap)) {
-                selection.selectColony(colony.id);
+                (void)interactions.select({displayedWorld, ObjectTarget{colony.id}});
+                // Refresh from the authority before this panel's editor consumes
+                // selection. This is a projection, never a second selection owner.
+                selection = interactions.mainSelection();
             }
             ImGui::SameLine();
             ImGui::Text("%lld", static_cast<long long>(colony.id.value));
@@ -241,8 +246,8 @@ void ColonyPanel::render(const SimulationQueries& queries,
     }
 
     // Keep an in-progress draft across frames instead of overwriting every edit.
-    // FIXME: New/Load can reuse this ID for different state; a session-change
-    // signal is needed to invalidate the draft when the world is replaced.
+    // The shell's success-only replacement callback invalidates old-world drafts,
+    // including hidden panels, before this code can resolve a reused colony ID.
     if (!editingColony_.has_value() || *editingColony_ != colony->id) {
         loadEditorFromColony(*colony);
     }
