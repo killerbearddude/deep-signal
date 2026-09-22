@@ -1,4 +1,5 @@
 #include "ui_imgui/EconomyForecastPanel.h"
+#include "ui_imgui/OperationalWindow.h"
 
 // Implements the read-only economy forecast/cause-chain panel.
 // The panel intentionally adapts existing ForecastService DTOs only; forecast
@@ -95,7 +96,7 @@ void EconomyForecastPanel::render(const ForecastService& forecasts, bool& visibl
         return;
     }
 
-    if (!ImGui::Begin("Economy Forecast", &visible)) {
+    if (!beginOperationalWindow("Economy Forecast", &visible)) {
         ImGui::End();
         return;
     }

@@ -31,7 +31,7 @@ struct PanelVisibility {
     bool timeControl = false;
     bool strategicMap = true;
     bool bodies = true;
-    bool inspector = true;
+    bool inspector = false;
     bool colonies = false;
     bool fleets = false;
     bool fleetOrders = false;
@@ -50,8 +50,9 @@ void applyWorkspace(Workspace workspace, PanelVisibility& visibility);
 class MainMenuBar {
 public:
     // Draws the main menu bar, dispatching persistence actions and panel
-    // visibility changes through the supplied UI state.
-    void render(SimulationService& service, SaveLoadPanel& saveLoadPanel,
+    // visibility changes through the supplied UI state. Returns the menu bottom
+    // in viewport coordinates so shell geometry reserves it on the first frame.
+    float render(SimulationService& service, SaveLoadPanel& saveLoadPanel,
                 InformationInteractionAdapter& interactions, Workspace& workspace, PanelVisibility& visibility);
 
 private:

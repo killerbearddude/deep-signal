@@ -1,4 +1,5 @@
 #include "ui_imgui/InspectorPanel.h"
+#include "ui_imgui/OperationalWindow.h"
 
 // Implements the shared inspector panel plus the first small command workflow.
 // All detail lookups walk copied query DTOs, so the inspector never retains
@@ -164,7 +165,7 @@ void InspectorPanel::render(const SimulationQueries& queries,
         return;
     }
 
-    if (!ImGui::Begin("Inspector", &visible)) {
+    if (!beginOperationalWindow("Inspector", &visible)) {
         ImGui::End();
         return;
     }

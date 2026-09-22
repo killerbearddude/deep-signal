@@ -1,4 +1,5 @@
 #include "ui_imgui/StrategicMapPanel.h"
+#include "ui_imgui/OperationalWindow.h"
 
 // Implements the basic strategic map panel using ImGui draw lists.
 // Actual map picks become stamped intentions; the inspector and tables read the
@@ -119,7 +120,7 @@ void StrategicMapPanel::render(const SimulationQueries& queries, InformationInte
     const auto bodies = queries.strategicBodies();
     const auto fleets = queries.strategicFleets();
 
-    if (!ImGui::Begin("Strategic Map", &visible)) {
+    if (!beginOperationalWindow("Strategic Map", &visible)) {
         ImGui::End();
         return;
     }

@@ -1,4 +1,5 @@
 #include "ui_imgui/ColonyPanel.h"
+#include "ui_imgui/OperationalWindow.h"
 
 // Implements the colony table plus first-pass processing allocation controls.
 // Processing edits are intentionally small command submissions: policy selection
@@ -179,7 +180,7 @@ void ColonyPanel::render(const SimulationQueries& queries,
         return;
     }
 
-    if (!ImGui::Begin("Colonies", &visible)) {
+    if (!beginOperationalWindow("Colonies", &visible)) {
         ImGui::End();
         return;
     }

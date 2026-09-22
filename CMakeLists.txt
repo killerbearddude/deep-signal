@@ -109,10 +109,13 @@ if(DEEP_SIGNAL_BUILD_UI)
         src/ui_imgui/FleetPanel.cpp
         src/ui_imgui/FleetOrdersPanel.cpp
         src/ui_imgui/ImGuiApp.cpp
+        src/ui_imgui/InformationPanel.cpp
         src/ui_imgui/InspectorPanel.cpp
         src/ui_imgui/MainMenuBar.cpp
+        src/ui_imgui/OperationalWindow.cpp
         src/ui_imgui/SaveLoadPanel.cpp
         src/ui_imgui/ShipyardPanel.cpp
+        src/ui_imgui/ShellLayout.cpp
         src/ui_imgui/StrategicMapPanel.cpp
         src/ui_imgui/TimeControlPanel.cpp
     )
@@ -126,6 +129,30 @@ endif()
 
 if(DEEP_SIGNAL_BUILD_TESTS)
     enable_testing()
+
+    # Geometry stays testable without SDL/ImGui, including minimized windows and
+    # the main menu's first-frame work-area inset.
+    add_executable(deep_signal_shell_layout_tests tests/shell_layout_tests.cpp)
+    target_include_directories(deep_signal_shell_layout_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_compile_options(deep_signal_shell_layout_tests PRIVATE ${DEEP_SIGNAL_WARNINGS})
+    add_test(NAME deep_signal_shell_layout_tests COMMAND deep_signal_shell_layout_tests)
+
+    if(DEEP_SIGNAL_BUILD_UI)
+        # Public ImGui text logging exercises the production overview renderer
+        # with real queries. No native display/GPU is needed to run this test.
+        add_executable(deep_signal_information_panel_tests
+            tests/information_panel_tests.cpp
+            src/ui_imgui/InformationPanel.cpp
+            src/ui_imgui/MainMenuBar.cpp
+            src/ui_imgui/SaveLoadPanel.cpp
+            src/ui_imgui/OperationalWindow.cpp
+            src/ui_imgui/ShellLayout.cpp
+        )
+        target_link_libraries(deep_signal_information_panel_tests
+            PRIVATE deep_signal_app ${DEEP_SIGNAL_UI_DEPENDENCY_TARGET})
+        target_compile_options(deep_signal_information_panel_tests PRIVATE ${DEEP_SIGNAL_WARNINGS})
+        add_test(NAME deep_signal_information_panel_tests COMMAND deep_signal_information_panel_tests)
+    endif()
 
     # Compile the identity-only model directly so its boundary tests also run
     # with app/save/UI disabled, without linking SQLite, SDL, or ImGui.

@@ -1,4 +1,5 @@
 #include "ui_imgui/ShipyardPanel.h"
+#include "ui_imgui/OperationalWindow.h"
 
 // Implements the first functional shipyard panel for the ImGui shell.
 // This file deliberately keeps production interaction narrow: one prototype
@@ -59,7 +60,7 @@ void ShipyardPanel::render(const SimulationQueries& queries, SimulationService& 
         return;
     }
 
-    if (!ImGui::Begin("Shipyard / Production", &visible)) {
+    if (!beginOperationalWindow("Shipyard / Production", &visible)) {
         ImGui::End();
         return;
     }

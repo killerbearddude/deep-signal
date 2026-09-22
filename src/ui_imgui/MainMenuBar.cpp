@@ -28,11 +28,9 @@ void applyWorkspace(Workspace workspace, PanelVisibility& visibility) {
     case Workspace::System:
         visibility.strategicMap = true;
         visibility.bodies = true;
-        visibility.inspector = true;
         break;
     case Workspace::Economy:
         visibility.economyForecast = true;
-        visibility.inspector = true;
         break;
     case Workspace::Production:
         visibility.shipyard = true;
@@ -43,7 +41,6 @@ void applyWorkspace(Workspace workspace, PanelVisibility& visibility) {
         visibility.strategicMap = true;
         visibility.fleets = true;
         visibility.fleetOrders = true;
-        visibility.inspector = true;
         break;
     case Workspace::Intelligence:
         // Exploration intelligence and Resource Survey remain in these panels
@@ -51,19 +48,17 @@ void applyWorkspace(Workspace workspace, PanelVisibility& visibility) {
         visibility.strategicMap = true;
         visibility.bodies = true;
         visibility.fleetOrders = true;
-        visibility.inspector = true;
         break;
     case Workspace::History:
         visibility.eventLog = true;
-        visibility.inspector = true;
         break;
     }
 }
 
-void MainMenuBar::render(SimulationService& service, SaveLoadPanel& saveLoadPanel,
+float MainMenuBar::render(SimulationService& service, SaveLoadPanel& saveLoadPanel,
                          InformationInteractionAdapter& interactions, Workspace& workspace, PanelVisibility& visibility) {
     if (!ImGui::BeginMainMenuBar()) {
-        return;
+        return ImGui::GetMainViewport()->WorkPos.y;
     }
 
     if (ImGui::BeginMenu("File")) {
@@ -114,7 +109,7 @@ void MainMenuBar::render(SimulationService& service, SaveLoadPanel& saveLoadPane
         ImGui::MenuItem("Time Control", nullptr, &visibility.timeControl);
         ImGui::MenuItem("Strategic Map", nullptr, &visibility.strategicMap);
         ImGui::MenuItem("Bodies / System", nullptr, &visibility.bodies);
-        ImGui::MenuItem("Inspector", nullptr, &visibility.inspector);
+        ImGui::MenuItem("Legacy Inspector", nullptr, &visibility.inspector);
         ImGui::MenuItem("Colonies", nullptr, &visibility.colonies);
         ImGui::MenuItem("Fleets", nullptr, &visibility.fleets);
         ImGui::MenuItem("Fleet Orders", nullptr, &visibility.fleetOrders);
@@ -156,7 +151,9 @@ void MainMenuBar::render(SimulationService& service, SaveLoadPanel& saveLoadPane
         }
     }
 
+    const float menuBottom = ImGui::GetWindowPos().y + ImGui::GetWindowSize().y;
     ImGui::EndMainMenuBar();
+    return menuBottom;
 }
 
 void MainMenuBar::advanceTime(SimulationService& service, const int days) {

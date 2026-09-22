@@ -1,4 +1,5 @@
 #include "ui_imgui/TimeControlPanel.h"
+#include "ui_imgui/OperationalWindow.h"
 
 // Implements time controls for the first functional ImGui shell.
 // Mutations are deliberately routed through SimulationService::execute so the UI
@@ -16,7 +17,7 @@ void TimeControlPanel::render(SimulationService& service, bool& visible) {
         return;
     }
 
-    if (!ImGui::Begin("Time Control", &visible)) {
+    if (!beginOperationalWindow("Time Control", &visible)) {
         ImGui::End();
         return;
     }
