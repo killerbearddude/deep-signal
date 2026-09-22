@@ -1,4 +1,5 @@
 #include "ui_imgui/FleetPanel.h"
+#include "ui_imgui/OperationalWindow.h"
 
 // Implements a read-only fleet table for the ImGui shell.
 // Actual row clicks submit stamped intentions; the inspector remembers the selected
@@ -23,7 +24,7 @@ void FleetPanel::render(const SimulationQueries& queries, InformationInteraction
         return;
     }
 
-    if (!ImGui::Begin("Fleets", &visible)) {
+    if (!beginOperationalWindow("Fleets", &visible)) {
         ImGui::End();
         return;
     }

@@ -1,4 +1,5 @@
 #include "ui_imgui/EventLogPanel.h"
+#include "ui_imgui/OperationalWindow.h"
 
 // Implements the first player-facing event log table for the ImGui shell.
 // Input rows are already flattened by SimulationQueries, keeping event visitor
@@ -15,7 +16,7 @@ void EventLogPanel::render(const SimulationQueries& queries, bool& visible) cons
         return;
     }
 
-    if (!ImGui::Begin("Event Log", &visible)) {
+    if (!beginOperationalWindow("Event Log", &visible)) {
         ImGui::End();
         return;
     }

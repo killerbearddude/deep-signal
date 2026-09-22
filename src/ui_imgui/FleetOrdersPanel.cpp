@@ -1,4 +1,5 @@
 #include "ui_imgui/FleetOrdersPanel.h"
+#include "ui_imgui/OperationalWindow.h"
 
 // Implements a dedicated fleet command surface for the ImGui workstation.
 // The panel exposes the current order and a small queued-order list while
@@ -157,7 +158,7 @@ void FleetOrdersPanel::render(const SimulationQueries& queries,
 
     syncSelection(queries, selection);
 
-    if (!ImGui::Begin("Fleet Orders", &visible)) {
+    if (!beginOperationalWindow("Fleet Orders", &visible)) {
         ImGui::End();
         return;
     }

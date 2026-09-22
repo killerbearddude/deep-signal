@@ -15,9 +15,11 @@
 #include "ui_imgui/FleetPanel.h"
 #include "ui_imgui/FleetOrdersPanel.h"
 #include "ui_imgui/InspectorPanel.h"
+#include "ui_imgui/InformationPanel.h"
 #include "ui_imgui/MainMenuBar.h"
 #include "ui_imgui/SaveLoadPanel.h"
 #include "ui_imgui/ShipyardPanel.h"
+#include "ui_imgui/ShellLayout.h"
 #include "ui_imgui/StrategicMapPanel.h"
 #include "ui_imgui/TimeControlPanel.h"
 
@@ -49,11 +51,11 @@ public:
     int run();
 
 private:
-    // Draws a full-window dockspace that future panels can dock into.
-    void renderDockspace();
+    // Reserves the left shell region for existing dockable application windows.
+    void renderDockspace(const ShellLayout& layout);
 
     // Draws application commands, workspace presets, and manual panel toggles.
-    void renderMainMenu();
+    float renderMainMenu();
 
     // Draws the first functional simulation panels using app-layer query DTOs.
     void renderPanels();
@@ -73,6 +75,7 @@ private:
     FleetOrdersPanel fleetOrdersPanel_;
     EventLogPanel eventLogPanel_;
     InspectorPanel inspectorPanel_;
+    InformationPanel informationPanel_;
     StrategicMapPanel strategicMapPanel_;
     Workspace workspace_ = Workspace::System;
     PanelVisibility visibility_;

@@ -1,4 +1,5 @@
 #include "ui_imgui/BodiesPanel.h"
+#include "ui_imgui/OperationalWindow.h"
 
 // Implements the read-only Bodies/System overview panel.
 // The table remains a query DTO consumer only; no simulation mutation is allowed
@@ -31,7 +32,7 @@ void BodiesPanel::render(const SimulationQueries& queries, InformationInteractio
         return;
     }
 
-    if (!ImGui::Begin("Bodies / System", &visible)) {
+    if (!beginOperationalWindow("Bodies / System", &visible)) {
         ImGui::End();
         return;
     }

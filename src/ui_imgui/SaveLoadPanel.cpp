@@ -1,4 +1,5 @@
 #include "ui_imgui/SaveLoadPanel.h"
+#include "ui_imgui/OperationalWindow.h"
 
 // Implements manual save/load controls for the ImGui shell.
 // All persistence requests go through SimulationService, preserving the app/save
@@ -18,7 +19,7 @@ void SaveLoadPanel::render(SimulationService& service, InformationInteractionAda
         return;
     }
 
-    if (!ImGui::Begin("Save / Load", &visible)) {
+    if (!beginOperationalWindow("Save / Load", &visible)) {
         ImGui::End();
         return;
     }
