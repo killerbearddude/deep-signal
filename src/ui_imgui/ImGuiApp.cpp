@@ -82,7 +82,7 @@ int ImGuiApp::run() {
             // Render after all selection producers and synchronous New/Load
             // paths. The projection and every overview DTO are current now.
             const SimulationQueries queries{service_};
-            informationPanel_.render(queries, interactions_.mainSelection(),
+            informationPanel_.render(queries, interactions_.mainSelection(), interactions_,
                 {layout.information.x, layout.information.y},
                 {layout.information.width, layout.information.height});
             previewLayer_.render(queries, interactions_, layout.dock);

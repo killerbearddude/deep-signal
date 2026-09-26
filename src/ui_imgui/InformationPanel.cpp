@@ -1,10 +1,13 @@
 #include "ui_imgui/InformationPanel.h"
 
-// Implements native overview presentation only. Every object is resolved anew
-// through query DTOs; lifecycle and selection authority remain in the shell.
+// Every overview and relationship is resolved anew through query DTOs. The
+// panel can request inspection of displayed relationships but owns no selection.
 
+#include "app/InformationInteractionAdapter.h"
 #include "app/SelectionState.h"
 #include "app/SimulationQueries.h"
+#include "ui_imgui/InformationRelationshipRows.h"
+#include "ui_imgui/InformationRelationships.h"
 
 #include <imgui.h>
 
@@ -15,6 +18,7 @@
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace deep::ui_imgui {
 namespace {
@@ -116,7 +120,8 @@ void unavailable() {
     wrappedText("The current selection could not be resolved.");
 }
 
-void bodyOverview(const SimulationQueries& queries, const BodyId id) {
+void bodyOverview(const SimulationQueries& queries, const BodyId id,
+                  const WorldGeneration world, std::vector<ObjectReference>& inspections) {
     const auto bodies = queries.bodySystemOverview();
     const auto body = std::find_if(bodies.begin(), bodies.end(), [id](const BodySystemSummary& row) {
         return row.id == id;
@@ -135,10 +140,11 @@ void bodyOverview(const SimulationQueries& queries, const BodyId id) {
     section("OVERVIEW");
     if (beginFacts("##body_overview")) {
         fact("Colonies", std::to_string(body->colonyCount));
-        fact("Fleets", std::to_string(body->fleetCount));
+        fact("Fleets referenced", std::to_string(body->fleetCount));
         fact("Deposits", std::to_string(body->mineralDepositCount));
         ImGui::EndTable();
     }
+    renderInformationRelationshipRows(informationRelationships(queries, {world, id}), inspections);
     section("ORBIT");
     if (beginFacts("##body_orbit")) {
         fact("Parent", body->parentBodyId.has_value() ? namedOrUnknown(body->parentBodyName) : "None");
@@ -160,7 +166,8 @@ void bodyOverview(const SimulationQueries& queries, const BodyId id) {
     }
 }
 
-void colonyOverview(const SimulationQueries& queries, const ColonyId id) {
+void colonyOverview(const SimulationQueries& queries, const ColonyId id,
+                    const WorldGeneration world, std::vector<ObjectReference>& inspections) {
     const auto colonies = queries.colonies();
     const auto colony = std::find_if(colonies.begin(), colonies.end(), [id](const ColonySummary& row) {
         return row.id == id;
@@ -179,6 +186,7 @@ void colonyOverview(const SimulationQueries& queries, const ColonyId id) {
         fact("Processing policy", namedOrUnknown(colony->processingPolicyName));
         ImGui::EndTable();
     }
+    renderInformationRelationshipRows(informationRelationships(queries, {world, id}), inspections);
     section("PRODUCTION");
     if (beginFacts("##colony_production")) {
         fact("Shipyard BP/day", quantity(colony->effectiveShipyardCapacity, 2));
@@ -197,7 +205,8 @@ void colonyOverview(const SimulationQueries& queries, const ColonyId id) {
     ImGui::PopStyleColor();
 }
 
-void fleetOverview(const SimulationQueries& queries, const FleetId id) {
+void fleetOverview(const SimulationQueries& queries, const FleetId id,
+                   const WorldGeneration world, std::vector<ObjectReference>& inspections) {
     const auto fleet = queries.fleet(id);
     if (!fleet.has_value()) {
         unavailable();
@@ -226,6 +235,7 @@ void fleetOverview(const SimulationQueries& queries, const FleetId id) {
         fact("Burn phase", fleet->hasActiveOrder ? namedOrUnknown(fleet->activeOrderBurnPhase) : kNotApplicable);
         ImGui::EndTable();
     }
+    renderInformationRelationshipRows(informationRelationships(queries, {world, id}), inspections);
     section("ROUTE");
     if (beginFacts("##fleet_route")) {
         fact("Queued orders", std::to_string(fleet->queuedOrders.size()));
@@ -237,7 +247,11 @@ void fleetOverview(const SimulationQueries& queries, const FleetId id) {
 } // namespace
 
 void InformationPanel::render(const SimulationQueries& queries, const SelectionState& selection,
+                              InformationInteractionAdapter& interactions,
                               const ImVec2& position, const ImVec2& size) const {
+    // Bind displayed rows to this world before resolving their live query DTOs.
+    const WorldGeneration displayedWorld = interactions.world();
+    std::vector<ObjectReference> inspections;
     ImGui::SetNextWindowPos(position);
     ImGui::SetNextWindowSize(size);
     ImGui::SetNextWindowViewport(ImGui::GetMainViewport()->ID);
@@ -268,19 +282,22 @@ void InformationPanel::render(const SimulationQueries& queries, const SelectionS
             ImGui::PopStyleColor();
             break;
         case SelectedObjectType::Body:
-            bodyOverview(queries, selection.bodyId());
+            bodyOverview(queries, selection.bodyId(), displayedWorld, inspections);
             break;
         case SelectedObjectType::Colony:
-            colonyOverview(queries, selection.colonyId());
+            colonyOverview(queries, selection.colonyId(), displayedWorld, inspections);
             break;
         case SelectedObjectType::Fleet:
-            fleetOverview(queries, selection.fleetId());
+            fleetOverview(queries, selection.fleetId(), displayedWorld, inspections);
             break;
         }
     }
     ImGui::End();
     ImGui::PopStyleColor(3);
     ImGui::PopStyleVar(4);
+    for (const auto& target : inspections) {
+        (void)interactions.inspect(target);
+    }
 }
 
 } // namespace deep::ui_imgui

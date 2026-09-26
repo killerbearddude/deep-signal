@@ -85,11 +85,13 @@ struct ImGuiFixture {
 
     ~ImGuiFixture() { ImGui::DestroyContext(); }
 
-    [[nodiscard]] std::string render(const SimulationQueries& queries, const SelectionState& selection) const {
+    [[nodiscard]] std::string render(const SimulationQueries& queries, const SelectionState& selection,
+                                     InformationInteractionAdapter& interactions) const {
         capturedText.clear();
         ImGui::NewFrame();
         ImGui::LogToClipboard();
-        ui_imgui::InformationPanel{}.render(queries, selection, ImVec2{860.0F, 0.0F}, ImVec2{420.0F, 1800.0F});
+        ui_imgui::InformationPanel{}.render(queries, selection, interactions,
+            ImVec2{860.0F, 0.0F}, ImVec2{420.0F, 1800.0F});
         ImGui::LogFinish();
         ImGui::Render();
         return normalized(capturedText);
@@ -133,7 +135,7 @@ struct Fixture {
         const auto& world = service.state();
         const auto worldBefore = std::tuple{world.date.day, world.eventLog.size(), world.ids.nextEventId,
             queries.colonies().front().totalRawStockpile, queries.colonies().front().totalProcessedStockpile};
-        const auto text = imgui.render(queries, projection);
+        const auto text = imgui.render(queries, projection, interactions);
         require(projection.type() == interactions.mainSelection().type()
             && projection.selectedId() == interactions.mainSelection().selectedId(), "render preserves main selection");
         require(interactions.world() == generation && interactions.state().mainTarget() == target
@@ -161,7 +163,7 @@ void empty_and_unavailable() {
         if (type == SelectedObjectType::Body) missing.selectBody(BodyId{999999});
         if (type == SelectedObjectType::Colony) missing.selectColony(ColonyId{999999});
         if (type == SelectedObjectType::Fleet) missing.selectFleet(FleetId{999999});
-        const auto text = fixture.imgui.render(fixture.queries, missing);
+        const auto text = fixture.imgui.render(fixture.queries, missing, fixture.interactions);
         contains(text, "Selected object unavailable");
         contains(text, "The current selection could not be resolved.");
         require(text.find("Terra") == std::string::npos, "unresolved state does not display another object");
@@ -179,7 +181,13 @@ void native_overviews_and_literal_names() {
     contains(bodyText, body.typeName);
     contains(bodyText, body.strategicZoneName);
     contains(bodyText, "Colonies " + std::to_string(body.colonyCount));
+    contains(bodyText, "Fleets referenced " + std::to_string(body.fleetCount));
     contains(bodyText, "Deposits " + std::to_string(body.mineralDepositCount));
+    contains(bodyText, "COLONIES");
+    contains(bodyText, colony.name);
+    contains(bodyText, "STATIONED FLEETS");
+    contains(bodyText, fleet.name);
+    contains(bodyText, "Inspect >");
     contains(bodyText, "RESOURCE KNOWLEDGE");
     contains(bodyText, "Confirmed quantity " + decimal(body.confirmedDepositQuantity) + " units");
 
@@ -188,6 +196,7 @@ void native_overviews_and_literal_names() {
     contains(colonyText, colony.name);
     contains(colonyText, colony.bodyName);
     contains(colonyText, colony.processingPolicyName);
+    contains(colonyText, "RELATIONSHIPS");
     contains(colonyText, "PRODUCTION");
     contains(colonyText, "Raw " + decimal(colony.totalRawStockpile) + " units");
     contains(colonyText, "Processed " + decimal(colony.totalProcessedStockpile) + " units");
@@ -202,6 +211,7 @@ void native_overviews_and_literal_names() {
     contains(fleetText, "Destination -");
     contains(fleetText, "ETA -");
     contains(fleetText, "Queued orders 0");
+    contains(fleetText, "RELATIONSHIPS");
     require(fleetText.find(colony.name) == std::string::npos, "new selection does not retain old overview");
     const std::string settings = ImGui::SaveIniSettingsToMemory();
     require(settings.find("InformationPanel") == std::string::npos

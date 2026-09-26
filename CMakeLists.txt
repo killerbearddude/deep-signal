@@ -111,6 +111,8 @@ if(DEEP_SIGNAL_BUILD_UI)
         src/ui_imgui/ImGuiApp.cpp
         src/ui_imgui/InformationPanel.cpp
         src/ui_imgui/InformationPreviewLayer.cpp
+        src/ui_imgui/InformationRelationshipRows.cpp
+        src/ui_imgui/InformationRelationships.cpp
         src/ui_imgui/InspectorPanel.cpp
         src/ui_imgui/MainMenuBar.cpp
         src/ui_imgui/OperationalWindow.cpp
@@ -149,6 +151,8 @@ if(DEEP_SIGNAL_BUILD_TESTS)
         add_executable(deep_signal_information_panel_tests
             tests/information_panel_tests.cpp
             src/ui_imgui/InformationPanel.cpp
+            src/ui_imgui/InformationRelationshipRows.cpp
+            src/ui_imgui/InformationRelationships.cpp
             src/ui_imgui/MainMenuBar.cpp
             src/ui_imgui/SaveLoadPanel.cpp
             src/ui_imgui/OperationalWindow.cpp
@@ -162,6 +166,8 @@ if(DEEP_SIGNAL_BUILD_TESTS)
         add_executable(deep_signal_information_preview_layer_tests
             tests/information_preview_layer_tests.cpp
             src/ui_imgui/InformationPreviewLayer.cpp
+            src/ui_imgui/InformationRelationshipRows.cpp
+            src/ui_imgui/InformationRelationships.cpp
         )
         target_link_libraries(deep_signal_information_preview_layer_tests
             PRIVATE deep_signal_app ${DEEP_SIGNAL_UI_DEPENDENCY_TARGET})
@@ -210,6 +216,14 @@ if(DEEP_SIGNAL_BUILD_TESTS)
     endif()
 
     if(DEEP_SIGNAL_BUILD_SAVE AND DEEP_SIGNAL_BUILD_APP)
+        add_executable(deep_signal_information_relationship_tests
+            tests/information_relationship_tests.cpp
+            src/ui_imgui/InformationRelationships.cpp
+        )
+        target_link_libraries(deep_signal_information_relationship_tests PRIVATE deep_signal_app)
+        target_compile_options(deep_signal_information_relationship_tests PRIVATE ${DEEP_SIGNAL_WARNINGS})
+        add_test(NAME deep_signal_information_relationship_tests COMMAND deep_signal_information_relationship_tests)
+
         add_executable(deep_signal_information_integration_tests
             tests/information_integration_tests.cpp
         )

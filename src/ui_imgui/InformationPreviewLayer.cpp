@@ -3,6 +3,8 @@
 #include "app/InformationInteractionAdapter.h"
 #include "app/SimulationQueries.h"
 #include "ui_imgui/InformationPreviewGeometry.h"
+#include "ui_imgui/InformationRelationshipRows.h"
+#include "ui_imgui/InformationRelationships.h"
 
 #include <imgui.h>
 
@@ -159,7 +161,9 @@ void bodyPreview(const SimulationQueries& queries, const BodyId id) {
         fact("Strategic zone", namedOrUnknown(body->strategicZoneName));
         fact("Institution", institution(body->ownerInstitutionId, body->ownerInstitutionName));
         fact("Colonies", std::to_string(body->colonyCount));
-        fact("Fleets", std::to_string(body->fleetCount));
+        // This DTO count also includes moving fleets whose departure body is
+        // still referenced. The relationship section lists only idle fleets.
+        fact("Fleets referenced", std::to_string(body->fleetCount));
         fact("Deposits", std::to_string(body->mineralDepositCount));
         ImGui::EndTable();
     }
@@ -225,7 +229,8 @@ void renderTarget(const SimulationQueries& queries, const ObjectTarget& target) 
 }
 
 void renderOne(const SimulationQueries& queries, const InformationPreview& preview,
-               const ShellRegion work, std::vector<PreviewAction>& actions) {
+               const ShellRegion work, std::vector<PreviewAction>& actions,
+               std::vector<ObjectReference>& inspectionRequests) {
     const std::string name = informationPreviewWindowName(preview.id);
     const ShellRegion initial = initialPreviewGeometry(preview.id, work);
     ImGui::SetNextWindowPos({initial.x, initial.y}, ImGuiCond_Once);
@@ -267,6 +272,8 @@ void renderOne(const SimulationQueries& queries, const InformationPreview& previ
         }
         ImGui::Separator();
         renderTarget(queries, preview.target.object);
+        renderInformationRelationshipRows(
+            informationRelationships(queries, preview.target), inspectionRequests);
     }
     ImGui::End();
     ImGui::PopStyleColor(9);
@@ -293,9 +300,10 @@ void InformationPreviewLayer::render(const SimulationQueries& queries,
         return;
     }
     std::vector<PreviewAction> actions;
+    std::vector<ObjectReference> inspectionRequests;
     actions.reserve(previews.size());
     for (const auto& preview : previews) {
-        renderOne(queries, preview, workArea, actions);
+        renderOne(queries, preview, workArea, actions, inspectionRequests);
     }
     for (const auto& action : actions) {
         switch (action.kind) {
@@ -309,6 +317,12 @@ void InformationPreviewLayer::render(const SimulationQueries& queries,
             (void)interactions.closePreview(action.id);
             break;
         }
+    }
+    // Each reference came from the displayed projection and retains that
+    // preview's world. In particular, an Inspect click inside a pin opens or
+    // retargets the shared temporary without changing the pin or selection.
+    for (const auto& target : inspectionRequests) {
+        (void)interactions.inspect(target);
     }
 }
 

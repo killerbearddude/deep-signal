@@ -135,7 +135,16 @@ void native_condensed_overviews_and_stable_identity() {
     contains(bodyText, body.typeName);
     contains(bodyText, body.strategicZoneName);
     contains(bodyText, "Colonies " + std::to_string(body.colonyCount));
+    contains(bodyText, "Fleets referenced " + std::to_string(body.fleetCount));
     contains(bodyText, "Deposits " + std::to_string(body.mineralDepositCount));
+    contains(bodyText, "RELATIONSHIPS");
+    contains(bodyText, "Parent body");
+    contains(bodyText, body.parentBodyName);
+    contains(bodyText, "COLONIES");
+    contains(bodyText, colony.name);
+    contains(bodyText, "STATIONED FLEETS");
+    contains(bodyText, fleet.name);
+    contains(bodyText, "Inspect >");
 
     require(fixture.inspect(colony.id) == temporary, "temporary retarget preserves PreviewId");
     require(ui_imgui::informationPreviewWindowName(temporary) == name, "retarget keeps native window name");
@@ -144,6 +153,10 @@ void native_condensed_overviews_and_stable_identity() {
     contains(colonyText, colony.bodyName);
     contains(colonyText, colony.processingPolicyName);
     contains(colonyText, "Raw stockpile " + decimal(colony.totalRawStockpile) + " units");
+    contains(colonyText, "RELATIONSHIPS");
+    contains(colonyText, "Body");
+    contains(colonyText, body.name);
+    contains(colonyText, "Inspect >");
     require(colonyText.find("BODY ") == std::string::npos,
             "retarget does not retain the prior body overview");
 
@@ -154,6 +167,10 @@ void native_condensed_overviews_and_stable_identity() {
     contains(fleetText, "Order Idle");
     contains(fleetText, "Destination -");
     contains(fleetText, "ETA -");
+    contains(fleetText, "RELATIONSHIPS");
+    contains(fleetText, "Current body");
+    contains(fleetText, body.name);
+    contains(fleetText, "Inspect >");
     require(fleetText.find(colony.name) == std::string::npos, "fleet does not retain colony text");
     const std::string settings = ImGui::SaveIniSettingsToMemory();
     require(settings.find("InformationPreview_") == std::string::npos

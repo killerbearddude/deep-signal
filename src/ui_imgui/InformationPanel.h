@@ -1,12 +1,14 @@
 #pragma once
 
-// Responsibility: render the shell's persistent, read-only selection overview.
+// Responsibility: render the shell's persistent main-selection overview and
+// request inspection only for displayed, world-stamped relationships.
 // The application owns selection and layout; queries own the projection boundary.
 // This component retains no selected ID, DTO, entity, command, or preview state.
 
 struct ImVec2;
 
 namespace deep {
+class InformationInteractionAdapter;
 class SelectionState;
 class SimulationQueries;
 }
@@ -19,6 +21,7 @@ public:
     // never triggers fallback selection or a gameplay operation.
     void render(const SimulationQueries& queries,
                 const SelectionState& selection,
+                InformationInteractionAdapter& interactions,
                 const ImVec2& position,
                 const ImVec2& size) const;
 };
