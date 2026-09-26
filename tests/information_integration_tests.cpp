@@ -21,6 +21,7 @@
 #include <string_view>
 #include <tuple>
 #include <utility>
+#include <vector>
 
 namespace {
 // Test-only fault injection into real query allocation. Disabled except around
@@ -94,6 +95,12 @@ void require(bool condition, std::string_view message) {
     if (!condition) {
         throw std::runtime_error{std::string{message}};
     }
+}
+
+InformationPreview preview(const std::vector<InformationPreview>& records, const PreviewId id) {
+    const auto it = std::find_if(records.begin(), records.end(), [id](const auto& record) { return record.id == id; });
+    require(it != records.end(), "expected preview record exists");
+    return *it;
 }
 
 struct TempDirectory {
@@ -196,6 +203,106 @@ void test_supported_selection_and_relationship_isolation() {
     require(f.adapter.select({f.adapter.world(), std::nullopt}), "explicit empty-map clear");
     require(!f.adapter.state().mainTarget() && !f.adapter.state().temporaryPreview(), "clear removes main and temporary");
     require(f.adapter.state().previewSnapshot().size() == 1, "clear preserves pin");
+}
+
+void test_adapter_preview_actions_keep_window_and_main_identities() {
+    Fixture f;
+    require(f.adapter.select(f.selection(f.mars())), "select persistent main context");
+    const auto main = f.adapter.state().mainTarget();
+    const auto first = f.inspect(f.colonyId());
+    const auto copied = f.adapter.previewSnapshot();
+    require(copied.size() == 1 && preview(copied, first).target == f.ref(f.colonyId())
+            && !preview(copied, first).pinned, "first adapter snapshot copies a temporary preview");
+
+    require(f.adapter.pin(first), "pin first preview through adapter");
+    const auto pinnedOnce = f.adapter.previewSnapshot();
+    require(pinnedOnce.size() == 1 && preview(pinnedOnce, first).pinned,
+            "pin preserves identity and creates no empty replacement");
+    const auto second = f.inspect(f.colonyId());
+    require(second != first && f.adapter.pin(second), "explicitly pin a duplicate target under another PreviewId");
+    const auto temporary = f.inspect(f.colonyId());
+    require(temporary != first && temporary != second && f.inspect(f.fleetId()) == temporary,
+            "inspection after pinning creates a reusable temporary identity");
+    const auto beforeUnpin = f.adapter.previewSnapshot();
+    require(beforeUnpin.size() == 3 && preview(beforeUnpin, first).pinned
+            && preview(beforeUnpin, second).pinned
+            && preview(beforeUnpin, temporary).target == f.ref(f.fleetId()),
+            "duplicate pins retain targets while temporary retargets");
+
+    require(f.adapter.unpin(first), "unpin a displayed pin through adapter");
+    const auto afterUnpin = f.adapter.previewSnapshot();
+    require(afterUnpin.size() == 2 && !preview(afterUnpin, first).pinned
+            && preview(afterUnpin, first).target == f.ref(f.colonyId())
+            && preview(afterUnpin, second).pinned,
+            "unpin keeps its ID/target, replaces the former temporary, and leaves other pins");
+    require(!f.adapter.closePreview(temporary) && !f.adapter.unpin(temporary),
+            "queued actions for replaced temporary cannot affect another window");
+    require(f.adapter.closePreview(second) && f.adapter.previewSnapshot().size() == 1,
+            "closing one pin preserves the temporary");
+    require(f.adapter.closePreview(first) && f.adapter.previewSnapshot().empty(),
+            "closing the remaining temporary removes only that record");
+    require(!f.adapter.pin(first) && !f.adapter.unpin(first) && !f.adapter.closePreview(first),
+            "closed PreviewId rejects delayed actions");
+    require(f.adapter.state().mainTarget() == main && f.adapter.mainSelection().isBodySelected(f.mars()),
+            "preview lifecycle actions never change main selection");
+    require(copied.size() == 1 && !copied.front().pinned && copied.front().id == first,
+            "earlier renderer snapshot stays independent of later actions");
+}
+
+void test_adapter_preview_snapshot_follows_replacement_outcomes() {
+    Fixture f;
+    f.seed();
+    const auto before = f.adapter.previewSnapshot();
+    require(before.size() == 2, "fixture has a pin and a temporary preview");
+    require(!f.adapter.loadGame({}).ok && f.adapter.previewSnapshot() == before,
+            "failed replacement preserves the rendered preview snapshot");
+    require(f.adapter.newGame().ok && f.adapter.previewSnapshot().empty(),
+            "successful replacement clears the rendered preview snapshot");
+    for (const auto& record : before) {
+        require(!f.adapter.pin(record.id) && !f.adapter.unpin(record.id)
+                && !f.adapter.closePreview(record.id), "old-world preview actions are rejected");
+    }
+    const auto fresh = f.inspect(f.colonyId());
+    require(fresh != before.front().id && fresh != before.back().id
+            && f.adapter.previewSnapshot().size() == 1,
+            "fresh world can create a new preview without recycling an old identity");
+}
+
+void test_adapter_preview_snapshot_reconciles_missing_targets() {
+    Fixture f;
+    const auto fleet = f.fleetId();
+    require(f.adapter.select(f.selection(fleet)), "select fleet as main context");
+    const auto first = f.inspect(fleet);
+    require(f.adapter.pin(first), "pin fleet once");
+    const auto second = f.inspect(fleet);
+    require(f.adapter.pin(second), "pin fleet twice under a distinct ID");
+    const auto survivor = f.inspect(f.colonyId());
+    const auto copied = f.adapter.previewSnapshot();
+    require(copied.size() == 3, "pre-removal snapshot includes both fleet pins and colony temporary");
+
+    // No gameplay command deletes fleets. Replace the test-owned service value
+    // without a New/Load notification to isolate live target reconciliation.
+    auto changed = f.service.state();
+    changed.fleets.clear();
+    changed.ships.clear();
+    f.service = SimulationService{std::move(changed)};
+    const auto reconciled = f.adapter.previewSnapshot();
+    require(reconciled.size() == 1 && reconciled.front().id == survivor
+            && reconciled.front().target == f.ref(f.colonyId()),
+            "previewSnapshot removes only records whose live query target vanished");
+    require(!f.adapter.state().mainTarget() && copied.size() == 3,
+            "same reconciliation clears missing main while prior copied snapshot remains valid");
+    require(!f.adapter.closePreview(first) && !f.adapter.unpin(second),
+            "missing-target preview actions are rejected after reconciliation");
+
+    const auto beforeFailure = f.interactionSnapshot();
+    bool threw = false;
+    failNextAllocation = true;
+    try { (void)f.adapter.previewSnapshot(); }
+    catch (const std::bad_alloc&) { threw = true; }
+    failNextAllocation = false;
+    require(threw && f.interactionSnapshot() == beforeFailure,
+            "previewSnapshot propagates a query failure without partially changing interaction state");
 }
 
 void test_new_game_success_clears_hidden_workflows_once() {
@@ -346,6 +453,9 @@ void test_reset_failure_is_not_an_ordinary_failed_load() {
 int main() {
     const std::pair<std::string_view, void (*)()> tests[] = {
         {"typed selection, actual reactivation, and inspection isolation", test_supported_selection_and_relationship_isolation},
+        {"adapter preview actions retain identities and main selection", test_adapter_preview_actions_keep_window_and_main_identities},
+        {"adapter preview snapshot follows replacement outcomes", test_adapter_preview_snapshot_follows_replacement_outcomes},
+        {"adapter preview snapshot reconciles missing targets", test_adapter_preview_snapshot_reconciles_missing_targets},
         {"real New Game and hidden-workflow resets", test_new_game_success_clears_hidden_workflows_once},
         {"real Load, reused IDs, and same-frame stale intentions", test_real_load_and_same_frame_stale_intentions},
         {"failed/empty/malformed loads preserve world and drafts", test_failed_loads_preserve_state_and_actual_workflow_drafts},

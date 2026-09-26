@@ -49,6 +49,11 @@ SelectionState InformationInteractionAdapter::mainSelection() {
     return state_.mainSelection();
 }
 
+std::vector<InformationPreview> InformationInteractionAdapter::previewSnapshot() {
+    reconcile();
+    return state_.previewSnapshot();
+}
+
 bool InformationInteractionAdapter::select(const MainSelectionIntent intent) {
     if (!intent.target) {
         return state_.clearMain(intent.world);
@@ -62,6 +67,10 @@ std::optional<PreviewId> InformationInteractionAdapter::inspect(const ObjectRefe
 }
 
 bool InformationInteractionAdapter::pin(const PreviewId id) { return state_.pin(id); }
+
+bool InformationInteractionAdapter::unpin(const PreviewId id) { return state_.unpin(id); }
+
+bool InformationInteractionAdapter::closePreview(const PreviewId id) { return state_.close(id); }
 
 CommandResult InformationInteractionAdapter::finishReplacement(const WorldGeneration origin, CommandResult result) {
     if (!state_.worldReplacementFinished(origin, result.ok)) {

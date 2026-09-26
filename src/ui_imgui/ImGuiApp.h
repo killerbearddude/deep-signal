@@ -16,6 +16,7 @@
 #include "ui_imgui/FleetOrdersPanel.h"
 #include "ui_imgui/InspectorPanel.h"
 #include "ui_imgui/InformationPanel.h"
+#include "ui_imgui/InformationPreviewLayer.h"
 #include "ui_imgui/MainMenuBar.h"
 #include "ui_imgui/SaveLoadPanel.h"
 #include "ui_imgui/ShipyardPanel.h"
@@ -76,6 +77,7 @@ private:
     EventLogPanel eventLogPanel_;
     InspectorPanel inspectorPanel_;
     InformationPanel informationPanel_;
+    InformationPreviewLayer previewLayer_;
     StrategicMapPanel strategicMapPanel_;
     Workspace workspace_ = Workspace::System;
     PanelVisibility visibility_;

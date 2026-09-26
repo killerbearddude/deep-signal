@@ -85,6 +85,7 @@ int ImGuiApp::run() {
             informationPanel_.render(queries, interactions_.mainSelection(),
                 {layout.information.x, layout.information.y},
                 {layout.information.width, layout.information.height});
+            previewLayer_.render(queries, interactions_, layout.dock);
         }
 
         ImGui::Render();

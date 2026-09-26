@@ -10,6 +10,7 @@
 #include <filesystem>
 #include <functional>
 #include <optional>
+#include <vector>
 
 namespace deep {
 
@@ -35,11 +36,15 @@ public:
     // Reconcile before returning each consumer's fresh read-only value projection.
     // Repeated reads never replay selectMain or overwrite a relationship preview.
     [[nodiscard]] SelectionState mainSelection();
+    [[nodiscard]] std::vector<InformationPreview> previewSnapshot();
     void reconcile();
 
     [[nodiscard]] bool select(MainSelectionIntent intent);
     [[nodiscard]] std::optional<PreviewId> inspect(ObjectReference target);
+    // Preview actions address the displayed record, never main selection.
     [[nodiscard]] bool pin(PreviewId id);
+    [[nodiscard]] bool unpin(PreviewId id);
+    [[nodiscard]] bool closePreview(PreviewId id);
 
     // Shared by File and legacy-panel routes through SaveLoadPanel. Execute once,
     // then acknowledge the returned result once. Preserve the original result;
