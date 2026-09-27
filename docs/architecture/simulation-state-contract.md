@@ -1,9 +1,9 @@
 # Simulation state contract
 
-This document records the H1A processing-configuration contract and the current
-limits of simulation state persistence. H1B save continuity is a separate,
-pending slice. The in-memory `GameState` remains the authority for gameplay;
-SQLite stores explicit snapshots, not a second live world or a replay stream.
+This document records the H1A processing-configuration contract and the H1B
+save-continuity contract. The in-memory `GameState` remains the authority for
+gameplay; SQLite stores explicit snapshots, not a second live world or a replay
+stream.
 
 ## Ownership and trust boundaries
 
@@ -88,38 +88,111 @@ This is a focused guarantee for this command, not global rollback or a strong
 exception guarantee for every command. The simulation does not catch allocation
 failures and does not copy the world for each command.
 
-## Persistence and session data
+## H1B: durable ordering
 
-H1A leaves the SQLite format at schema v10; it adds no migration. Ordinary valid
-v10 saves remain supported. The tighter processing rule intentionally rejects
-constructed states and previously accepted malformed extreme-weight saves whose
-per-material or combined totals are unrepresentable. It does not rewrite such
-input into a usable configuration.
+Order within `GameState` collections is part of continuation behavior. Mining
+visits colonies and deposits in vector order. Shipyard orders consume each
+colony's daily capacity in vector order, so ID order is not FIFO priority. Fleet
+order and per-fleet ship-roster order can determine event sequencing and fuel
+payment. Save derives ordering metadata from the current vectors without sorting
+the live state, changing IDs, or adding ordinal fields to domain records.
+
+Schema v11 stores a global zero-based `ordinal` for each of these durable
+vectors:
+
+| `GameState` vector | SQLite table |
+| --- | --- |
+| `starSystems` | `star_systems` |
+| `institutions` | `institutions` |
+| `people` | `people` |
+| `bodies` | `bodies` |
+| `colonies` | `colonies` |
+| `mineralDeposits` | `mineral_deposits` |
+| `shipClasses` | `ship_classes` |
+| `shipyardOrders` | `shipyard_orders` |
+| `ships` | `ships` |
+| `fleets` | `fleets` |
+
+Ordered child collections have their own scope. `appointments` keeps its global
+ordinal; `colony_processing_allocations` keeps an ordinal per colony; and
+`fleet_order_queue` keeps an ordinal per fleet. A Ship row has **two independent
+positions**: `ships.ordinal` reconstructs `GameState::ships`, while
+`ships.fleet_ordinal`, unique within its `fleet_id`, reconstructs that Fleet's
+`shipIds` roster. Reconstructing the roster by global Ship order would lose a
+different ordering contract. Resource and ship-class cost arrays remain keyed
+by mineral/material enum index, while metadata and ID counters remain keyed by
+name. `event_log` remains ordered by Event ID, with strictly increasing IDs and
+nondecreasing event days validated; it has no second ordinal.
+
+The v11 writer assigns contiguous ordinals beginning at zero. Schema
+constraints require non-null integer, nonnegative, unique values in each scope;
+the reader also checks storage type and contiguity before accepting a sequence.
+Every ordered read uses explicit `ORDER BY`. Missing, duplicate, fractional,
+negative, or gapped v11 order data is rejected rather than reconstructed in
+legacy ID order. Empty collections are valid.
+
+## Schema versions and destination policy
+
+H1A wrote schema v10. H1B writes **v11 only** and reads validated v10 or v11.
+A v10 Load is read-only: it applies the established legacy ID/child-ordinal
+reconstruction and current domain validation, without upgrading the file or
+inventing ordering data that v10 never stored. The authentic
+[v10 fixture](../../tests/fixtures/README.md) demonstrates the limit: a valid
+source shipyard FIFO `[2, 1]` reloads as `[1, 2]`, changing which order
+completes on the next day. A v11 Load requires the v11 table, column, key, and
+foreign-key shape and all its ordering checks. A version marker alone does not
+make either structure valid. Unsupported, malformed, or mismatched versions
+reject; there is no fallback from a failed v11 read to the v10 reader.
+
+Destination recognition compares the user schema object set and each expected
+table's `table_xinfo`, `foreign_key_list`, and index shape with a freshly built
+schema reference. The v10 check uses the corresponding legacy columns and
+indexes. Save rejects user triggers even when they target known tables, because
+their write effects cannot be trusted as part of the snapshot contract.
+Read-only Load may tolerate triggers attached to known tables; they cannot
+change the reconstructed rows during that operation. A test-only build injects
+a post-deletion failure to prove rollback without exposing a production failure
+switch. The check does not require
+byte-identical `CREATE TABLE` text or silently add missing columns.
+
+Save accepts a new path, a schema-empty database, or an existing compatible,
+valid v11 save. It rejects overwrite of v10 with guidance to use a new path,
+and rejects unsupported, malformed, or unrecognized databases without trying
+to repair them. A database with unrelated user schema objects is not empty.
+There is no in-place v10 migration or automatic downgrade. A player may load a
+valid v10 game and save its reconstructed state to a **new** v11 destination;
+the original v10 ordering information that was never stored remains lost.
+
+Save validates its input state before opening the destination. The connection
+enables foreign keys before an immediate write transaction. On that same
+connection and inside that transaction it classifies the destination, verifies
+an existing v11 snapshot before replacement, creates v11 schema only if empty,
+replaces rows, rereads the new snapshot, and commits only after validation.
+Load opens read-only, checks version-specific structure and foreign keys, and
+validates a detached snapshot within one read transaction before returning it.
+A failed replacement rolls back the previous valid save's **logical** contents
+and schema. A failed first save may leave an empty new file; neither path
+promises byte-identical files after every open or recovery from power loss and
+arbitrary filesystem failure. Failed application Load leaves the active world
+and its workflows intact.
+
+## Session data and continuation limits
 
 `dailyEconomySnapshots` is current-session telemetry and is not saved. Loaded
-games start with an empty telemetry vector until later days run. Selection,
-previews, world-generation UI references, processing-editor drafts, and window
-geometry are also outside the game snapshot. A failed Load preserves the active
-world and its workflows; successful Load replaces the world and clears old-world
+games start with an empty telemetry vector until later days run; compare newly
+emitted telemetry after the continuation point rather than expecting a loaded
+copy of prior session samples. Selection, previews, world-generation UI
+references, processing-editor drafts, and window geometry are also outside the
+game snapshot. Successful Load replaces the world and clears old-world
 interaction and editor state through the existing lifecycle.
 
-## Ordering and H1B boundary
-
-Order within in-memory collections matters to existing rules, including FIFO
-shipyard work, shared fuel payment, and overlapping resource use. Manual
-allocation rows themselves retain submitted order, while their derived
-material subtotals use a fixed material order for normalization. H1A changes no
-SQLite ordering or transaction behavior. Schema v10 must not be assumed to
-preserve every durable collection or child-list order after Save/Load; H1A makes
-no continuation-fidelity claim for those cases.
-
-H1B execution awaits H1A review and a separate continuation instruction. Its
-intended contract is to write schema v11 with explicit durable ordering, validate v11
-reads, keep read compatibility for valid v10 saves, and compare same-build
-post-load continuation against an unsaved run. Until that slice is implemented
-and tested, no v11 write support, v10-to-v11 migration, or ordered Save/Load
-continuity is claimed here. Neither slice promises bitwise results across
-compilers or unchanged outcomes after gameplay rules change.
+The v11 ordering contract supports comparisons of durable state, ordered
+children, counters, and meaningful event order when an unsaved and reloaded
+simulation continue under the **same build and same inputs**. It does not
+promise bitwise identical floating-point results across compilers, platforms,
+or build flags, or unchanged outcomes after gameplay rules change. The H1A
+processing checks still reject previously accepted malformed extreme-weight
+saves; v10 read compatibility is for valid snapshots, not automatic repair.
 
 ## Review evidence
 
@@ -131,5 +204,8 @@ agreement of read-only query and forecast projections with independent expected
 values. A valid near-maximum finite weight must retain finite shares and
 percentages. Build and test results, native UI checks, and ordinary v10
 Save/Load checks belong in the H1A review report with executed and unperformed
-checks clearly distinguished. This document does not itself certify that those
-checks ran.
+checks clearly distinguished. H1B evidence should include the pinned v10
+baseline ordering failure, fixture provenance, current-format round trips and
+same-build continuation, legacy read/no-upgrade behavior, rejection and
+transaction preservation, and running-UI Save/Load checks. This document
+states the contract; it does not itself certify that every check ran.

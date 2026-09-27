@@ -1,16 +1,21 @@
 #include "save/Schema.h"
 
-// Responsibility: define schema v10 tables and verify the version marker.
+// Responsibility: define schema v11 tables and inspect version/structure.
 // Tables mirror durable GameState records; event payloads remain inspectable JSON
 // text. Foreign keys and CHECK constraints provide a first line of validation,
 // not complete type/graph validation. Repository reconstruction and the domain
 // validator perform additional checks. Schema creation does not migrate saves.
 
+#include <algorithm>
+#include <array>
 #include <charconv>
+#include <compare>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <vector>
 
 namespace deep::save {
 
@@ -29,40 +34,130 @@ namespace {
     return value;
 }
 
+struct SchemaObject {
+    std::string type;
+    std::string name;
+    std::string table;
+    auto operator<=>(const SchemaObject&) const = default;
+};
+
+using PragmaCell = std::optional<std::string>;
+using PragmaRows = std::vector<std::vector<PragmaCell>>;
+
+[[nodiscard]] std::string quoteIdentifier(const std::string_view name) {
+    std::string quoted{"\""};
+    for (const char ch : name) {
+        quoted += ch;
+        if (ch == '"') {
+            quoted += '"';
+        }
+    }
+    quoted += '"';
+    return quoted;
+}
+
+[[nodiscard]] PragmaRows readPragmaRows(Database& db, const std::string& sql, const int columnCount) {
+    Statement stmt{db, sql};
+    PragmaRows rows;
+    while (stmt.step()) {
+        std::vector<PragmaCell> row;
+        row.reserve(static_cast<std::size_t>(columnCount));
+        for (int column = 0; column < columnCount; ++column) {
+            row.push_back(stmt.columnIsNull(column) ? std::nullopt : std::optional{stmt.columnText(column)});
+        }
+        rows.push_back(std::move(row));
+    }
+    return rows;
+}
+
+[[nodiscard]] std::vector<SchemaObject> readUserObjects(Database& db,
+                                                         const std::vector<std::string>& knownTables = {},
+                                                         const bool allowKnownTableTriggers = false) {
+    Statement stmt{db, R"sql(
+        SELECT type, name, tbl_name
+        FROM sqlite_schema
+        WHERE name NOT GLOB 'sqlite_*'
+        ORDER BY type, name, tbl_name;
+    )sql"};
+    std::vector<SchemaObject> objects;
+    while (stmt.step()) {
+        SchemaObject object{stmt.columnText(0), stmt.columnText(1), stmt.columnText(2)};
+        if (object.type == "trigger") {
+            if (!allowKnownTableTriggers) {
+                throw std::runtime_error{"Save destination contains a user trigger"};
+            }
+            if (std::find(knownTables.begin(), knownTables.end(), object.table) == knownTables.end()) {
+                throw std::runtime_error{"Save file has a trigger on an unknown table"};
+            }
+            continue;
+        }
+        objects.push_back(std::move(object));
+    }
+    return objects;
+}
+
+struct IndexShape {
+    std::string name;
+    std::string unique;
+    std::string origin;
+    std::string partial;
+    PragmaRows columns;
+    auto operator<=>(const IndexShape&) const = default;
+};
+
+[[nodiscard]] std::vector<IndexShape> readIndexShapes(Database& db, const std::string_view tableName) {
+    Statement stmt{db, "PRAGMA index_list(" + quoteIdentifier(tableName) + ");"};
+    std::vector<IndexShape> indexes;
+    while (stmt.step()) {
+        const std::string actualName = stmt.columnText(1);
+        const bool automaticName = actualName.starts_with("sqlite_autoindex_");
+        indexes.push_back(IndexShape{
+            .name = automaticName ? std::string{} : actualName,
+            .unique = stmt.columnText(2),
+            .origin = stmt.columnText(3),
+            .partial = stmt.columnText(4),
+            .columns = readPragmaRows(db, "PRAGMA index_xinfo(" + quoteIdentifier(actualName) + ");", 6)
+        });
+    }
+    std::sort(indexes.begin(), indexes.end());
+    return indexes;
+}
+
 } // namespace
 
-void initializeSchema(Database& db) {
+void createSchemaV11(Database& db) {
     db.execute(R"sql(
-        PRAGMA foreign_keys = ON;
-
-        CREATE TABLE IF NOT EXISTS schema_version (
+        CREATE TABLE schema_version (
             id INTEGER PRIMARY KEY CHECK(id = 1),
-            version INTEGER NOT NULL CHECK(version = 10)
+            version INTEGER NOT NULL CHECK(version = 11)
         );
 
-        CREATE TABLE IF NOT EXISTS game_meta (
+        CREATE TABLE game_meta (
             key TEXT PRIMARY KEY NOT NULL CHECK(length(key) > 0),
             value TEXT NOT NULL
         );
 
-        CREATE TABLE IF NOT EXISTS id_counters (
+        CREATE TABLE id_counters (
             key TEXT PRIMARY KEY NOT NULL CHECK(length(key) > 0),
             value INTEGER NOT NULL CHECK(value > 0)
         );
 
-        CREATE TABLE IF NOT EXISTS star_systems (
+        CREATE TABLE star_systems (
             id INTEGER PRIMARY KEY NOT NULL CHECK(id > 0),
+            ordinal INTEGER NOT NULL UNIQUE CHECK(typeof(ordinal) = 'integer' AND ordinal >= 0),
             name TEXT NOT NULL CHECK(length(name) > 0)
         );
 
-        CREATE TABLE IF NOT EXISTS institutions (
+        CREATE TABLE institutions (
             id INTEGER PRIMARY KEY NOT NULL CHECK(id > 0),
+            ordinal INTEGER NOT NULL UNIQUE CHECK(typeof(ordinal) = 'integer' AND ordinal >= 0),
             name TEXT NOT NULL CHECK(length(name) > 0),
             institution_type INTEGER NOT NULL CHECK(institution_type BETWEEN 0 AND 7)
         );
 
-        CREATE TABLE IF NOT EXISTS people (
+        CREATE TABLE people (
             id INTEGER PRIMARY KEY NOT NULL CHECK(id > 0),
+            ordinal INTEGER NOT NULL UNIQUE CHECK(typeof(ordinal) = 'integer' AND ordinal >= 0),
             name TEXT NOT NULL CHECK(length(name) > 0),
             institution_id INTEGER NOT NULL CHECK(institution_id > 0),
             logistics INTEGER NOT NULL CHECK(logistics >= 0),
@@ -81,7 +176,7 @@ void initializeSchema(Database& db) {
             FOREIGN KEY(institution_id) REFERENCES institutions(id)
         );
 
-        CREATE TABLE IF NOT EXISTS appointments (
+        CREATE TABLE appointments (
             ordinal INTEGER PRIMARY KEY NOT NULL CHECK(ordinal >= 0),
             role INTEGER NOT NULL CHECK(role BETWEEN 0 AND 5),
             scope_type INTEGER NOT NULL CHECK(scope_type BETWEEN 0 AND 2),
@@ -92,8 +187,9 @@ void initializeSchema(Database& db) {
             FOREIGN KEY(person_id) REFERENCES people(id)
         );
 
-        CREATE TABLE IF NOT EXISTS bodies (
+        CREATE TABLE bodies (
             id INTEGER PRIMARY KEY NOT NULL CHECK(id > 0),
+            ordinal INTEGER NOT NULL UNIQUE CHECK(typeof(ordinal) = 'integer' AND ordinal >= 0),
             system_id INTEGER NOT NULL CHECK(system_id > 0),
             name TEXT NOT NULL CHECK(length(name) > 0),
             body_type INTEGER NOT NULL CHECK(body_type BETWEEN 0 AND 4),
@@ -109,8 +205,9 @@ void initializeSchema(Database& db) {
             FOREIGN KEY(system_id) REFERENCES star_systems(id)
         );
 
-        CREATE TABLE IF NOT EXISTS colonies (
+        CREATE TABLE colonies (
             id INTEGER PRIMARY KEY NOT NULL CHECK(id > 0),
+            ordinal INTEGER NOT NULL UNIQUE CHECK(typeof(ordinal) = 'integer' AND ordinal >= 0),
             body_id INTEGER NOT NULL CHECK(body_id > 0),
             name TEXT NOT NULL CHECK(length(name) > 0),
             owner_institution_id INTEGER NULL CHECK(owner_institution_id IS NULL OR owner_institution_id > 0),
@@ -122,7 +219,7 @@ void initializeSchema(Database& db) {
             FOREIGN KEY(owner_institution_id) REFERENCES institutions(id)
         );
 
-        CREATE TABLE IF NOT EXISTS colony_minerals (
+        CREATE TABLE colony_minerals (
             colony_id INTEGER NOT NULL CHECK(colony_id > 0),
             mineral INTEGER NOT NULL CHECK(mineral BETWEEN 0 AND 13),
             amount REAL NOT NULL CHECK(amount >= 0.0),
@@ -130,7 +227,7 @@ void initializeSchema(Database& db) {
             FOREIGN KEY(colony_id) REFERENCES colonies(id)
         );
 
-        CREATE TABLE IF NOT EXISTS colony_materials (
+        CREATE TABLE colony_materials (
             colony_id INTEGER NOT NULL CHECK(colony_id > 0),
             material INTEGER NOT NULL CHECK(material BETWEEN 0 AND 5),
             amount REAL NOT NULL CHECK(amount >= 0.0),
@@ -138,16 +235,17 @@ void initializeSchema(Database& db) {
             FOREIGN KEY(colony_id) REFERENCES colonies(id)
         );
 
-        CREATE TABLE IF NOT EXISTS colony_processing_allocations (
+        CREATE TABLE colony_processing_allocations (
             colony_id INTEGER NOT NULL CHECK(colony_id > 0),
-            ordinal INTEGER NOT NULL CHECK(ordinal >= 0),
+            ordinal INTEGER NOT NULL CHECK(typeof(ordinal) = 'integer' AND ordinal >= 0),
             material INTEGER NOT NULL CHECK(material BETWEEN 0 AND 5),
             weight REAL NOT NULL CHECK(weight >= 0.0),
             PRIMARY KEY(colony_id, ordinal),
             FOREIGN KEY(colony_id) REFERENCES colonies(id)
         );
 
-        CREATE TABLE IF NOT EXISTS mineral_deposits (
+        CREATE TABLE mineral_deposits (
+            ordinal INTEGER NOT NULL UNIQUE CHECK(typeof(ordinal) = 'integer' AND ordinal >= 0),
             body_id INTEGER NOT NULL CHECK(body_id > 0),
             mineral INTEGER NOT NULL CHECK(mineral BETWEEN 0 AND 13),
             remaining REAL NOT NULL CHECK(remaining >= 0.0),
@@ -158,8 +256,9 @@ void initializeSchema(Database& db) {
         );
 
         -- Ship-class fuel_capacity defines the maximum propellant one hull contributes.
-        CREATE TABLE IF NOT EXISTS ship_classes (
+        CREATE TABLE ship_classes (
             id INTEGER PRIMARY KEY NOT NULL CHECK(id > 0),
+            ordinal INTEGER NOT NULL UNIQUE CHECK(typeof(ordinal) = 'integer' AND ordinal >= 0),
             name TEXT NOT NULL CHECK(length(name) > 0),
             role INTEGER NOT NULL CHECK(role BETWEEN 0 AND 2),
             build_points REAL NOT NULL CHECK(build_points > 0.0),
@@ -167,7 +266,7 @@ void initializeSchema(Database& db) {
             fuel_capacity REAL NOT NULL CHECK(fuel_capacity >= 0.0)
         );
 
-        CREATE TABLE IF NOT EXISTS ship_class_material_costs (
+        CREATE TABLE ship_class_material_costs (
             ship_class_id INTEGER NOT NULL CHECK(ship_class_id > 0),
             material INTEGER NOT NULL CHECK(material BETWEEN 0 AND 5),
             amount REAL NOT NULL CHECK(amount >= 0.0),
@@ -175,8 +274,9 @@ void initializeSchema(Database& db) {
             FOREIGN KEY(ship_class_id) REFERENCES ship_classes(id)
         );
 
-        CREATE TABLE IF NOT EXISTS shipyard_orders (
+        CREATE TABLE shipyard_orders (
             id INTEGER PRIMARY KEY NOT NULL CHECK(id > 0),
+            ordinal INTEGER NOT NULL UNIQUE CHECK(typeof(ordinal) = 'integer' AND ordinal >= 0),
             colony_id INTEGER NOT NULL CHECK(colony_id > 0),
             ship_class_id INTEGER NOT NULL CHECK(ship_class_id > 0),
             quantity_requested INTEGER NOT NULL CHECK(quantity_requested > 0),
@@ -193,8 +293,9 @@ void initializeSchema(Database& db) {
             FOREIGN KEY(ship_class_id) REFERENCES ship_classes(id)
         );
 
-        CREATE TABLE IF NOT EXISTS fleets (
+        CREATE TABLE fleets (
             id INTEGER PRIMARY KEY NOT NULL CHECK(id > 0),
+            ordinal INTEGER NOT NULL UNIQUE CHECK(typeof(ordinal) = 'integer' AND ordinal >= 0),
             name TEXT NOT NULL CHECK(length(name) > 0),
             owner_institution_id INTEGER NULL CHECK(owner_institution_id IS NULL OR owner_institution_id > 0),
             current_body_id INTEGER NOT NULL CHECK(current_body_id > 0),
@@ -238,9 +339,9 @@ void initializeSchema(Database& db) {
 
         -- Durable queued fleet intent. Active fleet orders are stored on fleets;
         -- this table preserves future player-authored moves in execution order.
-        CREATE TABLE IF NOT EXISTS fleet_order_queue (
+        CREATE TABLE fleet_order_queue (
             fleet_id INTEGER NOT NULL CHECK(fleet_id > 0),
-            ordinal INTEGER NOT NULL CHECK(ordinal >= 0),
+            ordinal INTEGER NOT NULL CHECK(typeof(ordinal) = 'integer' AND ordinal >= 0),
             order_type INTEGER NOT NULL CHECK(order_type = 1),
             target_body_id INTEGER NOT NULL CHECK(target_body_id > 0),
             PRIMARY KEY(fleet_id, ordinal),
@@ -249,17 +350,20 @@ void initializeSchema(Database& db) {
         );
 
         -- Ship fuel is the current propellant amount consumed by movement orders.
-        CREATE TABLE IF NOT EXISTS ships (
+        CREATE TABLE ships (
             id INTEGER PRIMARY KEY NOT NULL CHECK(id > 0),
+            ordinal INTEGER NOT NULL UNIQUE CHECK(typeof(ordinal) = 'integer' AND ordinal >= 0),
             ship_class_id INTEGER NOT NULL CHECK(ship_class_id > 0),
             fleet_id INTEGER NOT NULL CHECK(fleet_id > 0),
+            fleet_ordinal INTEGER NOT NULL CHECK(typeof(fleet_ordinal) = 'integer' AND fleet_ordinal >= 0),
             name TEXT NOT NULL CHECK(length(name) > 0),
             fuel REAL NOT NULL CHECK(fuel >= 0.0),
+            UNIQUE(fleet_id, fleet_ordinal),
             FOREIGN KEY(ship_class_id) REFERENCES ship_classes(id),
             FOREIGN KEY(fleet_id) REFERENCES fleets(id)
         );
 
-        CREATE TABLE IF NOT EXISTS event_log (
+        CREATE TABLE event_log (
             id INTEGER PRIMARY KEY NOT NULL CHECK(id > 0),
             day INTEGER NOT NULL CHECK(day >= 0),
             severity INTEGER NOT NULL CHECK(severity BETWEEN 0 AND 2),
@@ -267,34 +371,26 @@ void initializeSchema(Database& db) {
             payload_json TEXT NOT NULL CHECK(length(payload_json) > 0)
         );
 
-        CREATE INDEX IF NOT EXISTS idx_people_institution_id ON people(institution_id);
-        CREATE INDEX IF NOT EXISTS idx_appointments_person_id ON appointments(person_id);
-        CREATE INDEX IF NOT EXISTS idx_bodies_system_id ON bodies(system_id);
-        CREATE INDEX IF NOT EXISTS idx_colonies_body_id ON colonies(body_id);
-        CREATE INDEX IF NOT EXISTS idx_colonies_owner_institution_id ON colonies(owner_institution_id);
-        CREATE INDEX IF NOT EXISTS idx_colony_processing_allocations_colony_id
+        CREATE INDEX idx_people_institution_id ON people(institution_id);
+        CREATE INDEX idx_appointments_person_id ON appointments(person_id);
+        CREATE INDEX idx_bodies_system_id ON bodies(system_id);
+        CREATE INDEX idx_colonies_body_id ON colonies(body_id);
+        CREATE INDEX idx_colonies_owner_institution_id ON colonies(owner_institution_id);
+        CREATE INDEX idx_colony_processing_allocations_colony_id
             ON colony_processing_allocations(colony_id);
-        CREATE INDEX IF NOT EXISTS idx_fleets_owner_institution_id ON fleets(owner_institution_id);
-        CREATE INDEX IF NOT EXISTS idx_fleet_order_queue_fleet_id ON fleet_order_queue(fleet_id);
-        CREATE INDEX IF NOT EXISTS idx_ships_fleet_id ON ships(fleet_id);
-        CREATE INDEX IF NOT EXISTS idx_events_day ON event_log(day);
+        CREATE INDEX idx_fleets_owner_institution_id ON fleets(owner_institution_id);
+        CREATE INDEX idx_fleet_order_queue_fleet_id ON fleet_order_queue(fleet_id);
+        CREATE INDEX idx_ships_fleet_id ON ships(fleet_id);
+        CREATE INDEX idx_events_day ON event_log(day);
     )sql");
-
-    // Seed empty metadata without replacing an existing version marker. This
-    // deliberately does not establish that pre-existing tables match v10.
-    Statement count{db, "SELECT COUNT(*) FROM schema_version;"};
-    if (!count.step()) {
-        throw std::runtime_error{"Failed to read schema_version count"};
-    }
-    const std::int64_t rowCount = count.columnInt64(0);
-    if (rowCount == 0) {
-        Statement insert{db, "INSERT INTO schema_version(id, version) VALUES (1, ?);"};
-        insert.bindInt64(1, kSchemaVersion);
-        insert.execute();
-    }
 }
 
-void requireSupportedSchema(Database& db) {
+bool hasUserSchema(Database& db) {
+    Statement stmt{db, "SELECT 1 FROM sqlite_schema WHERE name NOT GLOB 'sqlite_*' LIMIT 1;"};
+    return stmt.step();
+}
+
+std::int64_t readSchemaVersion(Database& db) {
     // Schema identity must be unambiguous. A malformed save with two version rows
     // must not load merely because SQLite happens to return the supported row
     // first for an unconstrained LIMIT query.
@@ -309,9 +405,105 @@ void requireSupportedSchema(Database& db) {
     }
 
     const std::int64_t version = strictSchemaInt64(stmt.columnText(0));
-    if (version != kSchemaVersion) {
-        throw std::runtime_error{"Unsupported save schema version"};
+    return version;
+}
+
+namespace {
+
+[[nodiscard]] bool hasV11GlobalOrdinal(const std::string_view table) {
+    constexpr std::array<std::string_view, 10> orderedTables = {
+        "star_systems", "institutions", "people", "bodies", "colonies",
+        "mineral_deposits", "ship_classes", "shipyard_orders", "ships", "fleets"
+    };
+    return std::find(orderedTables.begin(), orderedTables.end(), table) != orderedTables.end();
+}
+
+[[nodiscard]] bool addedV11Column(const std::string_view table, const std::string_view column) {
+    return (column == "ordinal" && hasV11GlobalOrdinal(table))
+        || (table == "ships" && column == "fleet_ordinal");
+}
+
+[[nodiscard]] PragmaRows legacyColumnShape(const std::string_view table, PragmaRows current) {
+    PragmaRows legacy;
+    for (auto& row : current) {
+        if (addedV11Column(table, row.at(1).value_or(""))) {
+            continue;
+        }
+        row.at(0) = std::to_string(legacy.size()); // cid after removing v11-only columns
+        legacy.push_back(std::move(row));
+    }
+    return legacy;
+}
+
+[[nodiscard]] std::vector<IndexShape> legacyIndexShapes(const std::string_view table,
+                                                        std::vector<IndexShape> current,
+                                                        const PragmaRows& legacyColumns) {
+    std::vector<IndexShape> legacy;
+    for (auto& index : current) {
+        bool addedIndex = false;
+        for (auto& row : index.columns) {
+            const std::string name = row.at(2).value_or("");
+            if (addedV11Column(table, name)) {
+                addedIndex = true;
+                break;
+            }
+            if (!name.empty()) {
+                const auto column = std::find_if(legacyColumns.begin(), legacyColumns.end(),
+                    [&name](const auto& candidate) { return candidate.at(1) == name; });
+                if (column != legacyColumns.end()) {
+                    row.at(1) = column->at(0); // index_xinfo.cid also shifts
+                }
+            }
+        }
+        if (!addedIndex) {
+            legacy.push_back(std::move(index));
+        }
+    }
+    std::sort(legacy.begin(), legacy.end());
+    return legacy;
+}
+
+void requireStructure(Database& db, const bool legacy, const bool allowKnownTableTriggers) {
+    // Use the current declaration as a structural reference, then remove only
+    // fields newly introduced in v11 when recognizing an authentic v10 file.
+    // All destination reads use db, inside the caller's own transaction.
+    Database reference{std::filesystem::path{":memory:"}};
+    createSchemaV11(reference);
+    const auto expectedObjects = readUserObjects(reference);
+    std::vector<std::string> tables;
+    for (const auto& object : expectedObjects) {
+        if (object.type == "table") {
+            tables.push_back(object.name);
+        }
+    }
+    if (readUserObjects(db, legacy ? std::vector<std::string>{} : tables,
+                        allowKnownTableTriggers && !legacy) != expectedObjects) {
+        throw std::runtime_error{"Save file has an incompatible schema object set"};
+    }
+
+    for (const auto& table : tables) {
+        const std::string quoted = quoteIdentifier(table);
+        auto expectedColumns = readPragmaRows(reference, "PRAGMA table_xinfo(" + quoted + ");", 7);
+        auto expectedIndexes = readIndexShapes(reference, table);
+        if (legacy) {
+            expectedColumns = legacyColumnShape(table, std::move(expectedColumns));
+            expectedIndexes = legacyIndexShapes(table, std::move(expectedIndexes), expectedColumns);
+        }
+        if (readPragmaRows(db, "PRAGMA table_xinfo(" + quoted + ");", 7) != expectedColumns
+            || readPragmaRows(db, "PRAGMA foreign_key_list(" + quoted + ");", 8)
+            != readPragmaRows(reference, "PRAGMA foreign_key_list(" + quoted + ");", 8)
+            || readIndexShapes(db, table) != expectedIndexes) {
+            throw std::runtime_error{"Save file has an incompatible table structure: " + table};
+        }
     }
 }
+
+} // namespace
+
+void requireV11Structure(Database& db, const bool allowKnownTableTriggers) {
+    requireStructure(db, false, allowKnownTableTriggers);
+}
+
+void requireV10Structure(Database& db) { requireStructure(db, true, false); }
 
 } // namespace deep::save

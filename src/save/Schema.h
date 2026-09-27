@@ -1,8 +1,8 @@
 #pragma once
 
-// Responsibility: declare the on-disk schema identity and its SQL structure.
-// Row mapping belongs to SaveGameRepository, and graph semantics belong to
-// sim/GameStateValidation. No migration path is implemented here.
+// Responsibility: declare the current on-disk schema and inspect the structure
+// of an existing destination. Row mapping belongs to SaveGameRepository, and
+// graph semantics belong to sim/GameStateValidation. No migration is performed.
 
 #include "save/Database.h"
 
@@ -10,20 +10,30 @@
 
 namespace deep::save {
 
-// The only on-disk version accepted by load. A persisted contract change requires
-// a version decision and explicit compatibility handling; incrementing this
-// constant alone does not migrate older saves.
-inline constexpr std::int64_t kSchemaVersion = 10;
+inline constexpr std::int64_t kLegacySchemaVersion = 10;
+inline constexpr std::int64_t kSchemaVersion = 11;
 
-// Creates missing schema v10 tables/indexes and seeds an empty version table.
-// Does not validate or upgrade existing tables or their version. This function
-// does not start a transaction; the caller owns the atomicity boundary and must
-// account for schema changes that precede a later failure.
-void initializeSchema(Database& db);
+// Creates the v11 table/index structure in a schema-empty database. Does not
+// seed schema_version, begin a transaction, repair a table, or migrate v10.
+// The repository owns the write transaction and version-row insertion.
+void createSchemaV11(Database& db);
 
-// Requires exactly one canonical version value equal to kSchemaVersion. The
-// caller supplies the read transaction. Throws for missing, ambiguous, malformed,
-// or unsupported metadata; matching metadata is not a full schema validation.
-void requireSupportedSchema(Database& db);
+// True only when no user schema objects exist. SQLite internal objects are
+// ignored; unrelated tables/views/indexes make a destination nonempty.
+[[nodiscard]] bool hasUserSchema(Database& db);
+
+// Requires exactly one canonical schema_version value and returns it for
+// version-specific repository dispatch. The caller supplies the transaction.
+[[nodiscard]] std::int64_t readSchemaVersion(Database& db);
+
+// Compare table columns, foreign keys, index/key shapes, and user object names
+// against the v11 schema. Read-only Load may tolerate known-table triggers;
+// Save rejects all user triggers because their write effects are not trusted.
+// Does not repair or modify the destination.
+void requireV11Structure(Database& db, bool allowKnownTableTriggers = false);
+
+// Read-only compatibility check for the legacy v10 table/column/key shape.
+// Rejects a v11 structure merely relabeled as 10; no migration or repair.
+void requireV10Structure(Database& db);
 
 } // namespace deep::save

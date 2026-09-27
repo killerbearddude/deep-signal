@@ -7,6 +7,7 @@
 
 #include <stdexcept>
 #include <string>
+#include <limits>
 
 namespace deep::save {
 namespace {
@@ -30,9 +31,10 @@ void requireOk(sqlite3* db, const int rc, const std::string_view operation) {
 
 } // namespace
 
-Database::Database(const std::filesystem::path& path) {
+Database::Database(const std::filesystem::path& path, const OpenMode mode) {
     const std::string utf8Path = path.string();
-    const int rc = sqlite3_open(utf8Path.c_str(), &db_);
+    const int flags = mode == OpenMode::ReadOnly ? SQLITE_OPEN_READONLY : SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE;
+    const int rc = sqlite3_open_v2(utf8Path.c_str(), &db_, flags, nullptr);
     if (rc != SQLITE_OK) {
         sqlite3* failedDb = db_;
         db_ = nullptr;
@@ -46,7 +48,15 @@ Database::Database(const std::filesystem::path& path) {
 
     // Foreign keys are connection-local in SQLite, so enable them immediately for
     // every repository operation rather than relying on database file metadata.
-    execute("PRAGMA foreign_keys = ON;");
+    try {
+        execute("PRAGMA foreign_keys = ON;");
+    } catch (...) {
+        // A constructor that throws does not run ~Database. Release the handle
+        // explicitly if connection-local setup fails.
+        (void)sqlite3_close(db_);
+        db_ = nullptr;
+        throw;
+    }
 }
 
 Database::~Database() noexcept {
@@ -103,6 +113,9 @@ void Statement::bindDouble(const int index, const double value) {
 }
 
 void Statement::bindText(const int index, const std::string_view value) {
+    if (value.size() > static_cast<std::size_t>(std::numeric_limits<int>::max())) {
+        throw std::runtime_error{"SQLite text value exceeds bind length range"};
+    }
     requireOk(db_.handle(), sqlite3_bind_text(stmt_, index, value.data(), static_cast<int>(value.size()), SQLITE_TRANSIENT),
               "Failed to bind text");
 }
@@ -136,6 +149,13 @@ void Statement::clearBindings() {
 
 std::int64_t Statement::columnInt64(const int column) const {
     return static_cast<std::int64_t>(sqlite3_column_int64(stmt_, column));
+}
+
+std::int64_t Statement::columnInt64Strict(const int column) const {
+    if (sqlite3_column_type(stmt_, column) != SQLITE_INTEGER) {
+        throw std::runtime_error{"Save file contains a non-integer ordinal"};
+    }
+    return columnInt64(column);
 }
 
 double Statement::columnDouble(const int column) const {

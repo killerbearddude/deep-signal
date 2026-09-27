@@ -1,10 +1,11 @@
 #include "save/SaveGameRepository.h"
 
-// Responsibility: map durable simulation records to/from schema v10 rows.
+// Responsibility: map durable simulation records to v11 rows and reconstruct
+// v10 or v11 snapshots without altering a loaded file.
 // Each operation owns its connection and reconstructed data; the input snapshot
 // is borrowed unchanged during save. Parameter binding separates values from SQL.
-// Row replacement and reads are transactional, while initial schema setup occurs
-// before save's transaction. Gameplay rules and graph invariants remain in sim/.
+// Destination recognition, schema creation, row replacement, and reads use
+// scoped transactions. Gameplay rules and graph invariants remain in sim/.
 
 #include "save/Database.h"
 #include "save/EventJson.h"
@@ -15,6 +16,7 @@
 #include <algorithm>
 #include <charconv>
 #include <cmath>
+#include <cstddef>
 #include <filesystem>
 #include <iomanip>
 #include <limits>
@@ -25,11 +27,16 @@
 #include <string_view>
 #include <system_error>
 #include <type_traits>
+#include <unordered_map>
 #include <utility>
 #include <variant>
 
 namespace deep::save {
 namespace {
+
+#ifdef DEEP_SIGNAL_TESTING
+bool failAfterFirstInsertForTest = false;
+#endif
 
 // Converts strongly typed IDs to their persisted integer representation.
 template <typename IdT>
@@ -44,7 +51,7 @@ template <typename EnumT>
     return static_cast<std::int64_t>(value);
 }
 
-// Returns true when a persisted enum ordinal is part of the current schema v10
+// Returns true when a persisted enum ordinal is part of the supported schema
 // contract. Keep this explicit instead of raw-casting database values; SQLite
 // files are inspectable and may be hand-edited or corrupted.
 template <typename EnumT>
@@ -100,6 +107,22 @@ template <typename EnumT>
         throw std::runtime_error{std::string{"Save integer is out of range for field: "} + std::string{fieldName}};
     }
     return static_cast<int>(value);
+}
+
+[[nodiscard]] std::int64_t checkedOrdinal(const std::size_t index, const std::string_view scope) {
+    if (index > static_cast<std::size_t>(std::numeric_limits<std::int64_t>::max())) {
+        throw std::runtime_error{std::string{"Save ordinal exceeds SQLite integer range: "} + std::string{scope}};
+    }
+    return static_cast<std::int64_t>(index);
+}
+
+void requireNextOrdinal(const Statement& stmt, const int column, std::int64_t& expected,
+                        const std::string_view scope) {
+    const std::int64_t ordinal = stmt.columnInt64Strict(column);
+    if (ordinal != expected || expected == std::numeric_limits<std::int64_t>::max()) {
+        throw std::runtime_error{std::string{"Save contains a noncontiguous ordinal in "} + std::string{scope}};
+    }
+    ++expected;
 }
 
 // Parses persisted integer text strictly. SQLite CAST would silently convert
@@ -158,9 +181,8 @@ void reuse(Statement& stmt) {
 }
 
 void clearExistingSave(Database& db) {
-    // Delete child tables first because schema v10 intentionally uses explicit
-    // foreign keys rather than ON DELETE CASCADE. This makes destructive save
-    // behavior visible and easy to audit.
+    // Delete child tables first because v11 retains explicit foreign keys
+    // without ON DELETE CASCADE. This all runs inside the write transaction.
     db.execute(R"sql(
         DELETE FROM event_log;
         DELETE FROM appointments;
@@ -224,21 +246,25 @@ void saveIdCounters(Database& db, const IdCounters& ids) {
 }
 
 void saveStarSystems(Database& db, const GameState& state) {
-    Statement stmt{db, "INSERT INTO star_systems(id, name) VALUES (?, ?);"};
-    for (const StarSystem& system : state.starSystems) {
+    Statement stmt{db, "INSERT INTO star_systems(id, name, ordinal) VALUES (?, ?, ?);"};
+    for (std::size_t ordinal = 0; ordinal < state.starSystems.size(); ++ordinal) {
+        const StarSystem& system = state.starSystems.at(ordinal);
         stmt.bindInt64(1, idValue(system.id));
         stmt.bindText(2, system.name);
+        stmt.bindInt64(3, checkedOrdinal(ordinal, "star_systems"));
         stmt.execute();
         reuse(stmt);
     }
 }
 
 void saveInstitutions(Database& db, const GameState& state) {
-    Statement stmt{db, "INSERT INTO institutions(id, name, institution_type) VALUES (?, ?, ?);"};
-    for (const Institution& institution : state.institutions) {
+    Statement stmt{db, "INSERT INTO institutions(id, name, institution_type, ordinal) VALUES (?, ?, ?, ?);"};
+    for (std::size_t ordinal = 0; ordinal < state.institutions.size(); ++ordinal) {
+        const Institution& institution = state.institutions.at(ordinal);
         stmt.bindInt64(1, idValue(institution.id));
         stmt.bindText(2, institution.name);
         stmt.bindInt64(3, enumValue(institution.type));
+        stmt.bindInt64(4, checkedOrdinal(ordinal, "institutions"));
         stmt.execute();
         reuse(stmt);
     }
@@ -250,11 +276,12 @@ void savePeople(Database& db, const GameState& state) {
             id, name, institution_id, logistics, industry, survey, command,
             administration, engineering, intelligence, crisis_management,
             seniority_level, successful_assignments, failed_assignments,
-            commendations, controversies
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+            commendations, controversies, ordinal
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
     )sql"};
 
-    for (const Person& person : state.people) {
+    for (std::size_t ordinal = 0; ordinal < state.people.size(); ++ordinal) {
+        const Person& person = state.people.at(ordinal);
         stmt.bindInt64(1, idValue(person.id));
         stmt.bindText(2, person.name);
         stmt.bindInt64(3, idValue(person.institutionId));
@@ -271,6 +298,7 @@ void savePeople(Database& db, const GameState& state) {
         stmt.bindInt64(14, person.serviceRecord.failedAssignments);
         stmt.bindInt64(15, person.serviceRecord.commendations);
         stmt.bindInt64(16, person.serviceRecord.controversies);
+        stmt.bindInt64(17, checkedOrdinal(ordinal, "people"));
         stmt.execute();
         reuse(stmt);
     }
@@ -284,7 +312,7 @@ void saveAppointments(Database& db, const GameState& state) {
 
     for (std::size_t ordinal = 0; ordinal < state.appointments.size(); ++ordinal) {
         const Appointment& appointment = state.appointments.at(ordinal);
-        stmt.bindInt64(1, static_cast<std::int64_t>(ordinal));
+        stmt.bindInt64(1, checkedOrdinal(ordinal, "appointments"));
         stmt.bindInt64(2, enumValue(appointment.role));
         stmt.bindInt64(3, enumValue(appointment.scopeType));
         stmt.bindInt64(4, appointment.scopeId);
@@ -299,10 +327,11 @@ void saveBodies(Database& db, const GameState& state) {
     Statement stmt{db, R"sql(
         INSERT INTO bodies(
             id, system_id, name, body_type, strategic_zone, parent_body_id,
-            orbital_radius_km, orbital_period_days, phase_radians, display_radius, x, y
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+            orbital_radius_km, orbital_period_days, phase_radians, display_radius, x, y, ordinal
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
     )sql"};
-    for (const Body& body : state.bodies) {
+    for (std::size_t ordinal = 0; ordinal < state.bodies.size(); ++ordinal) {
+        const Body& body = state.bodies.at(ordinal);
         stmt.bindInt64(1, idValue(body.id));
         stmt.bindInt64(2, idValue(body.systemId));
         stmt.bindText(3, body.name);
@@ -315,6 +344,7 @@ void saveBodies(Database& db, const GameState& state) {
         stmt.bindDouble(10, body.displayRadius);
         stmt.bindDouble(11, body.x);
         stmt.bindDouble(12, body.y);
+        stmt.bindInt64(13, checkedOrdinal(ordinal, "bodies"));
         stmt.execute();
         reuse(stmt);
     }
@@ -324,8 +354,8 @@ void saveColonies(Database& db, const GameState& state) {
     Statement colonyStmt{db, R"sql(
         INSERT INTO colonies(
             id, body_id, name, owner_institution_id, mines, processor_capacity,
-            shipyard_capacity, processing_policy
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?);
+            shipyard_capacity, processing_policy, ordinal
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
     )sql"};
     Statement mineralStmt{db, "INSERT INTO colony_minerals(colony_id, mineral, amount) VALUES (?, ?, ?);"};
     Statement materialStmt{db, "INSERT INTO colony_materials(colony_id, material, amount) VALUES (?, ?, ?);"};
@@ -334,7 +364,8 @@ void saveColonies(Database& db, const GameState& state) {
         VALUES (?, ?, ?, ?);
     )sql"};
 
-    for (const Colony& colony : state.colonies) {
+    for (std::size_t ordinal = 0; ordinal < state.colonies.size(); ++ordinal) {
+        const Colony& colony = state.colonies.at(ordinal);
         colonyStmt.bindInt64(1, idValue(colony.id));
         colonyStmt.bindInt64(2, idValue(colony.bodyId));
         colonyStmt.bindText(3, colony.name);
@@ -343,6 +374,7 @@ void saveColonies(Database& db, const GameState& state) {
         colonyStmt.bindDouble(6, colony.processorCapacity);
         colonyStmt.bindDouble(7, colony.shipyardCapacity);
         colonyStmt.bindInt64(8, enumValue(colony.processingPolicy));
+        colonyStmt.bindInt64(9, checkedOrdinal(ordinal, "colonies"));
         colonyStmt.execute();
         reuse(colonyStmt);
 
@@ -365,7 +397,7 @@ void saveColonies(Database& db, const GameState& state) {
         for (std::size_t ordinal = 0; ordinal < colony.manualProcessingAllocations.size(); ++ordinal) {
             const ProcessingAllocation& allocation = colony.manualProcessingAllocations.at(ordinal);
             allocationStmt.bindInt64(1, idValue(colony.id));
-            allocationStmt.bindInt64(2, static_cast<std::int64_t>(ordinal));
+            allocationStmt.bindInt64(2, checkedOrdinal(ordinal, "colony_processing_allocations"));
             allocationStmt.bindInt64(3, enumValue(allocation.material));
             allocationStmt.bindDouble(4, allocation.weight);
             allocationStmt.execute();
@@ -375,13 +407,15 @@ void saveColonies(Database& db, const GameState& state) {
 }
 
 void saveMineralDeposits(Database& db, const GameState& state) {
-    Statement stmt{db, "INSERT INTO mineral_deposits(body_id, mineral, remaining, accessibility, confidence) VALUES (?, ?, ?, ?, ?);"};
-    for (const MineralDeposit& deposit : state.mineralDeposits) {
+    Statement stmt{db, "INSERT INTO mineral_deposits(body_id, mineral, remaining, accessibility, confidence, ordinal) VALUES (?, ?, ?, ?, ?, ?);"};
+    for (std::size_t ordinal = 0; ordinal < state.mineralDeposits.size(); ++ordinal) {
+        const MineralDeposit& deposit = state.mineralDeposits.at(ordinal);
         stmt.bindInt64(1, idValue(deposit.bodyId));
         stmt.bindInt64(2, enumValue(deposit.mineral));
         stmt.bindDouble(3, deposit.remaining);
         stmt.bindDouble(4, deposit.accessibility);
         stmt.bindDouble(5, deposit.confidence);
+        stmt.bindInt64(6, checkedOrdinal(ordinal, "mineral_deposits"));
         stmt.execute();
         reuse(stmt);
     }
@@ -389,18 +423,20 @@ void saveMineralDeposits(Database& db, const GameState& state) {
 
 void saveShipClasses(Database& db, const GameState& state) {
     Statement classStmt{db, R"sql(
-        INSERT INTO ship_classes(id, name, role, build_points, speed_km_per_day, fuel_capacity)
-        VALUES (?, ?, ?, ?, ?, ?);
+        INSERT INTO ship_classes(id, name, role, build_points, speed_km_per_day, fuel_capacity, ordinal)
+        VALUES (?, ?, ?, ?, ?, ?, ?);
     )sql"};
     Statement costStmt{db, "INSERT INTO ship_class_material_costs(ship_class_id, material, amount) VALUES (?, ?, ?);"};
 
-    for (const ShipClass& shipClass : state.shipClasses) {
+    for (std::size_t ordinal = 0; ordinal < state.shipClasses.size(); ++ordinal) {
+        const ShipClass& shipClass = state.shipClasses.at(ordinal);
         classStmt.bindInt64(1, idValue(shipClass.id));
         classStmt.bindText(2, shipClass.name);
         classStmt.bindInt64(3, enumValue(shipClass.role));
         classStmt.bindDouble(4, shipClass.buildPoints);
         classStmt.bindDouble(5, shipClass.speedKmPerDay);
         classStmt.bindDouble(6, shipClass.fuelCapacity);
+        classStmt.bindInt64(7, checkedOrdinal(ordinal, "ship_classes"));
         classStmt.execute();
         reuse(classStmt);
 
@@ -418,11 +454,12 @@ void saveShipyardOrders(Database& db, const GameState& state) {
     Statement stmt{db, R"sql(
         INSERT INTO shipyard_orders(
             id, colony_id, ship_class_id, quantity_requested, quantity_completed,
-            accumulated_build_points, status
-        ) VALUES (?, ?, ?, ?, ?, ?, ?);
+            accumulated_build_points, status, ordinal
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?);
     )sql"};
 
-    for (const ShipyardOrder& order : state.shipyardOrders) {
+    for (std::size_t ordinal = 0; ordinal < state.shipyardOrders.size(); ++ordinal) {
+        const ShipyardOrder& order = state.shipyardOrders.at(ordinal);
         stmt.bindInt64(1, idValue(order.id));
         stmt.bindInt64(2, idValue(order.colonyId));
         stmt.bindInt64(3, idValue(order.shipClassId));
@@ -430,6 +467,7 @@ void saveShipyardOrders(Database& db, const GameState& state) {
         stmt.bindInt64(5, order.quantityCompleted);
         stmt.bindDouble(6, order.accumulatedBuildPoints);
         stmt.bindInt64(7, enumValue(order.status));
+        stmt.bindInt64(8, checkedOrdinal(ordinal, "shipyard_orders"));
         stmt.execute();
         reuse(stmt);
     }
@@ -443,15 +481,17 @@ void saveFleets(Database& db, const GameState& state) {
             order_departure_body_id, order_departure_day, order_arrival_day,
             order_departure_x, order_departure_y, order_projected_arrival_x,
             order_projected_arrival_y, order_transit_distance_km,
-            order_burn_acceleration_g, order_curve_control_x, order_curve_control_y
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+            order_burn_acceleration_g, order_curve_control_x, order_curve_control_y,
+            ordinal
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
     )sql"};
     Statement queueStmt{db, R"sql(
         INSERT INTO fleet_order_queue(fleet_id, ordinal, order_type, target_body_id)
         VALUES (?, ?, ?, ?);
     )sql"};
 
-    for (const Fleet& fleet : state.fleets) {
+    for (std::size_t ordinal = 0; ordinal < state.fleets.size(); ++ordinal) {
+        const Fleet& fleet = state.fleets.at(ordinal);
         fleetStmt.bindInt64(1, idValue(fleet.id));
         fleetStmt.bindText(2, fleet.name);
         bindOptionalId(fleetStmt, 3, fleet.ownerInstitutionId);
@@ -471,6 +511,7 @@ void saveFleets(Database& db, const GameState& state) {
         fleetStmt.bindDouble(17, fleet.activeOrder.burnAccelerationG);
         fleetStmt.bindDouble(18, fleet.activeOrder.routeCurveControlPoint.x);
         fleetStmt.bindDouble(19, fleet.activeOrder.routeCurveControlPoint.y);
+        fleetStmt.bindInt64(20, checkedOrdinal(ordinal, "fleets"));
         fleetStmt.execute();
         reuse(fleetStmt);
 
@@ -481,7 +522,7 @@ void saveFleets(Database& db, const GameState& state) {
             }
 
             queueStmt.bindInt64(1, idValue(fleet.id));
-            queueStmt.bindInt64(2, static_cast<std::int64_t>(i));
+            queueStmt.bindInt64(2, checkedOrdinal(i, "fleet_order_queue"));
             queueStmt.bindInt64(3, enumValue(queuedOrder.type));
             queueStmt.bindInt64(4, idValue(*queuedOrder.targetBodyId));
             queueStmt.execute();
@@ -491,15 +532,32 @@ void saveFleets(Database& db, const GameState& state) {
 }
 
 void saveShips(Database& db, const GameState& state) {
-    // Persist current per-ship propellant, not just class fuel capacity, so
-    // loaded fleets keep the operational range they had at save time.
-    Statement stmt{db, "INSERT INTO ships(id, ship_class_id, fleet_id, name, fuel) VALUES (?, ?, ?, ?, ?);"};
-    for (const Ship& ship : state.ships) {
+    // Global Ship order and each Fleet's payment roster are independent. Derive
+    // both ordinals from the validated snapshot without changing either vector.
+    std::unordered_map<std::int64_t, std::int64_t> fleetOrdinals;
+    for (const Fleet& fleet : state.fleets) {
+        for (std::size_t ordinal = 0; ordinal < fleet.shipIds.size(); ++ordinal) {
+            if (!fleetOrdinals.emplace(idValue(fleet.shipIds.at(ordinal)),
+                    checkedOrdinal(ordinal, "fleet.shipIds")).second) {
+                throw std::runtime_error{"Ship occurs in more than one fleet roster"};
+            }
+        }
+    }
+    Statement stmt{db, R"sql(
+        INSERT INTO ships(id, ship_class_id, fleet_id, name, fuel, ordinal, fleet_ordinal)
+        VALUES (?, ?, ?, ?, ?, ?, ?);
+    )sql"};
+    for (std::size_t ordinal = 0; ordinal < state.ships.size(); ++ordinal) {
+        const Ship& ship = state.ships.at(ordinal);
+        const auto roster = fleetOrdinals.find(idValue(ship.id));
+        if (roster == fleetOrdinals.end()) throw std::runtime_error{"Ship is missing from its fleet roster"};
         stmt.bindInt64(1, idValue(ship.id));
         stmt.bindInt64(2, idValue(ship.shipClassId));
         stmt.bindInt64(3, idValue(ship.fleetId));
         stmt.bindText(4, ship.name);
         stmt.bindDouble(5, ship.fuel);
+        stmt.bindInt64(6, checkedOrdinal(ordinal, "ships"));
+        stmt.bindInt64(7, roster->second);
         stmt.execute();
         reuse(stmt);
     }
@@ -570,9 +628,12 @@ void loadIdCounters(Database& db, IdCounters& ids) {
     ids.nextEventId = loadCounter(db, "next_event_id");
 }
 
-void loadStarSystems(Database& db, GameState& state) {
-    Statement stmt{db, "SELECT id, name FROM star_systems ORDER BY id;"};
+void loadStarSystems(Database& db, GameState& state, const bool v11) {
+    Statement stmt{db, v11 ? "SELECT id, name, ordinal FROM star_systems ORDER BY ordinal;"
+                           : "SELECT id, name FROM star_systems ORDER BY id;"};
+    std::int64_t nextOrdinal = 0;
     while (stmt.step()) {
+        if (v11) requireNextOrdinal(stmt, 2, nextOrdinal, "star_systems");
         state.starSystems.push_back(StarSystem{
             .id = StarSystemId{stmt.columnInt64(0)},
             .name = stmt.columnText(1)
@@ -580,9 +641,13 @@ void loadStarSystems(Database& db, GameState& state) {
     }
 }
 
-void loadInstitutions(Database& db, GameState& state) {
-    Statement stmt{db, "SELECT id, name, institution_type FROM institutions ORDER BY id;"};
+void loadInstitutions(Database& db, GameState& state, const bool v11) {
+    Statement stmt{db, v11
+        ? "SELECT id, name, institution_type, ordinal FROM institutions ORDER BY ordinal;"
+        : "SELECT id, name, institution_type FROM institutions ORDER BY id;"};
+    std::int64_t nextOrdinal = 0;
     while (stmt.step()) {
+        if (v11) requireNextOrdinal(stmt, 3, nextOrdinal, "institutions");
         state.institutions.push_back(Institution{
             .id = InstitutionId{stmt.columnInt64(0)},
             .name = stmt.columnText(1),
@@ -591,8 +656,15 @@ void loadInstitutions(Database& db, GameState& state) {
     }
 }
 
-void loadPeople(Database& db, GameState& state) {
-    Statement stmt{db, R"sql(
+void loadPeople(Database& db, GameState& state, const bool v11) {
+    Statement stmt{db, v11 ? R"sql(
+        SELECT id, name, institution_id, logistics, industry, survey, command,
+               administration, engineering, intelligence, crisis_management,
+               seniority_level, successful_assignments, failed_assignments,
+               commendations, controversies, ordinal
+        FROM people
+        ORDER BY ordinal;
+    )sql" : R"sql(
         SELECT id, name, institution_id, logistics, industry, survey, command,
                administration, engineering, intelligence, crisis_management,
                seniority_level, successful_assignments, failed_assignments,
@@ -601,7 +673,9 @@ void loadPeople(Database& db, GameState& state) {
         ORDER BY id;
     )sql"};
 
+    std::int64_t nextOrdinal = 0;
     while (stmt.step()) {
+        if (v11) requireNextOrdinal(stmt, 16, nextOrdinal, "people");
         state.people.push_back(Person{
             .id = PersonId{stmt.columnInt64(0)},
             .name = stmt.columnText(1),
@@ -627,14 +701,20 @@ void loadPeople(Database& db, GameState& state) {
     }
 }
 
-void loadAppointments(Database& db, GameState& state) {
-    Statement stmt{db, R"sql(
+void loadAppointments(Database& db, GameState& state, const bool v11) {
+    Statement stmt{db, v11 ? R"sql(
+        SELECT role, scope_type, scope_id, person_id, appointed_day, ordinal
+        FROM appointments
+        ORDER BY ordinal;
+    )sql" : R"sql(
         SELECT role, scope_type, scope_id, person_id, appointed_day
         FROM appointments
         ORDER BY ordinal;
     )sql"};
 
+    std::int64_t nextOrdinal = 0;
     while (stmt.step()) {
+        if (v11) requireNextOrdinal(stmt, 5, nextOrdinal, "appointments");
         state.appointments.push_back(Appointment{
             .role = enumFromValue<AppointmentRole>(stmt.columnInt64(0)),
             .scopeType = enumFromValue<AppointmentScopeType>(stmt.columnInt64(1)),
@@ -645,14 +725,21 @@ void loadAppointments(Database& db, GameState& state) {
     }
 }
 
-void loadBodies(Database& db, GameState& state) {
-    Statement stmt{db, R"sql(
+void loadBodies(Database& db, GameState& state, const bool v11) {
+    Statement stmt{db, v11 ? R"sql(
+        SELECT id, system_id, name, body_type, strategic_zone, parent_body_id,
+               orbital_radius_km, orbital_period_days, phase_radians, display_radius, x, y, ordinal
+        FROM bodies
+        ORDER BY ordinal;
+    )sql" : R"sql(
         SELECT id, system_id, name, body_type, strategic_zone, parent_body_id,
                orbital_radius_km, orbital_period_days, phase_radians, display_radius, x, y
         FROM bodies
         ORDER BY id;
     )sql"};
+    std::int64_t nextOrdinal = 0;
     while (stmt.step()) {
+        if (v11) requireNextOrdinal(stmt, 12, nextOrdinal, "bodies");
         state.bodies.push_back(Body{
             .id = BodyId{stmt.columnInt64(0)},
             .systemId = StarSystemId{stmt.columnInt64(1)},
@@ -670,17 +757,24 @@ void loadBodies(Database& db, GameState& state) {
     }
 }
 
-void loadColonies(Database& db, GameState& state) {
+void loadColonies(Database& db, GameState& state, const bool v11) {
     // Resource arrays begin at zero and child rows fill individual entries.
     // Missing entries currently remain zero; this reader does not enforce the
     // dense row set written by saveColonies. Domain validation sees only values.
-    Statement colonies{db, R"sql(
+    Statement colonies{db, v11 ? R"sql(
+        SELECT id, body_id, name, owner_institution_id, mines, processor_capacity,
+               shipyard_capacity, processing_policy, ordinal
+        FROM colonies
+        ORDER BY ordinal;
+    )sql" : R"sql(
         SELECT id, body_id, name, owner_institution_id, mines, processor_capacity,
                shipyard_capacity, processing_policy
         FROM colonies
         ORDER BY id;
     )sql"};
+    std::int64_t nextOrdinal = 0;
     while (colonies.step()) {
+        if (v11) requireNextOrdinal(colonies, 8, nextOrdinal, "colonies");
         state.colonies.push_back(Colony{
             .id = ColonyId{colonies.columnInt64(0)},
             .bodyId = BodyId{colonies.columnInt64(1)},
@@ -696,6 +790,7 @@ void loadColonies(Database& db, GameState& state) {
         });
     }
 
+    std::unordered_map<std::int64_t, std::size_t> mineralRows;
     Statement minerals{db, "SELECT colony_id, mineral, amount FROM colony_minerals ORDER BY colony_id, mineral;"};
     while (minerals.step()) {
         const ColonyId colonyId{minerals.columnInt64(0)};
@@ -704,8 +799,10 @@ void loadColonies(Database& db, GameState& state) {
             throw std::runtime_error{"colony_minerals references a missing colony"};
         }
         colony->stockpile.set(enumFromValue<Mineral>(minerals.columnInt64(1)), minerals.columnDouble(2));
+        ++mineralRows[colonyId.value];
     }
 
+    std::unordered_map<std::int64_t, std::size_t> materialRows;
     Statement materials{db, "SELECT colony_id, material, amount FROM colony_materials ORDER BY colony_id, material;"};
     while (materials.step()) {
         const ColonyId colonyId{materials.columnInt64(0)};
@@ -714,15 +811,37 @@ void loadColonies(Database& db, GameState& state) {
             throw std::runtime_error{"colony_materials references a missing colony"};
         }
         colony->processedStockpile.set(enumFromValue<ProcessedMaterial>(materials.columnInt64(1)), materials.columnDouble(2));
+        ++materialRows[colonyId.value];
+    }
+    if (v11) {
+        for (const Colony& colony : state.colonies) {
+            if (mineralRows[colony.id.value] != mineralCount() ||
+                materialRows[colony.id.value] != processedMaterialCount()) {
+                throw std::runtime_error{"v11 colony resource rows must be complete"};
+            }
+        }
     }
 
-    Statement allocations{db, R"sql(
+    Statement allocations{db, v11 ? R"sql(
+        SELECT colony_id, material, weight, ordinal
+        FROM colony_processing_allocations
+        ORDER BY colony_id, ordinal;
+    )sql" : R"sql(
         SELECT colony_id, material, weight
         FROM colony_processing_allocations
         ORDER BY colony_id, ordinal;
     )sql"};
+    std::int64_t allocationParent = 0;
+    std::int64_t nextAllocationOrdinal = 0;
     while (allocations.step()) {
         const ColonyId colonyId{allocations.columnInt64(0)};
+        if (v11) {
+            if (colonyId.value != allocationParent) {
+                allocationParent = colonyId.value;
+                nextAllocationOrdinal = 0;
+            }
+            requireNextOrdinal(allocations, 3, nextAllocationOrdinal, "colony_processing_allocations");
+        }
         Colony* colony = findById(state.colonies, colonyId);
         if (colony == nullptr) {
             throw std::runtime_error{"colony_processing_allocations references a missing colony"};
@@ -734,9 +853,13 @@ void loadColonies(Database& db, GameState& state) {
     }
 }
 
-void loadMineralDeposits(Database& db, GameState& state) {
-    Statement stmt{db, "SELECT body_id, mineral, remaining, accessibility, confidence FROM mineral_deposits ORDER BY body_id, mineral;"};
+void loadMineralDeposits(Database& db, GameState& state, const bool v11) {
+    Statement stmt{db, v11
+        ? "SELECT body_id, mineral, remaining, accessibility, confidence, ordinal FROM mineral_deposits ORDER BY ordinal;"
+        : "SELECT body_id, mineral, remaining, accessibility, confidence FROM mineral_deposits ORDER BY body_id, mineral;"};
+    std::int64_t nextOrdinal = 0;
     while (stmt.step()) {
+        if (v11) requireNextOrdinal(stmt, 5, nextOrdinal, "mineral_deposits");
         state.mineralDeposits.push_back(MineralDeposit{
             .bodyId = BodyId{stmt.columnInt64(0)},
             .mineral = enumFromValue<Mineral>(stmt.columnInt64(1)),
@@ -747,15 +870,21 @@ void loadMineralDeposits(Database& db, GameState& state) {
     }
 }
 
-void loadShipClasses(Database& db, GameState& state) {
+void loadShipClasses(Database& db, GameState& state, const bool v11) {
     // As with colony resources, absent cost rows remain zero. Reconstruction
     // does not distinguish an omitted component from a persisted zero cost.
-    Statement classes{db, R"sql(
+    Statement classes{db, v11 ? R"sql(
+        SELECT id, name, role, build_points, speed_km_per_day, fuel_capacity, ordinal
+        FROM ship_classes
+        ORDER BY ordinal;
+    )sql" : R"sql(
         SELECT id, name, role, build_points, speed_km_per_day, fuel_capacity
         FROM ship_classes
         ORDER BY id;
     )sql"};
+    std::int64_t nextOrdinal = 0;
     while (classes.step()) {
+        if (v11) requireNextOrdinal(classes, 6, nextOrdinal, "ship_classes");
         state.shipClasses.push_back(ShipClass{
             .id = ShipClassId{classes.columnInt64(0)},
             .name = classes.columnText(1),
@@ -767,6 +896,7 @@ void loadShipClasses(Database& db, GameState& state) {
         });
     }
 
+    std::unordered_map<std::int64_t, std::size_t> costRows;
     Statement costs{db, "SELECT ship_class_id, material, amount FROM ship_class_material_costs ORDER BY ship_class_id, material;"};
     while (costs.step()) {
         const ShipClassId shipClassId{costs.columnInt64(0)};
@@ -775,17 +905,32 @@ void loadShipClasses(Database& db, GameState& state) {
             throw std::runtime_error{"ship_class_material_costs references a missing ship class"};
         }
         shipClass->buildCost.set(enumFromValue<ProcessedMaterial>(costs.columnInt64(1)), costs.columnDouble(2));
+        ++costRows[shipClassId.value];
+    }
+    if (v11) {
+        for (const ShipClass& shipClass : state.shipClasses) {
+            if (costRows[shipClass.id.value] != processedMaterialCount()) {
+                throw std::runtime_error{"v11 ship-class cost rows must be complete"};
+            }
+        }
     }
 }
 
-void loadShipyardOrders(Database& db, GameState& state) {
-    Statement stmt{db, R"sql(
+void loadShipyardOrders(Database& db, GameState& state, const bool v11) {
+    Statement stmt{db, v11 ? R"sql(
+        SELECT id, colony_id, ship_class_id, quantity_requested, quantity_completed,
+               accumulated_build_points, status, ordinal
+        FROM shipyard_orders
+        ORDER BY ordinal;
+    )sql" : R"sql(
         SELECT id, colony_id, ship_class_id, quantity_requested, quantity_completed,
                accumulated_build_points, status
         FROM shipyard_orders
         ORDER BY id;
     )sql"};
+    std::int64_t nextOrdinal = 0;
     while (stmt.step()) {
+        if (v11) requireNextOrdinal(stmt, 7, nextOrdinal, "shipyard_orders");
         state.shipyardOrders.push_back(ShipyardOrder{
             .id = ShipyardOrderId{stmt.columnInt64(0)},
             .colonyId = ColonyId{stmt.columnInt64(1)},
@@ -798,8 +943,18 @@ void loadShipyardOrders(Database& db, GameState& state) {
     }
 }
 
-void loadFleets(Database& db, GameState& state) {
-    Statement stmt{db, R"sql(
+void loadFleets(Database& db, GameState& state, const bool v11) {
+    Statement stmt{db, v11 ? R"sql(
+        SELECT id, name, owner_institution_id, current_body_id, destination_body_id,
+               order_type, order_target_body_id, order_days_remaining,
+               order_departure_body_id, order_departure_day, order_arrival_day,
+               order_departure_x, order_departure_y, order_projected_arrival_x,
+               order_projected_arrival_y, order_transit_distance_km,
+               order_burn_acceleration_g, order_curve_control_x, order_curve_control_y,
+               ordinal
+        FROM fleets
+        ORDER BY ordinal;
+    )sql" : R"sql(
         SELECT id, name, owner_institution_id, current_body_id, destination_body_id,
                order_type, order_target_body_id, order_days_remaining,
                order_departure_body_id, order_departure_day, order_arrival_day,
@@ -809,7 +964,9 @@ void loadFleets(Database& db, GameState& state) {
         FROM fleets
         ORDER BY id;
     )sql"};
+    std::int64_t nextOrdinal = 0;
     while (stmt.step()) {
+        if (v11) requireNextOrdinal(stmt, 19, nextOrdinal, "fleets");
         state.fleets.push_back(Fleet{
             .id = FleetId{stmt.columnInt64(0)},
             .name = stmt.columnText(1),
@@ -834,13 +991,26 @@ void loadFleets(Database& db, GameState& state) {
         });
     }
 
-    Statement queue{db, R"sql(
+    Statement queue{db, v11 ? R"sql(
+        SELECT fleet_id, order_type, target_body_id, ordinal
+        FROM fleet_order_queue
+        ORDER BY fleet_id, ordinal;
+    )sql" : R"sql(
         SELECT fleet_id, order_type, target_body_id
         FROM fleet_order_queue
         ORDER BY fleet_id, ordinal;
     )sql"};
+    std::int64_t queueParent = 0;
+    std::int64_t nextQueueOrdinal = 0;
     while (queue.step()) {
         const FleetId fleetId{queue.columnInt64(0)};
+        if (v11) {
+            if (fleetId.value != queueParent) {
+                queueParent = fleetId.value;
+                nextQueueOrdinal = 0;
+            }
+            requireNextOrdinal(queue, 3, nextQueueOrdinal, "fleet_order_queue");
+        }
         Fleet* fleet = findById(state.fleets, fleetId);
         if (fleet == nullptr) {
             throw std::runtime_error{"fleet_order_queue references a missing fleet"};
@@ -852,9 +1022,13 @@ void loadFleets(Database& db, GameState& state) {
     }
 }
 
-void loadShips(Database& db, GameState& state) {
-    Statement stmt{db, "SELECT id, ship_class_id, fleet_id, name, fuel FROM ships ORDER BY id;"};
+void loadShips(Database& db, GameState& state, const bool v11) {
+    Statement stmt{db, v11
+        ? "SELECT id, ship_class_id, fleet_id, name, fuel, ordinal FROM ships ORDER BY ordinal;"
+        : "SELECT id, ship_class_id, fleet_id, name, fuel FROM ships ORDER BY id;"};
+    std::int64_t nextOrdinal = 0;
     while (stmt.step()) {
+        if (v11) requireNextOrdinal(stmt, 5, nextOrdinal, "ships");
         Ship ship{
             .id = ShipId{stmt.columnInt64(0)},
             .shipClassId = ShipClassId{stmt.columnInt64(1)},
@@ -867,8 +1041,30 @@ void loadShips(Database& db, GameState& state) {
         if (fleet == nullptr) {
             throw std::runtime_error{"ships references a missing fleet"};
         }
-        fleet->shipIds.push_back(ship.id);
+        if (!v11) fleet->shipIds.push_back(ship.id);
         state.ships.push_back(std::move(ship));
+    }
+    if (v11) {
+        // Ship order in GameState is independent from fleet roster order used
+        // for fuel payment. Reconstruct the latter from a second explicit sort.
+        Statement roster{db, R"sql(
+            SELECT fleet_id, id, fleet_ordinal
+            FROM ships
+            ORDER BY fleet_id, fleet_ordinal;
+        )sql"};
+        std::int64_t rosterParent = 0;
+        std::int64_t nextRosterOrdinal = 0;
+        while (roster.step()) {
+            const FleetId fleetId{roster.columnInt64(0)};
+            if (fleetId.value != rosterParent) {
+                rosterParent = fleetId.value;
+                nextRosterOrdinal = 0;
+            }
+            requireNextOrdinal(roster, 2, nextRosterOrdinal, "ships.fleet_ordinal");
+            Fleet* fleet = findById(state.fleets, fleetId);
+            if (fleet == nullptr) throw std::runtime_error{"ships references a missing fleet"};
+            fleet->shipIds.push_back(ShipId{roster.columnInt64(1)});
+        }
     }
 }
 
@@ -886,22 +1082,66 @@ void loadEvents(Database& db, GameState& state) {
     }
 }
 
+[[nodiscard]] GameState readSnapshot(Database& db, const bool v11) {
+    requireNoForeignKeyViolations(db);
+    GameState state;
+    state.date.day = loadMetaInt64(db, "current_day");
+    loadIdCounters(db, state.ids);
+    loadStarSystems(db, state, v11);
+    loadInstitutions(db, state, v11);
+    loadPeople(db, state, v11);
+    loadBodies(db, state, v11);
+    loadColonies(db, state, v11);
+    loadMineralDeposits(db, state, v11);
+    loadShipClasses(db, state, v11);
+    loadShipyardOrders(db, state, v11);
+    loadFleets(db, state, v11);
+    loadShips(db, state, v11);
+    loadAppointments(db, state, v11);
+    loadEvents(db, state);
+
+    // Telemetry is session-only. Both readers reconstruct detached durable
+    // state and pass through the same domain validator before publication.
+    validateGameState(state);
+    return state;
+}
+
 } // namespace
+
+#ifdef DEEP_SIGNAL_TESTING
+void setSaveFailureInjectionForTest(const bool enabled) noexcept {
+    failAfterFirstInsertForTest = enabled;
+}
+#endif
 
 void SaveGameRepository::save(const std::filesystem::path& path, const GameState& state) {
     // Save is also a trust boundary for tools/tests that may construct GameState
     // directly; do not persist a graph the simulation would later reject.
     validateGameState(state);
 
-    Database db{path};
-    // Schema initialization can create objects before the replacement transaction
-    // begins. It neither validates an existing version nor migrates old tables;
-    // rollback below protects row replacement, not this earlier setup.
-    initializeSchema(db);
-
+    Database db{path, Database::OpenMode::ReadWriteCreate};
     Transaction transaction{db, Transaction::Mode::Write};
+    if (hasUserSchema(db)) {
+        const std::int64_t version = readSchemaVersion(db);
+        if (version == kLegacySchemaVersion) {
+            throw std::runtime_error{"Cannot overwrite a v10 save; choose a new path for v11"};
+        }
+        if (version != kSchemaVersion) throw std::runtime_error{"Unsupported save schema version"};
+        requireV11Structure(db);
+        (void)readSnapshot(db, true);
+    } else {
+        // DDL and rows share this transaction. A failed new-path save may
+        // leave an empty file, but not a partially initialized schema.
+        createSchemaV11(db);
+    }
     clearExistingSave(db);
     saveSchemaVersion(db);
+#ifdef DEEP_SIGNAL_TESTING
+    if (failAfterFirstInsertForTest) {
+        failAfterFirstInsertForTest = false;
+        throw std::runtime_error{"Injected Save failure after deletion and first insertion"};
+    }
+#endif
     saveMeta(db, state);
     saveIdCounters(db, state.ids);
     saveStarSystems(db, state);
@@ -916,6 +1156,10 @@ void SaveGameRepository::save(const std::filesystem::path& path, const GameState
     saveFleets(db, state);
     saveShips(db, state);
     saveEvents(db, state);
+    // Re-read on this connection before commit. This catches incomplete rows,
+    // ordinal gaps, and foreign-key problems while rollback can still restore
+    // the previous logical snapshot. Save rejects user triggers in preflight.
+    (void)readSnapshot(db, true);
     // dailyEconomySnapshots is runtime-only telemetry for the active session.
     // The schema deliberately omits it, so saves contain durable state and audit
     // events only; graphs can regenerate new samples after loading and advancing.
@@ -927,35 +1171,14 @@ GameState SaveGameRepository::load(const std::filesystem::path& path) {
         throw std::runtime_error{"Save file does not exist"};
     }
 
-    Database db{path};
+    Database db{path, Database::OpenMode::ReadOnly};
 
     Transaction transaction{db, Transaction::Mode::Read};
-    requireSupportedSchema(db);
-    requireNoForeignKeyViolations(db);
-
-    GameState state;
-    state.date.day = loadMetaInt64(db, "current_day");
-    loadIdCounters(db, state.ids);
-    loadStarSystems(db, state);
-    loadInstitutions(db, state);
-    loadPeople(db, state);
-    loadBodies(db, state);
-    loadColonies(db, state);
-    loadMineralDeposits(db, state);
-    loadShipClasses(db, state);
-    loadShipyardOrders(db, state);
-    loadFleets(db, state);
-    loadShips(db, state);
-    loadAppointments(db, state);
-    loadEvents(db, state);
-
-    // There is intentionally no load step for dailyEconomySnapshots. Economy
-    // telemetry is transient runtime data in schema v10 and remains empty until
-    // the loaded simulation advances new days.
-
-    // SQLite constraints are first-line protection only. The authoritative pass
-    // validates cross-table semantics such as stale counters and fleet orders.
-    validateGameState(state);
+    const std::int64_t version = readSchemaVersion(db);
+    if (version == kSchemaVersion) requireV11Structure(db, true);
+    else if (version == kLegacySchemaVersion) requireV10Structure(db);
+    else throw std::runtime_error{"Unsupported save schema version"};
+    GameState state = readSnapshot(db, version == kSchemaVersion);
 
     transaction.commit();
     return state;
