@@ -19,9 +19,15 @@ namespace deep::save {
 // does not configure busy retries or attempt recovery.
 class Database {
 public:
-    // Opens or creates the database at path. Throws std::runtime_error if opening
-    // or executing the connection setup SQL fails.
-    explicit Database(const std::filesystem::path& path);
+    enum class OpenMode {
+        ReadOnly,
+        ReadWriteCreate
+    };
+
+    // ReadOnly never creates a missing save. ReadWriteCreate is for Save and
+    // preserves the original constructor behavior for existing callers.
+    // Connection-local foreign keys are enabled before any transaction begins.
+    explicit Database(const std::filesystem::path& path, OpenMode mode = OpenMode::ReadWriteCreate);
 
     // Attempts to close the connection without throwing. Outstanding statements
     // can prevent closing, so their shorter lifetime is a caller obligation.
@@ -87,6 +93,11 @@ public:
     // Uses SQLite's integer conversion at a zero-based column. This does not
     // verify the stored type or reject fractional/text input before conversion.
     [[nodiscard]] std::int64_t columnInt64(int column) const;
+
+    // Rejects non-INTEGER SQLite storage before reading a v11 ordering ordinal.
+    // SQLite numeric conversion in columnInt64 would silently truncate REAL or
+    // partially parse TEXT values supplied by a malformed save.
+    [[nodiscard]] std::int64_t columnInt64Strict(int column) const;
 
     // Uses SQLite's double conversion; storage type and finiteness are not
     // checked here. Domain validation happens after repository reconstruction.

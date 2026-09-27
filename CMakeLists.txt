@@ -309,5 +309,26 @@ if(DEEP_SIGNAL_BUILD_TESTS)
         target_compile_options(deep_signal_save_load_tests PRIVATE ${DEEP_SIGNAL_WARNINGS})
 
         add_test(NAME deep_signal_save_load_tests COMMAND deep_signal_save_load_tests)
+
+        add_executable(deep_signal_save_continuity_tests tests/save_continuity_tests.cpp)
+        target_link_libraries(deep_signal_save_continuity_tests PRIVATE deep_signal_app deep_signal_save)
+        target_compile_options(deep_signal_save_continuity_tests PRIVATE ${DEEP_SIGNAL_WARNINGS})
+        add_test(NAME deep_signal_save_continuity_tests COMMAND deep_signal_save_continuity_tests)
+
+        # Compile a test-only repository instance so failure injection is absent
+        # from the production save library and every application binary.
+        add_executable(deep_signal_save_contract_tests
+            tests/save_contract_tests.cpp
+            src/save/Database.cpp
+            src/save/Schema.cpp
+            src/save/SaveGameRepository.cpp
+            src/save/EventJson.cpp
+        )
+        target_link_libraries(deep_signal_save_contract_tests PRIVATE deep_signal_sim SQLite::SQLite3)
+        target_compile_options(deep_signal_save_contract_tests PRIVATE ${DEEP_SIGNAL_WARNINGS})
+        target_compile_definitions(deep_signal_save_contract_tests PRIVATE
+            DEEP_SIGNAL_TESTING
+            DEEP_SIGNAL_TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+        add_test(NAME deep_signal_save_contract_tests COMMAND deep_signal_save_contract_tests)
     endif()
 endif()

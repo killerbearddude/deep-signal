@@ -6,7 +6,7 @@
 #include "sim/ScenarioFactory.h"
 
 // Regression tests for SQLite save/load round-tripping.
-// These tests verify that schema v8 persists durable Prototype 0.1 state,
+// These tests verify that the current schema persists durable Prototype 0.1 state,
 // including ID counters, institutions, ownership, production, fleet orders, and events.
 // Runtime-only economy telemetry is tested separately as intentionally transient.
 
@@ -645,7 +645,7 @@ void test_manual_processing_policy_state_round_trips() {
 }
 
 void test_daily_economy_snapshots_are_runtime_only() {
-    // Confirms the schema v8 contract for high-volume economy telemetry. The
+    // Confirms the current schema's contract for high-volume economy telemetry. The
     // stockpile/deposit state is durable, but per-day mining samples are a
     // current-session UI/forecast/debug aid and intentionally reload empty.
     const std::filesystem::path path = std::filesystem::temp_directory_path() / "deep_signal_transient_telemetry.sqlite";
