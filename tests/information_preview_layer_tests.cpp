@@ -105,9 +105,10 @@ struct Fixture {
         capturedText.clear();
         ImGui::NewFrame();
         ImGui::LogToClipboard();
-        const auto goTo = layer.render(displayQueries ? *displayQueries : queries,
+        const auto intentions = layer.render(displayQueries ? *displayQueries : queries,
                                        interactions, {0.0F, 24.0F, 920.0F, 696.0F});
-        require(!goTo.has_value(), "render without activation emits no Go To intention");
+        require(!intentions.goTo && !intentions.configureProcessing,
+                "render without activation emits no action intention");
         ImGui::LogFinish();
         ImGui::Render();
         require(interactions.mainSelection().isBodySelected(mainBody),
@@ -155,6 +156,8 @@ void native_condensed_overviews_and_stable_identity() {
     contains(bodyText, fleet.name);
     contains(bodyText, "Inspect >");
     contains(bodyText, "Go To >");
+    require(bodyText.find("Configure processing") == std::string::npos,
+            "Body preview has no Colony processing control");
 
     require(fixture.inspect(colony.id) == temporary, "temporary retarget preserves PreviewId");
     require(ui_imgui::informationPreviewWindowName(temporary) == name, "retarget keeps native window name");
@@ -168,6 +171,7 @@ void native_condensed_overviews_and_stable_identity() {
     contains(colonyText, body.name);
     contains(colonyText, "Inspect >");
     contains(colonyText, "Go To >");
+    contains(colonyText, "Configure processing");
     require(colonyText.find("BODY ") == std::string::npos,
             "retarget does not retain the prior body overview");
 
@@ -183,6 +187,8 @@ void native_condensed_overviews_and_stable_identity() {
     contains(fleetText, body.name);
     contains(fleetText, "Inspect >");
     contains(fleetText, "Go To >");
+    require(fleetText.find("Configure processing") == std::string::npos,
+            "Fleet preview has no Colony processing control");
     require(fleetText.find(colony.name) == std::string::npos, "fleet does not retain colony text");
     const std::string settings = ImGui::SaveIniSettingsToMemory();
     require(settings.find("InformationPreview_") == std::string::npos
@@ -204,8 +210,9 @@ void unresolved_display_omits_navigation_control() {
     SimulationQueries missingQueries{missingService};
     const auto text = fixture.render(&missingQueries);
     contains(text, "Selected object unavailable");
-    require(text.find("Go To >") == std::string::npos,
-            "unresolved preview offers no Go To control");
+    require(text.find("Go To >") == std::string::npos
+            && text.find("Configure processing") == std::string::npos,
+            "unresolved preview offers no action controls");
     require(fixture.interactions.previewSnapshot().front().id == preview,
             "display-query mismatch does not remove the interaction record");
 }

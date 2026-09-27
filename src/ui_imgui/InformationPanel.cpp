@@ -167,7 +167,8 @@ void bodyOverview(const SimulationQueries& queries, const BodyId id,
 }
 
 void colonyOverview(const SimulationQueries& queries, const ColonyId id,
-                    const WorldGeneration world, std::vector<ObjectReference>& inspections) {
+                    const WorldGeneration world, std::vector<ObjectReference>& inspections,
+                    InformationPanelFrameResult& result) {
     const auto colonies = queries.colonies();
     const auto colony = std::find_if(colonies.begin(), colonies.end(), [id](const ColonySummary& row) {
         return row.id == id;
@@ -185,6 +186,9 @@ void colonyOverview(const SimulationQueries& queries, const ColonyId id,
         fact("Processors/day", quantity(colony->processorCapacity, 2, "units"));
         fact("Processing policy", namedOrUnknown(colony->processingPolicyName));
         ImGui::EndTable();
+    }
+    if (ImGui::Button("Configure processing")) {
+        result.configureProcessing = ColonyProcessingOpenIntent{{world, id}, std::nullopt};
     }
     renderInformationRelationshipRows(informationRelationships(queries, {world, id}), inspections);
     section("PRODUCTION");
@@ -246,12 +250,13 @@ void fleetOverview(const SimulationQueries& queries, const FleetId id,
 
 } // namespace
 
-void InformationPanel::render(const SimulationQueries& queries, const SelectionState& selection,
-                              InformationInteractionAdapter& interactions,
-                              const ImVec2& position, const ImVec2& size) const {
+InformationPanelFrameResult InformationPanel::render(
+    const SimulationQueries& queries, const SelectionState& selection,
+    InformationInteractionAdapter& interactions, const ImVec2& position, const ImVec2& size) const {
     // Bind displayed rows to this world before resolving their live query DTOs.
     const WorldGeneration displayedWorld = interactions.world();
     std::vector<ObjectReference> inspections;
+    InformationPanelFrameResult result;
     ImGui::SetNextWindowPos(position);
     ImGui::SetNextWindowSize(size);
     ImGui::SetNextWindowViewport(ImGui::GetMainViewport()->ID);
@@ -285,7 +290,7 @@ void InformationPanel::render(const SimulationQueries& queries, const SelectionS
             bodyOverview(queries, selection.bodyId(), displayedWorld, inspections);
             break;
         case SelectedObjectType::Colony:
-            colonyOverview(queries, selection.colonyId(), displayedWorld, inspections);
+            colonyOverview(queries, selection.colonyId(), displayedWorld, inspections, result);
             break;
         case SelectedObjectType::Fleet:
             fleetOverview(queries, selection.fleetId(), displayedWorld, inspections);
@@ -298,6 +303,7 @@ void InformationPanel::render(const SimulationQueries& queries, const SelectionS
     for (const auto& target : inspections) {
         (void)interactions.inspect(target);
     }
+    return result;
 }
 
 } // namespace deep::ui_imgui

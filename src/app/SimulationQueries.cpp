@@ -704,7 +704,9 @@ void addProcessingWeight(ProcessingShares& weights, const ProcessedMaterial mate
     return weights;
 }
 
-[[nodiscard]] ProcessingShares processingWeightsForPolicy(const Colony& colony, const ProcessingPolicy policy) noexcept {
+[[nodiscard]] ProcessingShares processingWeightsForPolicy(
+    const Colony& colony, const ProcessingPolicy policy,
+    const ProcessingShares* manualOverride = nullptr) noexcept {
     // These weights mirror Simulation's policy presets for display. Keep this
     // table synchronized with simulation and forecast policy changes; a displayed
     // allocation percentage is not evidence that raw inputs can fund its output.
@@ -738,8 +740,12 @@ void addProcessingWeight(ProcessingShares& weights, const ProcessedMaterial mate
         }
         break;
     case ProcessingPolicy::Manual:
-        for (const ProcessingAllocation& allocation : colony.manualProcessingAllocations) {
-            addProcessingWeight(weights, allocation.material, allocation.weight);
+        if (manualOverride != nullptr) {
+            weights = *manualOverride;
+        } else {
+            for (const ProcessingAllocation& allocation : colony.manualProcessingAllocations) {
+                addProcessingWeight(weights, allocation.material, allocation.weight);
+            }
         }
         break;
     }
@@ -960,6 +966,74 @@ std::vector<ColonySummary> SimulationQueries::colonies() const {
     }
 
     return summaries;
+}
+
+std::optional<ColonyProcessingDraftPreview> SimulationQueries::previewColonyProcessingPolicy(
+    const ColonyId colonyId, const ProcessingPolicy policy,
+    const std::vector<ProcessingAllocation>& manualAllocations) const {
+    const Colony* colony = findById(service_.state().colonies, colonyId);
+    if (colony == nullptr) return std::nullopt;
+
+    ColonyProcessingDraftPreview result{.colonyId = colonyId, .policy = policy,
+                                        .policyName = processingPolicyName(policy),
+                                        .valid = false, .validationMessage = {},
+                                        .effectiveAllocations = {}};
+    switch (policy) {
+    case ProcessingPolicy::Balanced:
+    case ProcessingPolicy::ShipbuildingFocus:
+    case ProcessingPolicy::FuelFocus:
+    case ProcessingPolicy::ElectronicsFocus:
+    case ProcessingPolicy::StockpileRecovery:
+    case ProcessingPolicy::Manual:
+        break;
+    default:
+        result.validationMessage = "Choose a valid processing policy.";
+        return result;
+    }
+
+    ProcessingShares manualWeights{};
+    for (const ProcessingAllocation& allocation : manualAllocations) {
+        const std::size_t index = processedMaterialIndex(allocation.material);
+        if (index >= manualWeights.size()) {
+            result.validationMessage = "Manual allocation contains an unknown material.";
+            return result;
+        }
+        if (!std::isfinite(allocation.weight)) {
+            result.validationMessage = "Manual allocation weights must be finite.";
+            return result;
+        }
+        if (allocation.weight < 0.0) {
+            result.validationMessage = "Manual allocation weights cannot be negative.";
+            return result;
+        }
+        manualWeights[index] += allocation.weight;
+        if (!std::isfinite(manualWeights[index])) {
+            result.validationMessage = "Manual allocation total is too large.";
+            return result;
+        }
+    }
+
+    if (policy == ProcessingPolicy::Manual) {
+        double total = 0.0;
+        for (const double weight : manualWeights) {
+            total += weight;
+        }
+        if (!std::isfinite(total)) {
+            result.validationMessage = "Manual allocation total is too large.";
+            return result;
+        }
+        if (total <= kProcessedMaterialComparisonEpsilon) {
+            result.validationMessage = "Manual policy requires positive total weight.";
+            return result;
+        }
+    }
+
+    // Reuse this query layer's native policy projection. Actual output still
+    // depends on available raw inputs and the authoritative command boundary.
+    result.effectiveAllocations = summarizeProcessingWeights(
+        processingWeightsForPolicy(*colony, policy, &manualWeights));
+    result.valid = true;
+    return result;
 }
 
 std::vector<ShipyardOrderSummary> SimulationQueries::shipyardOrders() const {

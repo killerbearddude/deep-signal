@@ -90,8 +90,9 @@ struct ImGuiFixture {
         capturedText.clear();
         ImGui::NewFrame();
         ImGui::LogToClipboard();
-        ui_imgui::InformationPanel{}.render(queries, selection, interactions,
+        const auto intentions = ui_imgui::InformationPanel{}.render(queries, selection, interactions,
             ImVec2{860.0F, 0.0F}, ImVec2{420.0F, 1800.0F});
+        require(!intentions.configureProcessing, "passive overview rendering does not request Configure");
         ImGui::LogFinish();
         ImGui::Render();
         return normalized(capturedText);
@@ -188,6 +189,8 @@ void native_overviews_and_literal_names() {
     contains(bodyText, "STATIONED FLEETS");
     contains(bodyText, fleet.name);
     contains(bodyText, "Inspect >");
+    require(bodyText.find("Configure processing") == std::string::npos,
+            "Body overview has no Colony processing control");
     contains(bodyText, "RESOURCE KNOWLEDGE");
     contains(bodyText, "Confirmed quantity " + decimal(body.confirmedDepositQuantity) + " units");
 
@@ -196,6 +199,7 @@ void native_overviews_and_literal_names() {
     contains(colonyText, colony.name);
     contains(colonyText, colony.bodyName);
     contains(colonyText, colony.processingPolicyName);
+    contains(colonyText, "Configure processing");
     contains(colonyText, "RELATIONSHIPS");
     contains(colonyText, "PRODUCTION");
     contains(colonyText, "Raw " + decimal(colony.totalRawStockpile) + " units");
@@ -212,6 +216,8 @@ void native_overviews_and_literal_names() {
     contains(fleetText, "ETA -");
     contains(fleetText, "Queued orders 0");
     contains(fleetText, "RELATIONSHIPS");
+    require(fleetText.find("Configure processing") == std::string::npos,
+            "Fleet overview has no Colony processing control");
     require(fleetText.find(colony.name) == std::string::npos, "new selection does not retain old overview");
     const std::string settings = ImGui::SaveIniSettingsToMemory();
     require(settings.find("InformationPanel") == std::string::npos

@@ -30,6 +30,13 @@ struct PreviewGoToRequest {
     bool operator==(const PreviewGoToRequest&) const = default;
 };
 
+// An explicit Configure click binds the exact displayed Colony and either its
+// source preview or the authoritative main selection. No draft lives here.
+struct ColonyProcessingOpenIntent {
+    ObjectReference displayedTarget;
+    std::optional<PreviewId> sourcePreviewId;
+};
+
 class InformationInteractionAdapter {
 public:
     // The service and callback's workflow owners must outlive this adapter's use.
@@ -59,6 +66,12 @@ public:
     // activation. Reconcile and validate live existence; return data only.
     [[nodiscard]] std::optional<PreviewGoToRequest> requestGoTo(
         PreviewId sourcePreviewId, ObjectReference displayedTarget);
+
+    // Reconcile and validate the displayed Configure source before any editor
+    // state is opened. Stale worlds, retargeted/closed previews, changed main
+    // selection, non-Colony objects, and missing targets are rejected.
+    [[nodiscard]] std::optional<ObjectReference> validateColonyProcessingOpen(
+        ColonyProcessingOpenIntent intent);
 
     // Shared by File and legacy-panel routes through SaveLoadPanel. Execute once,
     // then acknowledge the returned result once. Preserve the original result;

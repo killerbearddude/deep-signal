@@ -13,10 +13,12 @@
 #include <exception>
 #include <cmath>
 #include <iostream>
+#include <limits>
 #include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -178,6 +180,70 @@ void test_colony_summaries_include_processing_policy() {
                 "manual policy effective allocation is normalized from weights");
     require(colonies.front().processedStockpiles.size() == deep::processedMaterialCount(),
             "colony summary exposes processed stockpiles for policy preview math");
+}
+
+void test_colony_processing_draft_preview_is_read_only_and_validated() {
+    deep::SimulationService service;
+    const deep::ColonyId colonyId = service.state().colonies.front().id;
+    const deep::SimulationQueries queries{service};
+    const auto before = std::tuple{service.state().date.day, service.state().eventLog.size(),
+        service.state().colonies.front().processingPolicy,
+        service.state().colonies.front().manualProcessingAllocations.size()};
+
+    for (const auto policy : {deep::ProcessingPolicy::Balanced,
+                              deep::ProcessingPolicy::ShipbuildingFocus,
+                              deep::ProcessingPolicy::FuelFocus,
+                              deep::ProcessingPolicy::ElectronicsFocus,
+                              deep::ProcessingPolicy::StockpileRecovery}) {
+        const auto preview = queries.previewColonyProcessingPolicy(colonyId, policy, {});
+        require(preview && preview->valid && preview->policy == policy
+                && !preview->policyName.empty()
+                && preview->effectiveAllocations.size() == deep::processedMaterialCount(),
+                "each native preset produces an owned valid draft preview");
+        double percent = 0.0;
+        for (const auto& row : preview->effectiveAllocations) percent += row.normalizedPercent;
+        requireNear(percent, 100.0, "preset nominal allocation percentages sum to 100");
+    }
+
+    const auto manual = queries.previewColonyProcessingPolicy(colonyId, deep::ProcessingPolicy::Manual, {
+        {.material = deep::ProcessedMaterial::Propellant, .weight = 1.0},
+        {.material = deep::ProcessedMaterial::ReactorFuel, .weight = 1.0},
+        {.material = deep::ProcessedMaterial::Propellant, .weight = 2.0}
+    });
+    require(manual && manual->valid, "positive repeated manual weights form a valid advisory preview");
+    requireNear(manual->effectiveAllocations.at(deep::processedMaterialIndex(deep::ProcessedMaterial::Propellant)).weight,
+                3.0, "duplicate material rows aggregate deterministically");
+    requireNear(manual->effectiveAllocations.at(deep::processedMaterialIndex(deep::ProcessedMaterial::Propellant)).normalizedPercent,
+                75.0, "manual preview reports normalized share, not command percentage input");
+
+    const auto invalid = [&](const deep::ProcessingPolicy policy,
+                             const std::vector<deep::ProcessingAllocation>& rows) {
+        const auto preview = queries.previewColonyProcessingPolicy(colonyId, policy, rows);
+        require(preview && !preview->valid && !preview->validationMessage.empty(),
+                "malformed draft returns a truthful invalid preview");
+    };
+    invalid(deep::ProcessingPolicy::Manual, {});
+    invalid(deep::ProcessingPolicy::Manual, {{.material = deep::ProcessedMaterial::Propellant, .weight = -1.0}});
+    invalid(deep::ProcessingPolicy::Manual, {{.material = deep::ProcessedMaterial::Propellant,
+                                               .weight = std::numeric_limits<double>::infinity()}});
+    invalid(deep::ProcessingPolicy::Manual, {{.material = deep::ProcessedMaterial::Propellant,
+                                               .weight = std::numeric_limits<double>::quiet_NaN()}});
+    invalid(deep::ProcessingPolicy::Manual, {{.material = static_cast<deep::ProcessedMaterial>(999), .weight = 1.0}});
+    invalid(static_cast<deep::ProcessingPolicy>(999), {});
+    require(!queries.previewColonyProcessingPolicy(deep::ColonyId{999999}, deep::ProcessingPolicy::Balanced, {}),
+            "missing colony produces no draft preview");
+    require(before == std::tuple{service.state().date.day, service.state().eventLog.size(),
+            service.state().colonies.front().processingPolicy,
+            service.state().colonies.front().manualProcessingAllocations.size()},
+            "preview validation never mutates simulation state or appends events");
+
+    const auto stockpileBefore = queries.previewColonyProcessingPolicy(
+        colonyId, deep::ProcessingPolicy::StockpileRecovery, {});
+    require(service.execute(deep::AdvanceDaysCommand{.days = 1}).ok, "advance for live recovery preview");
+    const auto stockpileAfter = queries.previewColonyProcessingPolicy(
+        colonyId, deep::ProcessingPolicy::StockpileRecovery, {});
+    require(stockpileBefore && stockpileAfter && stockpileBefore->valid && stockpileAfter->valid,
+            "Stockpile Recovery draft resolves current processed stockpiles on each call");
 }
 
 void test_shipyard_order_summaries_resolve_names() {
@@ -1055,6 +1121,7 @@ int main() {
     try {
         test_colony_summaries_resolve_body_context();
         test_colony_summaries_include_processing_policy();
+        test_colony_processing_draft_preview_is_read_only_and_validated();
         test_shipyard_order_summaries_resolve_names();
         test_production_backlog_summaries_expose_queue_eta();
         test_personnel_summaries_resolve_institution_context();

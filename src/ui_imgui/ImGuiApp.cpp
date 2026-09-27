@@ -29,6 +29,7 @@ ImGuiApp::ImGuiApp()
         inspectorPanel_.resetWorldState();
         fleetOrdersPanel_.resetWorldState();
         colonyPanel_.resetWorldState();
+        processingEditor_.resetWorldState();
     }} {
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
@@ -42,12 +43,12 @@ ImGuiApp::ImGuiApp()
         ImGui::DestroyContext();
         throw std::runtime_error{"ImGui_ImplSDL3_InitForSDLRenderer failed"};
     }
-
     if (!ImGui_ImplSDLRenderer3_Init(sdl_.renderer())) {
         ImGui_ImplSDL3_Shutdown();
         ImGui::DestroyContext();
         throw std::runtime_error{"ImGui_ImplSDLRenderer3_Init failed"};
     }
+
 }
 
 ImGuiApp::~ImGuiApp() {
@@ -85,22 +86,37 @@ int ImGuiApp::run() {
             // Render after all selection producers and synchronous New/Load
             // paths. The projection and every overview DTO are current now.
             const SimulationQueries queries{service_};
-            informationPanel_.render(queries, interactions_.mainSelection(), interactions_,
+            const InformationPanelFrameResult panelResult = informationPanel_.render(
+                queries, interactions_.mainSelection(), interactions_,
                 {layout.information.x, layout.information.y},
                 {layout.information.width, layout.information.height});
-            if (const auto intent = previewLayer_.render(queries, interactions_, layout.dock)) {
+            const InformationPreviewFrameResult previewResult =
+                previewLayer_.render(queries, interactions_, layout.dock);
+            if (previewResult.goTo) {
                 const NavigationResult result = navigation_.goTo(
-                    *intent, queries, interactions_, workspace_, visibility_,
+                    *previewResult.goTo, queries, interactions_, workspace_, visibility_,
                     strategicMapPanel_, colonyPanel_, fleetPanel_);
                 if (result.ok()) {
-                    navigationError_.clear();
-                    pendingNavigationFocus_ = intent->displayedTarget;
+                    actionError_.clear();
+                    pendingNavigationFocus_ = previewResult.goTo->displayedTarget;
                 } else {
-                    navigationError_ = result.message;
-                    navigationErrorUntil_ = ImGui::GetTime() + 5.0;
+                    actionError_ = result.message;
+                    actionErrorUntil_ = ImGui::GetTime() + 5.0;
                 }
             }
-            renderNavigationFeedback(layout.dock);
+            const auto openEditor = [&](const ColonyProcessingOpenIntent& intent) {
+                const EditorOpenResult opened = processingEditor_.open(intent, queries, interactions_);
+                if (!opened.accepted() && !opened.message.empty()) {
+                    actionError_ = opened.message;
+                    actionErrorUntil_ = ImGui::GetTime() + 5.0;
+                }
+            };
+            // Navigation is processed first. If it closed or retargeted the
+            // displayed source, Configure then fails exact-source validation.
+            if (panelResult.configureProcessing) openEditor(*panelResult.configureProcessing);
+            if (previewResult.configureProcessing) openEditor(*previewResult.configureProcessing);
+            processingEditor_.render(queries, service_, interactions_, layout.dock);
+            renderActionFeedback(layout.dock);
         }
 
         ImGui::Render();
@@ -162,7 +178,7 @@ void ImGuiApp::renderPanels() {
     // Each later reader gets a newly reconciled projection, not a frame-start copy.
     strategicMapPanel_.render(queries, interactions_, visibility_.strategicMap);
     bodiesPanel_.render(queries, interactions_, visibility_.bodies);
-    colonyPanel_.render(queries, service_, interactions_, visibility_.colonies);
+    colonyPanel_.render(queries, interactions_, visibility_.colonies);
     fleetPanel_.render(queries, interactions_, visibility_.fleets);
     fleetOrdersPanel_.render(queries, service_, interactions_.mainSelection(), visibility_.fleetOrders);
     economyForecastPanel_.render(forecasts, visibility_.economyForecast);
@@ -201,10 +217,10 @@ void ImGuiApp::focusNavigationDestination() {
     pendingNavigationFocus_.reset();
 }
 
-void ImGuiApp::renderNavigationFeedback(const ShellRegion workArea) {
-    if (navigationError_.empty()) return;
-    if (ImGui::GetTime() >= navigationErrorUntil_) {
-        navigationError_.clear();
+void ImGuiApp::renderActionFeedback(const ShellRegion workArea) {
+    if (actionError_.empty()) return;
+    if (ImGui::GetTime() >= actionErrorUntil_) {
+        actionError_.clear();
         return;
     }
     const float width = std::min(420.0F, workArea.width - 24.0F);
@@ -216,11 +232,11 @@ void ImGuiApp::renderNavigationFeedback(const ShellRegion workArea) {
         ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing |
         ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize |
         ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoTitleBar;
-    if (ImGui::Begin("Go To feedback###InformationNavigationFeedback", nullptr, flags)) {
+    if (ImGui::Begin("Action feedback###InformationActionFeedback", nullptr, flags)) {
         ImGui::PushStyleColor(ImGuiCol_Text, {0.92F, 0.70F, 0.37F, 1.0F});
-        ImGui::TextWrapped("%s", navigationError_.c_str());
+        ImGui::TextWrapped("%s", actionError_.c_str());
         ImGui::PopStyleColor();
-        if (ImGui::SmallButton("Dismiss##go_to_error")) navigationError_.clear();
+        if (ImGui::SmallButton("Dismiss##action_error")) actionError_.clear();
     }
     ImGui::End();
 }

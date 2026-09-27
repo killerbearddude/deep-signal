@@ -165,19 +165,19 @@ void table_reveals_consume_only_matching_live_rows() {
     const FleetId fleetId = fixture.queries.fleets().front().id;
 
     fixture.colonies.requestReveal({world, colonyId});
-    fixture.frame([&] { fixture.colonies.render(fixture.queries, fixture.service, fixture.interactions, colonyVisible); });
+    fixture.frame([&] { fixture.colonies.render(fixture.queries, fixture.interactions, colonyVisible); });
     require(InformationRevealTestAccess::pending(fixture.colonies), "hidden table retains valid request");
     colonyVisible = true;
-    fixture.frame([&] { fixture.colonies.render(fixture.queries, fixture.service, fixture.interactions, colonyVisible); });
+    fixture.frame([&] { fixture.colonies.render(fixture.queries, fixture.interactions, colonyVisible); });
     require(!InformationRevealTestAccess::pending(fixture.colonies), "matching colony row consumes request");
     require(sameSelection(fixture.interactions.mainSelection(), selectionBefore), "colony reveal does not select");
 
     fixture.colonies.requestReveal({world, ColonyId{999999}});
-    fixture.frame([&] { fixture.colonies.render(fixture.queries, fixture.service, fixture.interactions, colonyVisible); });
+    fixture.frame([&] { fixture.colonies.render(fixture.queries, fixture.interactions, colonyVisible); });
     require(!InformationRevealTestAccess::pending(fixture.colonies), "missing colony row discarded");
 
     fixture.colonies.requestReveal({world, fixture.service.state().bodies.front().id});
-    fixture.frame([&] { fixture.colonies.render(fixture.queries, fixture.service, fixture.interactions, colonyVisible); });
+    fixture.frame([&] { fixture.colonies.render(fixture.queries, fixture.interactions, colonyVisible); });
     require(!InformationRevealTestAccess::pending(fixture.colonies), "non-colony row request discarded");
 
     fixture.fleets.requestReveal({world, fleetId});
@@ -199,7 +199,7 @@ void table_reveals_consume_only_matching_live_rows() {
     colonyVisible = false;
     fleetVisible = false;
     fixture.frame([&] {
-        fixture.colonies.render(fixture.queries, fixture.service, fixture.interactions, colonyVisible);
+        fixture.colonies.render(fixture.queries, fixture.interactions, colonyVisible);
         fixture.fleets.render(fixture.queries, fixture.interactions, fleetVisible);
     });
     require(!InformationRevealTestAccess::pending(fixture.colonies) &&

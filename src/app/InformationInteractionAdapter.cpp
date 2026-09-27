@@ -10,6 +10,7 @@
 #include <stdexcept>
 #include <type_traits>
 #include <utility>
+#include <variant>
 
 namespace deep {
 
@@ -84,6 +85,29 @@ std::optional<PreviewGoToRequest> InformationInteractionAdapter::requestGoTo(
         return std::nullopt;
     }
     return PreviewGoToRequest{sourcePreviewId, displayedTarget, source->pinned};
+}
+
+std::optional<ObjectReference> InformationInteractionAdapter::validateColonyProcessingOpen(
+    const ColonyProcessingOpenIntent intent) {
+    reconcile();
+    if (intent.displayedTarget.world != world()
+        || !std::holds_alternative<ColonyId>(intent.displayedTarget.object)) {
+        return std::nullopt;
+    }
+
+    if (intent.sourcePreviewId) {
+        if (intent.sourcePreviewId->world != world()) return std::nullopt;
+        const auto previews = state_.previewSnapshot();
+        const auto source = std::find_if(previews.begin(), previews.end(), [&](const InformationPreview& preview) {
+            return preview.id == *intent.sourcePreviewId;
+        });
+        if (source == previews.end() || source->target != intent.displayedTarget) return std::nullopt;
+    } else if (state_.mainTarget() != intent.displayedTarget) {
+        return std::nullopt;
+    }
+
+    return targetExists(intent.displayedTarget.object)
+        ? std::optional<ObjectReference>{intent.displayedTarget} : std::nullopt;
 }
 
 CommandResult InformationInteractionAdapter::finishReplacement(const WorldGeneration origin, CommandResult result) {

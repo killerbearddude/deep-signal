@@ -16,6 +16,7 @@
 #include "ui_imgui/FleetOrdersPanel.h"
 #include "ui_imgui/InspectorPanel.h"
 #include "ui_imgui/InformationPanel.h"
+#include "ui_imgui/ColonyProcessingEditor.h"
 #include "ui_imgui/InformationNavigation.h"
 #include "ui_imgui/InformationPreviewLayer.h"
 #include "ui_imgui/MainMenuBar.h"
@@ -69,8 +70,8 @@ private:
     // destination window forward once so later preset windows cannot obscure it.
     void focusNavigationDestination();
 
-    // A short UI-local message for an ordinary rejected Go To request.
-    void renderNavigationFeedback(ShellRegion workArea);
+    // A short UI-local message for an ordinary rejected information action.
+    void renderActionFeedback(ShellRegion workArea);
 
     // SDL must outlive ImGui backend shutdown in the destructor body.
     platform::SdlApp sdl_;
@@ -88,13 +89,14 @@ private:
     EventLogPanel eventLogPanel_;
     InspectorPanel inspectorPanel_;
     InformationPanel informationPanel_;
+    ColonyProcessingEditor processingEditor_;
     InformationNavigation navigation_;
     InformationPreviewLayer previewLayer_;
     StrategicMapPanel strategicMapPanel_;
     Workspace workspace_ = Workspace::System;
     PanelVisibility visibility_;
-    std::string navigationError_;
-    double navigationErrorUntil_ = 0.0;
+    std::string actionError_;
+    double actionErrorUntil_ = 0.0;
     std::optional<ObjectReference> pendingNavigationFocus_;
 };
 

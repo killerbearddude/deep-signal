@@ -234,7 +234,7 @@ void unavailable() {
 void renderOne(const SimulationQueries& queries, const InformationPreview& preview,
                const ShellRegion work, std::vector<PreviewAction>& actions,
                std::vector<ObjectReference>& inspectionRequests,
-               std::optional<PreviewGoToIntent>& goToIntent) {
+               InformationPreviewFrameResult& result) {
     const std::string name = informationPreviewWindowName(preview.id);
     const ShellRegion initial = initialPreviewGeometry(preview.id, work);
     ImGui::SetNextWindowPos({initial.x, initial.y}, ImGuiCond_Once);
@@ -278,7 +278,8 @@ void renderOne(const SimulationQueries& queries, const InformationPreview& previ
         ImGui::Separator();
         // Keep facts and relationships scrollable while Go To remains visible
         // at the bottom of a compact or resized preview.
-        const float footerHeight = ImGui::GetFrameHeightWithSpacing() +
+        const bool colonyTarget = std::holds_alternative<ColonyId>(preview.target.object);
+        const float footerHeight = ImGui::GetFrameHeightWithSpacing() * (colonyTarget ? 2.0F : 1.0F) +
                                    ImGui::GetStyle().ItemSpacing.y * 2.0F;
         bool resolved = false;
         const std::string contentName = informationPreviewContentName(preview.target);
@@ -296,10 +297,15 @@ void renderOne(const SimulationQueries& queries, const InformationPreview& previ
             // explicit scope keeps this control independent of object names.
             ImGui::PushID(name.c_str());
             ImGui::PushStyleColor(ImGuiCol_Text, kAccent);
+            if (colonyTarget && ImGui::Button("Configure processing##preview_configure",
+                                               {ImGui::GetContentRegionAvail().x, 0.0F}) &&
+                !result.configureProcessing) {
+                result.configureProcessing = ColonyProcessingOpenIntent{preview.target, preview.id};
+            }
             if (ImGui::Button("Go To >##preview_go_to",
                               {ImGui::GetContentRegionAvail().x, 0.0F}) &&
-                !goToIntent.has_value()) {
-                goToIntent = PreviewGoToIntent{preview.id, preview.target};
+                !result.goTo) {
+                result.goTo = PreviewGoToIntent{preview.id, preview.target};
             }
             ImGui::PopStyleColor();
             ImGui::PopID();
@@ -327,21 +333,21 @@ std::string informationPreviewContentName(const ObjectReference target) {
            "_" + std::to_string(value);
 }
 
-std::optional<PreviewGoToIntent> InformationPreviewLayer::render(
+InformationPreviewFrameResult InformationPreviewLayer::render(
     const SimulationQueries& queries, InformationInteractionAdapter& interactions,
     const ShellRegion workArea) const {
     const auto previews = interactions.previewSnapshot();
     // An almost minimized shell cannot expose a usable title bar. Keep the
     // records intact; the same native windows recover when the shell is larger.
     if (workArea.width < 80.0F || workArea.height < 50.0F) {
-        return std::nullopt;
+        return {};
     }
     std::vector<PreviewAction> actions;
     std::vector<ObjectReference> inspectionRequests;
-    std::optional<PreviewGoToIntent> goToIntent;
+    InformationPreviewFrameResult result;
     actions.reserve(previews.size());
     for (const auto& preview : previews) {
-        renderOne(queries, preview, workArea, actions, inspectionRequests, goToIntent);
+        renderOne(queries, preview, workArea, actions, inspectionRequests, result);
     }
     for (const auto& action : actions) {
         switch (action.kind) {
@@ -362,7 +368,7 @@ std::optional<PreviewGoToIntent> InformationPreviewLayer::render(
     for (const auto& target : inspectionRequests) {
         (void)interactions.inspect(target);
     }
-    return goToIntent;
+    return result;
 }
 
 } // namespace deep::ui_imgui

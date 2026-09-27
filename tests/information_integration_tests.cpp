@@ -5,9 +5,9 @@
 #include "ui_imgui/FleetOrdersPanel.h"
 #include "ui_imgui/InspectorPanel.h"
 
-// Exercise the production adapter, real New/Load operations, and actual inline
-// workflow reset hooks without SDL/ImGui. UI entry wiring is additionally checked
-// in the running application; no preview presentation is certified here.
+// Exercise the production adapter, real New/Load operations, and existing
+// operational workflow resets without SDL/ImGui. The fixed processing editor's
+// draft lifecycle is covered by its dedicated UI-enabled tests.
 
 #include <algorithm>
 #include <chrono>
@@ -47,11 +47,12 @@ void operator delete[](void* memory, std::size_t) noexcept { ::operator delete(m
 
 namespace deep::ui_imgui {
 
-// Narrow fixture access seeds/observes existing private drafts, rather than adding
-// public mutation/debug controls or replacing the production reset implementation.
+// Narrow fixture access seeds/observes existing private operational drafts.
 struct InformationLifecycleTestAccess {
     static void seed(InspectorPanel& inspector, FleetOrdersPanel& orders, ColonyPanel& colony,
                      FleetId fleet, BodyId body, ColonyId colonyId) {
+        (void)colony;
+        (void)colonyId;
         inspector.fleetMoveSource_ = fleet;
         inspector.lastMoveStatus_ = "old-world move";
         inspector.lastMoveSucceeded_ = false;
@@ -61,26 +62,21 @@ struct InformationLifecycleTestAccess {
         orders.destinationBodyId_ = body;
         orders.commandStatus_ = "old-world order";
         orders.commandSucceeded_ = false;
-        colony.editingColony_ = colonyId;
-        colony.selectedPolicy_ = ProcessingPolicy::Manual;
-        colony.manualWeights_.fill(4.25);
-        colony.statusMessage_ = "unapplied draft";
     }
 
     static auto snapshot(const InspectorPanel& inspector, const FleetOrdersPanel& orders, const ColonyPanel& colony) {
+        (void)colony;
         return std::tuple{inspector.fleetMoveSource_, inspector.lastMoveStatus_, inspector.lastMoveSucceeded_,
                           inspector.lastCancelStatus_, inspector.lastCancelSucceeded_, orders.selectedFleetId_,
-                          orders.destinationBodyId_, orders.commandStatus_, orders.commandSucceeded_,
-                          colony.editingColony_, colony.selectedPolicy_, colony.manualWeights_, colony.statusMessage_};
+                          orders.destinationBodyId_, orders.commandStatus_, orders.commandSucceeded_};
     }
 
     static bool cleared(const InspectorPanel& inspector, const FleetOrdersPanel& orders, const ColonyPanel& colony) {
+        (void)colony;
         return !inspector.fleetMoveSource_ && inspector.lastMoveStatus_ == "Ready" && inspector.lastMoveSucceeded_
             && inspector.lastCancelStatus_ == "No fleet order cancelled yet" && inspector.lastCancelSucceeded_
             && !orders.selectedFleetId_ && !orders.destinationBodyId_ && orders.commandStatus_ == "Ready"
-            && orders.commandSucceeded_ && !colony.editingColony_ && colony.selectedPolicy_ == ProcessingPolicy::Balanced
-            && std::all_of(colony.manualWeights_.begin(), colony.manualWeights_.end(), [](double value) { return value == 0.0; })
-            && colony.statusMessage_.empty();
+            && orders.commandSucceeded_;
     }
 };
 
@@ -385,6 +381,51 @@ void test_adapter_go_to_rejects_retargeted_replaced_and_missing_targets() {
             "missing target reconciliation removes only its stale preview and preserves main context and pin");
 }
 
+void test_configure_processing_validates_displayed_source_without_opening_draft() {
+    Fixture f;
+    const auto colony = f.ref(f.colonyId());
+    const auto body = f.ref(f.mars());
+    const auto fleet = f.ref(f.fleetId());
+    require(f.adapter.select(f.selection(f.colonyId())), "select colony as main Configure source");
+    const auto before = f.interactionSnapshot();
+    require(f.adapter.validateColonyProcessingOpen({colony, std::nullopt}) == colony,
+            "matching main Colony source validates");
+    require(f.interactionSnapshot() == before, "validation creates no editor or interaction mutation");
+    require(!f.adapter.validateColonyProcessingOpen({body, std::nullopt})
+            && !f.adapter.validateColonyProcessingOpen({fleet, std::nullopt}),
+            "Body and Fleet cannot open Colony processing editor");
+
+    require(f.adapter.select(f.selection(f.mars())), "change main selection before delayed Configure");
+    const auto changedMain = f.interactionSnapshot();
+    require(!f.adapter.validateColonyProcessingOpen({colony, std::nullopt})
+            && f.interactionSnapshot() == changedMain,
+            "old main-selection Configure cannot attach to a later selection");
+
+    const PreviewId temporary = f.inspect(f.colonyId());
+    const auto previewBefore = f.interactionSnapshot();
+    require(f.adapter.validateColonyProcessingOpen({colony, temporary}) == colony
+            && f.interactionSnapshot() == previewBefore,
+            "matching preview source validates without changing main selection or preview");
+    require(f.inspect(f.fleetId()) == temporary, "temporary retargets to Fleet before delayed Configure");
+    const auto retargeted = f.interactionSnapshot();
+    require(!f.adapter.validateColonyProcessingOpen({colony, temporary})
+            && f.interactionSnapshot() == retargeted,
+            "retargeted preview rejects its old displayed Colony");
+    require(f.adapter.closePreview(temporary), "close preview before delayed Configure");
+    require(!f.adapter.validateColonyProcessingOpen({colony, temporary}), "closed preview rejects");
+    require(!f.adapter.validateColonyProcessingOpen(
+                {ObjectReference{f.adapter.world(), ColonyId{999999}}, std::nullopt}),
+            "missing Colony cannot validate");
+
+    const PreviewId oldPreview = f.inspect(f.colonyId());
+    const auto oldIntent = ColonyProcessingOpenIntent{colony, oldPreview};
+    require(f.adapter.newGame().ok, "replace world before old Configure dispatch");
+    const auto replaced = f.interactionSnapshot();
+    require(!f.adapter.validateColonyProcessingOpen(oldIntent)
+            && f.interactionSnapshot() == replaced,
+            "old-world Configure cannot attach to reused ColonyId");
+}
+
 void test_new_game_success_clears_hidden_workflows_once() {
     Fixture f;
     f.seed();
@@ -538,6 +579,7 @@ int main() {
         {"adapter preview snapshot reconciles missing targets", test_adapter_preview_snapshot_reconciles_missing_targets},
         {"adapter Go To validates exact source, target, and disposition", test_adapter_go_to_binds_source_target_and_disposition_without_navigation},
         {"adapter Go To rejects retargeted, replaced, and missing targets", test_adapter_go_to_rejects_retargeted_replaced_and_missing_targets},
+        {"Configure processing validates exact displayed source", test_configure_processing_validates_displayed_source_without_opening_draft},
         {"real New Game and hidden-workflow resets", test_new_game_success_clears_hidden_workflows_once},
         {"real Load, reused IDs, and same-frame stale intentions", test_real_load_and_same_frame_stale_intentions},
         {"failed/empty/malformed loads preserve world and drafts", test_failed_loads_preserve_state_and_actual_workflow_drafts},

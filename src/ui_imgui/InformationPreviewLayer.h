@@ -4,7 +4,7 @@
 // ImGui keeps live geometry by PreviewId; this component retains no target,
 // query DTO, simulation entity, or application state between frames.
 
-#include "app/InformationInteractionState.h"
+#include "app/InformationInteractionAdapter.h"
 #include "ui_imgui/ShellLayout.h"
 
 #include <optional>
@@ -34,13 +34,18 @@ struct PreviewGoToIntent {
     ObjectReference displayedTarget;
 };
 
+struct InformationPreviewFrameResult {
+    std::optional<PreviewGoToIntent> goTo;
+    std::optional<ColonyProcessingOpenIntent> configureProcessing;
+};
+
 class InformationPreviewLayer {
 public:
     // previewSnapshot reconciles then copies records. Actions gathered while
     // drawing those records are sent by ID only after the iteration completes.
     // A Go To click returns the displayed world-scoped target and source ID;
     // this layer never changes main selection or workspace context.
-    [[nodiscard]] std::optional<PreviewGoToIntent> render(
+    [[nodiscard]] InformationPreviewFrameResult render(
         const SimulationQueries& queries,
         InformationInteractionAdapter& interactions,
         ShellRegion workArea) const;

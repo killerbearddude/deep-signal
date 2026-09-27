@@ -104,6 +104,7 @@ if(DEEP_SIGNAL_BUILD_UI)
         src/render/StrategicMapView.cpp
         src/ui_imgui/BodiesPanel.cpp
         src/ui_imgui/ColonyPanel.cpp
+        src/ui_imgui/ColonyProcessingEditor.cpp
         src/ui_imgui/EconomyForecastPanel.cpp
         src/ui_imgui/EventLogPanel.cpp
         src/ui_imgui/FleetPanel.cpp
@@ -174,6 +175,15 @@ if(DEEP_SIGNAL_BUILD_TESTS)
             PRIVATE deep_signal_app ${DEEP_SIGNAL_UI_DEPENDENCY_TARGET})
         target_compile_options(deep_signal_information_preview_layer_tests PRIVATE ${DEEP_SIGNAL_WARNINGS})
         add_test(NAME deep_signal_information_preview_layer_tests COMMAND deep_signal_information_preview_layer_tests)
+
+        add_executable(deep_signal_colony_processing_editor_tests
+            tests/colony_processing_editor_tests.cpp
+            src/ui_imgui/ColonyProcessingEditor.cpp
+        )
+        target_link_libraries(deep_signal_colony_processing_editor_tests
+            PRIVATE deep_signal_app ${DEEP_SIGNAL_UI_DEPENDENCY_TARGET})
+        target_compile_options(deep_signal_colony_processing_editor_tests PRIVATE ${DEEP_SIGNAL_WARNINGS})
+        add_test(NAME deep_signal_colony_processing_editor_tests COMMAND deep_signal_colony_processing_editor_tests)
 
         add_executable(deep_signal_information_navigation_tests
             tests/information_navigation_tests.cpp

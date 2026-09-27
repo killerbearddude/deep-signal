@@ -45,6 +45,18 @@ struct ProcessingAllocationSummary {
     double normalizedPercent = 0.0;
 };
 
+// Advisory view of an unapplied colony processing draft. The effective shares
+// are nominal capacity allocations, not guaranteed daily output; the actual
+// command still validates and applies through SimulationService.
+struct ColonyProcessingDraftPreview {
+    ColonyId colonyId;
+    ProcessingPolicy policy = ProcessingPolicy::Balanced;
+    std::string policyName;
+    bool valid = false;
+    std::string validationMessage;
+    std::vector<ProcessingAllocationSummary> effectiveAllocations;
+};
+
 // Display-ready processed material stockpile row used by allocation previews.
 // The Colony panel needs per-material amounts for Stockpile Recovery without
 // reaching into raw Colony::processedStockpile arrays.
@@ -462,6 +474,13 @@ public:
 
     // Returns one summary row per colony, including resolved body names.
     [[nodiscard]] std::vector<ColonySummary> colonies() const;
+
+    // Resolve a live colony and project one proposed processing policy without
+    // mutating state. nullopt means the colony is absent; malformed draft input
+    // instead returns an owned invalid result with a truthful reason.
+    [[nodiscard]] std::optional<ColonyProcessingDraftPreview> previewColonyProcessingPolicy(
+        ColonyId colonyId, ProcessingPolicy policy,
+        const std::vector<ProcessingAllocation>& manualAllocations) const;
 
     // Returns one summary row per shipyard order, including colony/class names.
     [[nodiscard]] std::vector<ShipyardOrderSummary> shipyardOrders() const;
