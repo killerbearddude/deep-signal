@@ -230,6 +230,61 @@ void test_manual_processing_policy_without_positive_total_weight_is_rejected() {
     });
 }
 
+void test_processing_allocation_aggregate_overflow_is_rejected() {
+    const double max = std::numeric_limits<double>::max();
+    for (const deep::ProcessingPolicy policy : {deep::ProcessingPolicy::Manual,
+                                                deep::ProcessingPolicy::Balanced}) {
+        expectInvalidState("duplicate material subtotal overflow", [policy, max](deep::GameState& state) {
+            state.colonies.front().processingPolicy = policy;
+            state.colonies.front().manualProcessingAllocations = {
+                {deep::ProcessedMaterial::Electronics, max},
+                {deep::ProcessedMaterial::Electronics, max}
+            };
+        });
+        expectInvalidState("cross-material combined total overflow", [policy, max](deep::GameState& state) {
+            state.colonies.front().processingPolicy = policy;
+            state.colonies.front().manualProcessingAllocations = {
+                {deep::ProcessedMaterial::StructuralAlloys, max},
+                {deep::ProcessedMaterial::Electronics, max}
+            };
+        });
+    }
+}
+
+void test_processing_allocation_extremes_and_preset_storage_are_valid() {
+    deep::GameState large = makeCompletedPrototypeState();
+    large.colonies.front().processingPolicy = deep::ProcessingPolicy::Manual;
+    large.colonies.front().manualProcessingAllocations = {
+        {deep::ProcessedMaterial::Electronics, std::numeric_limits<double>::max()}
+    };
+    deep::validateGameState(large);
+    [[maybe_unused]] deep::Simulation accepted{std::move(large)};
+
+    deep::GameState dormant = makeCompletedPrototypeState();
+    dormant.colonies.front().processingPolicy = deep::ProcessingPolicy::Balanced;
+    dormant.colonies.front().manualProcessingAllocations = {};
+    deep::validateGameState(dormant);
+    dormant.colonies.front().manualProcessingAllocations = {
+        {deep::ProcessedMaterial::Electronics, 0.0}
+    };
+    deep::validateGameState(dormant);
+}
+
+void test_constructor_rejects_overflowing_manual_configuration() {
+    deep::GameState invalid = makeCompletedPrototypeState();
+    invalid.colonies.front().processingPolicy = deep::ProcessingPolicy::Manual;
+    invalid.colonies.front().manualProcessingAllocations = {
+        {deep::ProcessedMaterial::StructuralAlloys, std::numeric_limits<double>::max()},
+        {deep::ProcessedMaterial::Electronics, std::numeric_limits<double>::max()}
+    };
+    try {
+        [[maybe_unused]] deep::Simulation rejected{std::move(invalid)};
+    } catch (const std::runtime_error&) {
+        return;
+    }
+    throw TestFailure{"Simulation constructor accepted overflowing manual allocations"};
+}
+
 void test_invalid_institution_references_are_rejected() {
     // Institution ownership is optional in v1, but any present reference must
     // resolve before later trust/access mechanics consume it.
@@ -459,6 +514,9 @@ int main() {
         test_invalid_manual_processing_material_is_rejected();
         test_invalid_manual_processing_weights_are_rejected();
         test_manual_processing_policy_without_positive_total_weight_is_rejected();
+        test_processing_allocation_aggregate_overflow_is_rejected();
+        test_processing_allocation_extremes_and_preset_storage_are_valid();
+        test_constructor_rejects_overflowing_manual_configuration();
         test_invalid_institution_references_are_rejected();
         test_invalid_personnel_records_are_rejected();
         test_invalid_appointment_records_are_rejected();

@@ -86,8 +86,9 @@ constexpr ProcessingPolicy kPolicies[]{
 
 [[nodiscard]] bool sameWeights(const Weights& a, const Weights& b) noexcept {
     for (std::size_t i = 0; i < a.size(); ++i) {
-        if (!std::isfinite(a[i]) || !std::isfinite(b[i]) ||
-            std::abs(a[i] - b[i]) > kProcessedMaterialComparisonEpsilon) return false;
+        // The validity epsilon does not define configuration identity: even a
+        // smaller positive edit must make the draft dirty or the basis stale.
+        if (!std::isfinite(a[i]) || !std::isfinite(b[i]) || a[i] != b[i]) return false;
     }
     return true;
 }
@@ -152,7 +153,7 @@ std::vector<ProcessingAllocation> processingAllocationsForDraft(const ColonyProc
     std::vector<ProcessingAllocation> rows;
     rows.reserve(draft.manualWeights.size());
     for (std::size_t i = 0; i < draft.manualWeights.size(); ++i) {
-        if (draft.manualWeights[i] > kProcessedMaterialComparisonEpsilon) {
+        if (draft.manualWeights[i] > 0.0) {
             rows.push_back({static_cast<ProcessedMaterial>(i), draft.manualWeights[i]});
         }
     }
@@ -411,8 +412,10 @@ void ColonyProcessingEditor::render(const SimulationQueries& queries, Simulation
                     const auto material = static_cast<ProcessedMaterial>(i);
                     double weight = record_->draft.manualWeights[i];
                     ImGui::PushID(static_cast<int>(i));
+                    // A valid stored Manual weight can be far larger than this
+                    // editor's drag range; keep its readout compact and finite.
                     if (ImGui::SliderScalar("Weight", ImGuiDataType_Double, &weight,
-                                            &minWeight, &maxWeight, "%.2f")) {
+                                            &minWeight, &maxWeight, "%.3g")) {
                         (void)setManualWeight(id, material, weight);
                     }
                     ImGui::SameLine();
@@ -431,7 +434,7 @@ void ColonyProcessingEditor::render(const SimulationQueries& queries, Simulation
                 for (const auto& row : state.preview->effectiveAllocations) {
                     ImGui::Text("%s: %.1f%% (%.1f units/day)", row.materialName.c_str(),
                         row.normalizedPercent,
-                        state.current->processorCapacity * row.normalizedPercent / 100.0);
+                        state.current->processorCapacity * (row.normalizedPercent / 100.0));
                 }
                 mutedText("Actual output may be lower when raw inputs are unavailable.");
             } else if (state.preview) {

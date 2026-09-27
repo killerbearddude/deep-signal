@@ -40,7 +40,8 @@ void require(const bool condition, const std::string_view message) {
 }
 
 void requireNear(const double actual, const double expected, const std::string_view message) {
-    if (std::abs(actual - expected) > 1.0e-6) {
+    if (!std::isfinite(actual) || !std::isfinite(expected) ||
+        std::abs(actual - expected) > 1.0e-6) {
         throw TestFailure{message};
     }
 }
@@ -270,9 +271,14 @@ void test_non_manual_policy_preserves_manual_weights() {
         .colonyId = colonyId,
         .policy = deep::ProcessingPolicy::Manual,
         .manualAllocations = {
-            deep::ProcessingAllocation{.material = deep::ProcessedMaterial::Propellant, .weight = 2.0}
+            deep::ProcessingAllocation{.material = deep::ProcessedMaterial::Propellant, .weight = 2.0},
+            deep::ProcessingAllocation{.material = deep::ProcessedMaterial::Electronics, .weight = 3.0},
+            deep::ProcessingAllocation{.material = deep::ProcessedMaterial::Propellant, .weight = 4.0}
         }
     }).ok, "initial manual processing policy is accepted");
+
+    const std::vector<deep::ProcessingAllocation> manualBefore =
+        sim.state().colonies.front().manualProcessingAllocations;
 
     require(sim.execute(deep::SetColonyProcessingPolicyCommand{
         .colonyId = colonyId,
@@ -284,9 +290,13 @@ void test_non_manual_policy_preserves_manual_weights() {
 
     const deep::Colony& colony = sim.state().colonies.front();
     require(colony.processingPolicy == deep::ProcessingPolicy::FuelFocus, "preset policy is stored");
-    require(colony.manualProcessingAllocations.size() == 1, "preset policy does not replace manual weights");
-    require(colony.manualProcessingAllocations.front().material == deep::ProcessedMaterial::Propellant,
-            "last manual material is preserved while preset policy is active");
+    require(colony.manualProcessingAllocations.size() == manualBefore.size(),
+            "preset policy does not replace manual rows");
+    for (std::size_t i = 0; i < manualBefore.size(); ++i) {
+        require(colony.manualProcessingAllocations[i].material == manualBefore[i].material &&
+                colony.manualProcessingAllocations[i].weight == manualBefore[i].weight,
+                "preset policy preserves duplicate manual rows in submitted order and value");
+    }
 }
 
 void test_manual_processing_policy_requires_positive_weight() {
@@ -360,6 +370,129 @@ void test_processing_policy_command_rejects_invalid_enum() {
     require(!result.ok, "invalid processing policy enum is rejected");
     require(sim.state().colonies.front().processingPolicy == deep::ProcessingPolicy::Balanced,
             "rejected invalid policy leaves the existing processing policy unchanged");
+}
+
+void requireOverflowRejectionPreservesGameplay(
+    const deep::ProcessingPolicy policy,
+    const std::vector<deep::ProcessingAllocation>& rows,
+    const std::string_view label) {
+    deep::Simulation sim{deep::createHomeSystemScenario()};
+    const deep::ColonyId colonyId = sim.state().colonies.front().id;
+
+    require(sim.execute(deep::SetColonyProcessingPolicyCommand{
+        .colonyId = colonyId,
+        .policy = deep::ProcessingPolicy::Manual,
+        .manualAllocations = {
+            {deep::ProcessedMaterial::Propellant, 2.0},
+            {deep::ProcessedMaterial::Electronics, 3.0}
+        }
+    }).ok, "setup stores a nonempty prior Manual configuration");
+
+    // Keep one prior rejection in the audit log so the test also verifies that
+    // a later rejection appends once without rewriting earlier history.
+    require(!sim.execute(deep::SetColonyProcessingPolicyCommand{
+        .colonyId = deep::ColonyId{999999},
+        .policy = deep::ProcessingPolicy::Balanced,
+        .manualAllocations = {}
+    }).ok, "setup rejection creates prior audit history");
+    const deep::GameState before = sim.state();
+
+    const auto result = sim.execute(deep::SetColonyProcessingPolicyCommand{
+        .colonyId = colonyId, .policy = policy, .manualAllocations = rows
+    });
+    require(!result.ok, label);
+
+    const deep::GameState& after = sim.state();
+    const deep::Colony& priorColony = before.colonies.front();
+    const deep::Colony& currentColony = after.colonies.front();
+    require(after.date.day == before.date.day, "rejected processing command preserves date");
+    require(currentColony.processingPolicy == priorColony.processingPolicy &&
+            currentColony.manualProcessingAllocations.size() == priorColony.manualProcessingAllocations.size(),
+            "rejected processing command preserves configuration");
+    for (std::size_t i = 0; i < priorColony.manualProcessingAllocations.size(); ++i) {
+        require(currentColony.manualProcessingAllocations[i].material ==
+                    priorColony.manualProcessingAllocations[i].material &&
+                currentColony.manualProcessingAllocations[i].weight ==
+                    priorColony.manualProcessingAllocations[i].weight,
+                "rejected processing command preserves prior Manual rows and order");
+    }
+    require(currentColony.stockpile.amount == priorColony.stockpile.amount &&
+            currentColony.processedStockpile.amount == priorColony.processedStockpile.amount &&
+            currentColony.mines == priorColony.mines &&
+            currentColony.processorCapacity == priorColony.processorCapacity &&
+            currentColony.shipyardCapacity == priorColony.shipyardCapacity,
+            "rejected processing command preserves colony inventory and capacity");
+    require(after.starSystems.size() == before.starSystems.size() &&
+            after.bodies.size() == before.bodies.size() &&
+            after.colonies.size() == before.colonies.size() &&
+            after.shipyardOrders.size() == before.shipyardOrders.size() &&
+            after.ships.size() == before.ships.size() &&
+            after.fleets.size() == before.fleets.size(),
+            "rejected processing command preserves entity and order counts");
+    require(after.ids.nextStarSystemId == before.ids.nextStarSystemId &&
+            after.ids.nextBodyId == before.ids.nextBodyId &&
+            after.ids.nextColonyId == before.ids.nextColonyId &&
+            after.ids.nextInstitutionId == before.ids.nextInstitutionId &&
+            after.ids.nextPersonId == before.ids.nextPersonId &&
+            after.ids.nextShipClassId == before.ids.nextShipClassId &&
+            after.ids.nextShipyardOrderId == before.ids.nextShipyardOrderId &&
+            after.ids.nextShipId == before.ids.nextShipId &&
+            after.ids.nextFleetId == before.ids.nextFleetId,
+            "rejected processing command preserves gameplay ID counters");
+    require(after.ids.nextEventId == before.ids.nextEventId + 1 &&
+            after.eventLog.size() == before.eventLog.size() + 1,
+            "rejected processing command adds exactly one audit event and advances its counter once");
+    require(after.eventLog.front().id == before.eventLog.front().id &&
+            after.eventLog.front().day == before.eventLog.front().day &&
+            std::get<deep::CommandRejectedEvent>(after.eventLog.front().payload).reason ==
+                std::get<deep::CommandRejectedEvent>(before.eventLog.front().payload).reason,
+            "rejected processing command preserves prior audit history");
+    require(after.eventLog.back().id.value == before.ids.nextEventId &&
+            after.eventLog.back().day == before.date.day &&
+            std::holds_alternative<deep::CommandRejectedEvent>(after.eventLog.back().payload),
+            "rejected processing command appends one current-day CommandRejectedEvent");
+}
+
+void test_processing_policy_rejects_aggregate_overflow_without_gameplay_mutation() {
+    const double max = std::numeric_limits<double>::max();
+    const std::vector<deep::ProcessingAllocation> sameMaterial{
+        {deep::ProcessedMaterial::Electronics, max},
+        {deep::ProcessedMaterial::Electronics, max}
+    };
+    const std::vector<deep::ProcessingAllocation> crossMaterial{
+        {deep::ProcessedMaterial::StructuralAlloys, max},
+        {deep::ProcessedMaterial::Electronics, max}
+    };
+
+    requireOverflowRejectionPreservesGameplay(deep::ProcessingPolicy::Manual, sameMaterial,
+                                              "Manual command rejects duplicate-material overflow");
+    requireOverflowRejectionPreservesGameplay(deep::ProcessingPolicy::Manual, crossMaterial,
+                                              "Manual command rejects combined-total overflow");
+    requireOverflowRejectionPreservesGameplay(deep::ProcessingPolicy::FuelFocus, sameMaterial,
+                                              "preset command rejects invalid supplied manual rows");
+}
+
+void test_single_maximum_manual_weight_produces_finite_output() {
+    deep::GameState state = deep::createHomeSystemScenario();
+    state.colonies.front().mines = 0.0;
+    state.colonies.front().processorCapacity = 40.0;
+    state.colonies.front().processedStockpile = deep::ProcessedMaterialSet{};
+    deep::Simulation sim{std::move(state)};
+    const deep::ColonyId colonyId = sim.state().colonies.front().id;
+
+    require(sim.execute(deep::SetColonyProcessingPolicyCommand{
+        .colonyId = colonyId,
+        .policy = deep::ProcessingPolicy::Manual,
+        .manualAllocations = {{deep::ProcessedMaterial::Electronics,
+                               std::numeric_limits<double>::max()}}
+    }).ok, "one maximum finite manual weight is accepted");
+    sim.advanceDays(1);
+
+    const deep::Colony& colony = sim.state().colonies.front();
+    requireNear(colony.processedStockpile.get(deep::ProcessedMaterial::Electronics), 40.0,
+                "a single large Manual weight directs all capacity to Electronics");
+    requireNear(colony.processedStockpile.get(deep::ProcessedMaterial::StructuralAlloys), 0.0,
+                "a single large Manual weight does not allocate capacity elsewhere");
 }
 
 void test_shipyard_completion() {
@@ -967,6 +1100,8 @@ int main() {
         test_manual_processing_policy_requires_positive_weight();
         test_manual_processing_policy_rejects_invalid_weights();
         test_processing_policy_command_rejects_invalid_enum();
+        test_processing_policy_rejects_aggregate_overflow_without_gameplay_mutation();
+        test_single_maximum_manual_weight_produces_finite_output();
         test_shipyard_completion();
         test_shipyard_capacity_is_shared_by_fifo_orders();
         test_shipyard_temporary_processed_material_shortage_recovers();
