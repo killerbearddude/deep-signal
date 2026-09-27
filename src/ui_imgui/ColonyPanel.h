@@ -20,6 +20,9 @@ namespace deep::ui_imgui {
 // the source of authoritative colony values.
 class ColonyPanel {
 public:
+    // Focus and scroll to one world-stamped colony row on the next visible render.
+    void requestReveal(ObjectReference target);
+
     // Draws one table row per colony summary, updates selection when rows are
     // clicked, and submits processing policy edits through the service layer.
     void render(const SimulationQueries& queries,
@@ -30,6 +33,7 @@ public:
     // Discard only this editor's old-world target/draft/status on success. A
     // failed Load never calls this; ordinary selection keeps existing behavior.
     void resetWorldState() {
+        pendingReveal_.reset();
         editingColony_.reset();
         selectedPolicy_ = ProcessingPolicy::Balanced;
         manualWeights_.fill(0.0);
@@ -38,12 +42,14 @@ public:
 
 private:
     friend struct InformationLifecycleTestAccess;
+    friend struct InformationRevealTestAccess;
     // Identity only: never retain pointers into a query result across frames.
     std::optional<ColonyId> editingColony_;
     ProcessingPolicy selectedPolicy_ = ProcessingPolicy::Balanced;
     // Dimensionless relative weights, not percentages or material quantities.
     std::array<double, processedMaterialCount()> manualWeights_{};
     std::string statusMessage_;
+    std::optional<ObjectReference> pendingReveal_;
 
     // Replaces the local draft from a copied DTO. A successful Apply invalidates
     // editingColony_ so the next render reloads the accepted service state.

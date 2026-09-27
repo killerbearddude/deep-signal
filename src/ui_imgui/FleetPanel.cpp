@@ -7,6 +7,7 @@
 
 #include <imgui.h>
 
+#include <algorithm>
 #include <string>
 #include <vector>
 
@@ -19,9 +20,36 @@ namespace {
 
 } // namespace
 
-void FleetPanel::render(const SimulationQueries& queries, InformationInteractionAdapter& interactions, bool& visible) const {
+void FleetPanel::requestReveal(const ObjectReference target) {
+    pendingReveal_ = target;
+}
+
+void FleetPanel::render(const SimulationQueries& queries, InformationInteractionAdapter& interactions, bool& visible) {
+    const auto displayedWorld = interactions.world();
+    if (pendingReveal_.has_value() && pendingReveal_->world != displayedWorld) {
+        pendingReveal_.reset();
+    }
     if (!visible) {
         return;
+    }
+
+    const std::vector<FleetSummary> fleets = queries.fleets();
+    std::optional<FleetId> revealRow;
+    if (pendingReveal_.has_value()) {
+        if (const auto* fleetId = std::get_if<FleetId>(&pendingReveal_->object)) {
+            const auto it = std::find_if(fleets.begin(), fleets.end(), [fleetId](const FleetSummary& fleet) {
+                return fleet.id == *fleetId;
+            });
+            if (it != fleets.end()) {
+                revealRow = *fleetId;
+            }
+        }
+        if (!revealRow.has_value()) {
+            pendingReveal_.reset();
+        } else {
+            ImGui::SetNextWindowCollapsed(false);
+            ImGui::SetNextWindowFocus();
+        }
     }
 
     if (!beginOperationalWindow("Fleets", &visible)) {
@@ -29,9 +57,7 @@ void FleetPanel::render(const SimulationQueries& queries, InformationInteraction
         return;
     }
 
-    const auto displayedWorld = interactions.world();
     auto selection = interactions.mainSelection();
-    const std::vector<FleetSummary> fleets = queries.fleets();
     ImGui::Text("Fleets: %zu", fleets.size());
 
     if (ImGui::BeginTable("FleetSummaryTable", 13, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable |
@@ -60,6 +86,10 @@ void FleetPanel::render(const SimulationQueries& queries, InformationInteraction
                                   ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowOverlap)) {
                 (void)interactions.select({displayedWorld, ObjectTarget{fleet.id}});
                 selection = interactions.mainSelection();
+            }
+            if (revealRow == fleet.id) {
+                ImGui::SetScrollHereY(0.5F);
+                pendingReveal_.reset();
             }
             ImGui::SameLine();
             ImGui::Text("%lld", static_cast<long long>(fleet.id.value));

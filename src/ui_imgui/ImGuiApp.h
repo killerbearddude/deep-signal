@@ -16,6 +16,7 @@
 #include "ui_imgui/FleetOrdersPanel.h"
 #include "ui_imgui/InspectorPanel.h"
 #include "ui_imgui/InformationPanel.h"
+#include "ui_imgui/InformationNavigation.h"
 #include "ui_imgui/InformationPreviewLayer.h"
 #include "ui_imgui/MainMenuBar.h"
 #include "ui_imgui/SaveLoadPanel.h"
@@ -23,6 +24,9 @@
 #include "ui_imgui/ShellLayout.h"
 #include "ui_imgui/StrategicMapPanel.h"
 #include "ui_imgui/TimeControlPanel.h"
+
+#include <optional>
+#include <string>
 
 namespace deep::ui_imgui {
 
@@ -61,6 +65,13 @@ private:
     // Draws the first functional simulation panels using app-layer query DTOs.
     void renderPanels();
 
+    // After every operational panel has been submitted, bring the validated
+    // destination window forward once so later preset windows cannot obscure it.
+    void focusNavigationDestination();
+
+    // A short UI-local message for an ordinary rejected Go To request.
+    void renderNavigationFeedback(ShellRegion workArea);
+
     // SDL must outlive ImGui backend shutdown in the destructor body.
     platform::SdlApp sdl_;
     SimulationService service_;
@@ -77,10 +88,14 @@ private:
     EventLogPanel eventLogPanel_;
     InspectorPanel inspectorPanel_;
     InformationPanel informationPanel_;
+    InformationNavigation navigation_;
     InformationPreviewLayer previewLayer_;
     StrategicMapPanel strategicMapPanel_;
     Workspace workspace_ = Workspace::System;
     PanelVisibility visibility_;
+    std::string navigationError_;
+    double navigationErrorUntil_ = 0.0;
+    std::optional<ObjectReference> pendingNavigationFocus_;
 };
 
 } // namespace deep::ui_imgui

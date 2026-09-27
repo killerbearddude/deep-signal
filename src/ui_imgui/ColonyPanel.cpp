@@ -172,12 +172,39 @@ void addProcessingWeight(std::array<double, processedMaterialCount()>& weights,
 
 } // namespace
 
+void ColonyPanel::requestReveal(const ObjectReference target) {
+    pendingReveal_ = target;
+}
+
 void ColonyPanel::render(const SimulationQueries& queries,
                          SimulationService& service,
                          InformationInteractionAdapter& interactions,
                          bool& visible) {
+    const auto displayedWorld = interactions.world();
+    if (pendingReveal_.has_value() && pendingReveal_->world != displayedWorld) {
+        pendingReveal_.reset();
+    }
     if (!visible) {
         return;
+    }
+
+    const std::vector<ColonySummary> colonies = queries.colonies();
+    std::optional<ColonyId> revealRow;
+    if (pendingReveal_.has_value()) {
+        if (const auto* colonyId = std::get_if<ColonyId>(&pendingReveal_->object)) {
+            const auto it = std::find_if(colonies.begin(), colonies.end(), [colonyId](const ColonySummary& colony) {
+                return colony.id == *colonyId;
+            });
+            if (it != colonies.end()) {
+                revealRow = *colonyId;
+            }
+        }
+        if (!revealRow.has_value()) {
+            pendingReveal_.reset();
+        } else {
+            ImGui::SetNextWindowCollapsed(false);
+            ImGui::SetNextWindowFocus();
+        }
     }
 
     if (!beginOperationalWindow("Colonies", &visible)) {
@@ -185,9 +212,7 @@ void ColonyPanel::render(const SimulationQueries& queries,
         return;
     }
 
-    const auto displayedWorld = interactions.world();
     auto selection = interactions.mainSelection();
-    const std::vector<ColonySummary> colonies = queries.colonies();
     ImGui::Text("Colonies: %zu", colonies.size());
 
     if (ImGui::BeginTable("ColonySummaryTable", 9, kColonyTableFlags)) {
@@ -214,6 +239,10 @@ void ColonyPanel::render(const SimulationQueries& queries,
                 // Refresh from the authority before this panel's editor consumes
                 // selection. This is a projection, never a second selection owner.
                 selection = interactions.mainSelection();
+            }
+            if (revealRow == colony.id) {
+                ImGui::SetScrollHereY(0.5F);
+                pendingReveal_.reset();
             }
             ImGui::SameLine();
             ImGui::Text("%lld", static_cast<long long>(colony.id.value));

@@ -94,6 +94,29 @@ constexpr double kButtonZoomOut = 1.0 / kButtonZoomIn;
     return std::nullopt;
 }
 
+[[nodiscard]] std::optional<render::MapPoint> revealMapAnchor(
+    const ObjectTarget& target,
+    const std::vector<StrategicBodySummary>& bodies,
+    const std::vector<StrategicFleetSummary>& fleets) {
+    if (const auto* bodyId = std::get_if<BodyId>(&target)) {
+        const auto it = std::find_if(bodies.begin(), bodies.end(), [bodyId](const StrategicBodySummary& body) {
+            return body.id == *bodyId;
+        });
+        if (it != bodies.end()) {
+            return render::MapPoint{.x = it->x, .y = it->y};
+        }
+    } else if (const auto* fleetId = std::get_if<FleetId>(&target)) {
+        const auto it = std::find_if(fleets.begin(), fleets.end(), [fleetId](const StrategicFleetSummary& fleet) {
+            return fleet.id == *fleetId;
+        });
+        if (it != fleets.end()) {
+            return render::MapPoint{.x = it->x, .y = it->y};
+        }
+    }
+
+    return std::nullopt;
+}
+
 void applyMapSelection(const std::optional<render::StrategicMapSelection>& picked,
                        const WorldGeneration displayedWorld, InformationInteractionAdapter& interactions) {
     if (!picked.has_value()) {
@@ -110,19 +133,42 @@ void applyMapSelection(const std::optional<render::StrategicMapSelection>& picke
 
 } // namespace
 
+void StrategicMapPanel::requestReveal(const ObjectReference target) {
+    pendingReveal_ = target;
+}
+
 void StrategicMapPanel::render(const SimulationQueries& queries, InformationInteractionAdapter& interactions, bool& visible) {
+    const auto displayedWorld = interactions.world();
+    if (pendingReveal_.has_value() && pendingReveal_->world != displayedWorld) {
+        pendingReveal_.reset();
+    }
     if (!visible) {
         return;
     }
 
-    const auto displayedWorld = interactions.world();
     auto selection = interactions.mainSelection();
     const auto bodies = queries.strategicBodies();
     const auto fleets = queries.strategicFleets();
+    std::optional<render::MapPoint> revealAnchor;
+    if (pendingReveal_.has_value()) {
+        revealAnchor = revealMapAnchor(pendingReveal_->object, bodies, fleets);
+        if (!revealAnchor.has_value()) {
+            pendingReveal_.reset();
+        } else {
+            ImGui::SetNextWindowCollapsed(false);
+            ImGui::SetNextWindowFocus();
+        }
+    }
 
     if (!beginOperationalWindow("Strategic Map", &visible)) {
         ImGui::End();
         return;
+    }
+    if (revealAnchor.has_value()) {
+        // Center on the current projected position. MapCamera::centerOn leaves
+        // zoom unchanged, and the request is consumed before normal controls.
+        camera_.centerOn(*revealAnchor);
+        pendingReveal_.reset();
     }
     ImGui::TextUnformatted("Right-drag to pan. Mouse wheel to zoom. Left-click a marker to inspect or choose a move destination.");
     ImGui::TextUnformatted("Fleet routes show sustained-burn projected intercept arcs; low-energy transfers are not modeled yet.");

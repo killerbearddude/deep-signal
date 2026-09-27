@@ -72,6 +72,20 @@ bool InformationInteractionAdapter::unpin(const PreviewId id) { return state_.un
 
 bool InformationInteractionAdapter::closePreview(const PreviewId id) { return state_.close(id); }
 
+std::optional<PreviewGoToRequest> InformationInteractionAdapter::requestGoTo(
+    const PreviewId sourcePreviewId, const ObjectReference displayedTarget) {
+    reconcile();
+    const auto previews = state_.previewSnapshot();
+    const auto source = std::find_if(previews.begin(), previews.end(), [sourcePreviewId](const auto& preview) {
+        return preview.id == sourcePreviewId;
+    });
+    if (source == previews.end() || source->target != displayedTarget
+        || !state_.requestGoTo(displayedTarget, [this](const auto& target) { return targetExists(target); })) {
+        return std::nullopt;
+    }
+    return PreviewGoToRequest{sourcePreviewId, displayedTarget, source->pinned};
+}
+
 CommandResult InformationInteractionAdapter::finishReplacement(const WorldGeneration origin, CommandResult result) {
     if (!state_.worldReplacementFinished(origin, result.ok)) {
         // The service may already have replaced the world. Continuing with stale

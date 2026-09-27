@@ -17,14 +17,20 @@ namespace deep::ui_imgui {
 // No simulation state is mutated and no raw GameState records are exposed here.
 class StrategicMapPanel {
 public:
+    // Request one presentation-only reveal of a body or fleet in this world.
+    // The current map DTO supplies the position when the panel next renders.
+    void requestReveal(ObjectReference target);
+
     // Draws the strategic map using app-layer query DTOs and updates close state.
     void render(const SimulationQueries& queries, InformationInteractionAdapter& interactions, bool& visible);
 
 private:
+    friend struct InformationRevealTestAccess;
     // UI-only view state survives closing the panel and replacing the world.
     // Reset View restores the default camera; save files do not persist it.
     render::MapCamera camera_;
     render::StrategicMapView view_;
+    std::optional<ObjectReference> pendingReveal_;
 };
 
 } // namespace deep::ui_imgui

@@ -110,6 +110,7 @@ if(DEEP_SIGNAL_BUILD_UI)
         src/ui_imgui/FleetOrdersPanel.cpp
         src/ui_imgui/ImGuiApp.cpp
         src/ui_imgui/InformationPanel.cpp
+        src/ui_imgui/InformationNavigation.cpp
         src/ui_imgui/InformationPreviewLayer.cpp
         src/ui_imgui/InformationRelationshipRows.cpp
         src/ui_imgui/InformationRelationships.cpp
@@ -173,6 +174,39 @@ if(DEEP_SIGNAL_BUILD_TESTS)
             PRIVATE deep_signal_app ${DEEP_SIGNAL_UI_DEPENDENCY_TARGET})
         target_compile_options(deep_signal_information_preview_layer_tests PRIVATE ${DEEP_SIGNAL_WARNINGS})
         add_test(NAME deep_signal_information_preview_layer_tests COMMAND deep_signal_information_preview_layer_tests)
+
+        add_executable(deep_signal_information_navigation_tests
+            tests/information_navigation_tests.cpp
+            src/ui_imgui/InformationNavigation.cpp
+            src/ui_imgui/MainMenuBar.cpp
+            src/ui_imgui/SaveLoadPanel.cpp
+            src/ui_imgui/StrategicMapPanel.cpp
+            src/ui_imgui/ColonyPanel.cpp
+            src/ui_imgui/FleetPanel.cpp
+            src/ui_imgui/OperationalWindow.cpp
+            src/ui_imgui/ShellLayout.cpp
+            src/render/MapCamera.cpp
+            src/render/StrategicMapView.cpp
+        )
+        target_link_libraries(deep_signal_information_navigation_tests
+            PRIVATE deep_signal_app ${DEEP_SIGNAL_UI_DEPENDENCY_TARGET})
+        target_compile_options(deep_signal_information_navigation_tests PRIVATE ${DEEP_SIGNAL_WARNINGS})
+        add_test(NAME deep_signal_information_navigation_tests COMMAND deep_signal_information_navigation_tests)
+
+        add_executable(deep_signal_information_reveal_tests
+            tests/information_reveal_tests.cpp
+            src/render/MapCamera.cpp
+            src/render/StrategicMapView.cpp
+            src/ui_imgui/StrategicMapPanel.cpp
+            src/ui_imgui/ColonyPanel.cpp
+            src/ui_imgui/FleetPanel.cpp
+            src/ui_imgui/OperationalWindow.cpp
+            src/ui_imgui/ShellLayout.cpp
+        )
+        target_link_libraries(deep_signal_information_reveal_tests
+            PRIVATE deep_signal_app ${DEEP_SIGNAL_UI_DEPENDENCY_TARGET})
+        target_compile_options(deep_signal_information_reveal_tests PRIVATE ${DEEP_SIGNAL_WARNINGS})
+        add_test(NAME deep_signal_information_reveal_tests COMMAND deep_signal_information_reveal_tests)
     endif()
 
     # Compile the identity-only model directly so its boundary tests also run

@@ -12,10 +12,13 @@
 #include <imgui_impl_sdl3.h>
 #include <imgui_impl_sdlrenderer3.h>
 
+#include <algorithm>
 #include <cstdlib>
 #include <cstdio>
 #include <exception>
 #include <iostream>
+#include <type_traits>
+#include <variant>
 
 namespace deep::ui_imgui {
 
@@ -85,7 +88,19 @@ int ImGuiApp::run() {
             informationPanel_.render(queries, interactions_.mainSelection(), interactions_,
                 {layout.information.x, layout.information.y},
                 {layout.information.width, layout.information.height});
-            previewLayer_.render(queries, interactions_, layout.dock);
+            if (const auto intent = previewLayer_.render(queries, interactions_, layout.dock)) {
+                const NavigationResult result = navigation_.goTo(
+                    *intent, queries, interactions_, workspace_, visibility_,
+                    strategicMapPanel_, colonyPanel_, fleetPanel_);
+                if (result.ok()) {
+                    navigationError_.clear();
+                    pendingNavigationFocus_ = intent->displayedTarget;
+                } else {
+                    navigationError_ = result.message;
+                    navigationErrorUntil_ = ImGui::GetTime() + 5.0;
+                }
+            }
+            renderNavigationFeedback(layout.dock);
         }
 
         ImGui::Render();
@@ -153,6 +168,61 @@ void ImGuiApp::renderPanels() {
     economyForecastPanel_.render(forecasts, visibility_.economyForecast);
     eventLogPanel_.render(queries, visibility_.eventLog);
     inspectorPanel_.render(queries, service_, interactions_.mainSelection(), visibility_.inspector);
+    focusNavigationDestination();
+}
+
+void ImGuiApp::focusNavigationDestination() {
+    if (!pendingNavigationFocus_) return;
+    if (pendingNavigationFocus_->world != interactions_.world()) {
+        pendingNavigationFocus_.reset();
+        return;
+    }
+
+    const ObjectTarget target = pendingNavigationFocus_->object;
+    const SelectionState selected = interactions_.mainSelection();
+    const bool stillSelected = std::visit([&](const auto id) {
+        using Id = std::decay_t<decltype(id)>;
+        if constexpr (std::is_same_v<Id, BodyId>) return selected.isBodySelected(id);
+        else if constexpr (std::is_same_v<Id, ColonyId>) return selected.isColonySelected(id);
+        else return selected.isFleetSelected(id);
+    }, target);
+    if (!stillSelected) {
+        pendingNavigationFocus_.reset();
+        return;
+    }
+
+    if (std::holds_alternative<BodyId>(target) && visibility_.strategicMap) {
+        ImGui::SetWindowFocus("Strategic Map");
+    } else if (std::holds_alternative<ColonyId>(target) && visibility_.colonies) {
+        ImGui::SetWindowFocus("Colonies");
+    } else if (std::holds_alternative<FleetId>(target) && visibility_.fleets) {
+        ImGui::SetWindowFocus("Fleets");
+    }
+    pendingNavigationFocus_.reset();
+}
+
+void ImGuiApp::renderNavigationFeedback(const ShellRegion workArea) {
+    if (navigationError_.empty()) return;
+    if (ImGui::GetTime() >= navigationErrorUntil_) {
+        navigationError_.clear();
+        return;
+    }
+    const float width = std::min(420.0F, workArea.width - 24.0F);
+    if (width < 160.0F || workArea.height < 100.0F) return;
+
+    ImGui::SetNextWindowPos({workArea.x + 12.0F, workArea.y + workArea.height - 96.0F});
+    ImGui::SetNextWindowSize({width, 84.0F});
+    constexpr ImGuiWindowFlags flags = ImGuiWindowFlags_NoDocking |
+        ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing |
+        ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize |
+        ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoTitleBar;
+    if (ImGui::Begin("Go To feedback###InformationNavigationFeedback", nullptr, flags)) {
+        ImGui::PushStyleColor(ImGuiCol_Text, {0.92F, 0.70F, 0.37F, 1.0F});
+        ImGui::TextWrapped("%s", navigationError_.c_str());
+        ImGui::PopStyleColor();
+        if (ImGui::SmallButton("Dismiss##go_to_error")) navigationError_.clear();
+    }
+    ImGui::End();
 }
 
 } // namespace deep::ui_imgui

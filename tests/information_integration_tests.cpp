@@ -305,6 +305,86 @@ void test_adapter_preview_snapshot_reconciles_missing_targets() {
             "previewSnapshot propagates a query failure without partially changing interaction state");
 }
 
+void test_adapter_go_to_binds_source_target_and_disposition_without_navigation() {
+    Fixture f;
+    require(f.adapter.select(f.selection(f.mars())), "Go To validation begins with Mars selected");
+    const auto colony = f.ref(f.colonyId());
+    const auto fleet = f.ref(f.fleetId());
+    const auto source = f.inspect(f.colonyId());
+    const auto before = f.interactionSnapshot();
+    const auto date = f.service.state().date.day;
+
+    require(f.adapter.requestGoTo(source, colony) == PreviewGoToRequest{source, colony, false},
+            "matching temporary source and displayed target produce validated request");
+    require(f.interactionSnapshot() == before && f.service.state().date.day == date,
+            "Go To validation alone does not select, retarget, close, pin, or advance time");
+
+    require(f.adapter.pin(source), "pin displayed source");
+    const auto pinnedBefore = f.interactionSnapshot();
+    require(f.adapter.requestGoTo(source, colony) == PreviewGoToRequest{source, colony, true},
+            "same source reports pinned disposition without navigating");
+    require(f.interactionSnapshot() == pinnedBefore, "validation leaves pinned source unchanged");
+
+    const auto temporary = f.inspect(f.fleetId());
+    const auto withTemporary = f.interactionSnapshot();
+    require(f.adapter.requestGoTo(temporary, fleet) == PreviewGoToRequest{temporary, fleet, false},
+            "temporary source validates beside an unrelated pin");
+    require(!f.adapter.requestGoTo(source, fleet), "source ID cannot authorize a different displayed target");
+    require(!f.adapter.requestGoTo(PreviewId{f.adapter.world(), temporary.value + 1000}, fleet),
+            "unknown source ID is rejected even for a real target");
+    require(!f.adapter.requestGoTo(PreviewId{WorldGeneration{0}, temporary.value}, fleet),
+            "source ID from another world is rejected");
+    require(!f.adapter.requestGoTo(temporary, ObjectReference{WorldGeneration{0}, fleet.object}),
+            "displayed target from another world is rejected");
+    require(f.interactionSnapshot() == withTemporary,
+            "all ordinary Go To rejections preserve selection and preview records");
+
+    require(f.adapter.closePreview(temporary), "close temporary before its queued Go To dispatch");
+    const auto afterClose = f.interactionSnapshot();
+    require(!f.adapter.requestGoTo(temporary, fleet) && f.interactionSnapshot() == afterClose,
+            "closed source cannot navigate or alter an unrelated pin");
+}
+
+void test_adapter_go_to_rejects_retargeted_replaced_and_missing_targets() {
+    Fixture f;
+    require(f.adapter.select(f.selection(f.mars())), "main Mars selection for delayed Go To");
+    const auto colony = f.ref(f.colonyId());
+    const auto fleet = f.ref(f.fleetId());
+    const auto temporary = f.inspect(f.colonyId());
+    require(f.inspect(f.fleetId()) == temporary, "inspection retargets same temporary PreviewId");
+    const auto afterRetarget = f.interactionSnapshot();
+    require(!f.adapter.requestGoTo(temporary, colony) && f.interactionSnapshot() == afterRetarget,
+            "old displayed target is rejected after temporary retarget");
+    require(f.adapter.requestGoTo(temporary, fleet) == PreviewGoToRequest{temporary, fleet, false},
+            "new displayed target remains valid under same PreviewId");
+
+    const auto oldWorld = f.adapter.world();
+    require(f.adapter.newGame().ok, "replace world before delayed Go To dispatch");
+    const auto newSource = f.inspect(f.colonyId());
+    const auto afterReplacement = f.interactionSnapshot();
+    require(f.adapter.world() != oldWorld && newSource != temporary, "replacement changes world and preview identity");
+    require(!f.adapter.requestGoTo(temporary, fleet), "old source and target cannot attach to reused numeric IDs");
+    require(!f.adapter.requestGoTo(newSource, colony), "current source cannot authorize old-world displayed target");
+    require(f.interactionSnapshot() == afterReplacement, "stale requests leave the new world context intact");
+
+    Fixture missing;
+    require(missing.adapter.select(missing.selection(missing.mars())), "select unaffected body");
+    const auto retained = missing.inspect(missing.colonyId());
+    require(missing.adapter.pin(retained), "retain unrelated colony pin");
+    const auto disappearing = missing.inspect(missing.fleetId());
+    const auto disappearingTarget = missing.ref(missing.fleetId());
+    auto changed = missing.service.state();
+    changed.fleets.clear();
+    changed.ships.clear();
+    missing.service = SimulationService{std::move(changed)};
+    require(!missing.adapter.requestGoTo(disappearing, disappearingTarget),
+            "live reconciliation rejects a target removed before Go To dispatch");
+    const auto remaining = missing.adapter.previewSnapshot();
+    require(remaining.size() == 1 && remaining.front().id == retained && remaining.front().pinned
+            && missing.adapter.state().mainTarget() == missing.ref(missing.mars()),
+            "missing target reconciliation removes only its stale preview and preserves main context and pin");
+}
+
 void test_new_game_success_clears_hidden_workflows_once() {
     Fixture f;
     f.seed();
@@ -456,6 +536,8 @@ int main() {
         {"adapter preview actions retain identities and main selection", test_adapter_preview_actions_keep_window_and_main_identities},
         {"adapter preview snapshot follows replacement outcomes", test_adapter_preview_snapshot_follows_replacement_outcomes},
         {"adapter preview snapshot reconciles missing targets", test_adapter_preview_snapshot_reconciles_missing_targets},
+        {"adapter Go To validates exact source, target, and disposition", test_adapter_go_to_binds_source_target_and_disposition_without_navigation},
+        {"adapter Go To rejects retargeted, replaced, and missing targets", test_adapter_go_to_rejects_retargeted_replaced_and_missing_targets},
         {"real New Game and hidden-workflow resets", test_new_game_success_clears_hidden_workflows_once},
         {"real Load, reused IDs, and same-frame stale intentions", test_real_load_and_same_frame_stale_intentions},
         {"failed/empty/malformed loads preserve world and drafts", test_failed_loads_preserve_state_and_actual_workflow_drafts},

@@ -101,11 +101,13 @@ struct Fixture {
         return *id;
     }
 
-    [[nodiscard]] std::string render() {
+    [[nodiscard]] std::string render(const SimulationQueries* displayQueries = nullptr) {
         capturedText.clear();
         ImGui::NewFrame();
         ImGui::LogToClipboard();
-        layer.render(queries, interactions, {0.0F, 24.0F, 920.0F, 696.0F});
+        const auto goTo = layer.render(displayQueries ? *displayQueries : queries,
+                                       interactions, {0.0F, 24.0F, 920.0F, 696.0F});
+        require(!goTo.has_value(), "render without activation emits no Go To intention");
         ImGui::LogFinish();
         ImGui::Render();
         require(interactions.mainSelection().isBodySelected(mainBody),
@@ -130,6 +132,13 @@ void native_condensed_overviews_and_stable_identity() {
     const std::string name = ui_imgui::informationPreviewWindowName(temporary);
     require(name == "Preview###InformationPreview_W1_P1", "window ID includes generation and PreviewId");
     require(name.find(body.name) == std::string::npos, "display name is never the native window ID");
+    const auto bodyContentName = ui_imgui::informationPreviewContentName(
+        {temporary.world, body.id});
+    require(bodyContentName == ui_imgui::informationPreviewContentName({temporary.world, body.id})
+            && bodyContentName != ui_imgui::informationPreviewContentName({temporary.world, colony.id})
+            && bodyContentName != ui_imgui::informationPreviewContentName(
+                {WorldGeneration{temporary.world.value + 1}, body.id}),
+            "same-target refresh keeps inner scroll identity; retarget or world replacement resets it");
     const auto bodyText = fixture.render();
     contains(bodyText, body.name);
     contains(bodyText, body.typeName);
@@ -145,6 +154,7 @@ void native_condensed_overviews_and_stable_identity() {
     contains(bodyText, "STATIONED FLEETS");
     contains(bodyText, fleet.name);
     contains(bodyText, "Inspect >");
+    contains(bodyText, "Go To >");
 
     require(fixture.inspect(colony.id) == temporary, "temporary retarget preserves PreviewId");
     require(ui_imgui::informationPreviewWindowName(temporary) == name, "retarget keeps native window name");
@@ -157,6 +167,7 @@ void native_condensed_overviews_and_stable_identity() {
     contains(colonyText, "Body");
     contains(colonyText, body.name);
     contains(colonyText, "Inspect >");
+    contains(colonyText, "Go To >");
     require(colonyText.find("BODY ") == std::string::npos,
             "retarget does not retain the prior body overview");
 
@@ -171,10 +182,32 @@ void native_condensed_overviews_and_stable_identity() {
     contains(fleetText, "Current body");
     contains(fleetText, body.name);
     contains(fleetText, "Inspect >");
+    contains(fleetText, "Go To >");
     require(fleetText.find(colony.name) == std::string::npos, "fleet does not retain colony text");
     const std::string settings = ImGui::SaveIniSettingsToMemory();
     require(settings.find("InformationPreview_") == std::string::npos
         && settings.find("literal") == std::string::npos, "session preview IDs create no saved settings");
+}
+
+void unresolved_display_omits_navigation_control() {
+    Fixture fixture;
+    const FleetId fleet = fixture.queries.fleets().front().id;
+    const auto preview = fixture.inspect(fleet);
+
+    // The interaction owner has a live fleet, but the display query cannot
+    // resolve it. This exercises the between-snapshot-and-display fallback
+    // without treating a query exception as an absent target.
+    auto missingWorld = makeWorld();
+    missingWorld.fleets.clear();
+    missingWorld.ships.clear();
+    SimulationService missingService{std::move(missingWorld)};
+    SimulationQueries missingQueries{missingService};
+    const auto text = fixture.render(&missingQueries);
+    contains(text, "Selected object unavailable");
+    require(text.find("Go To >") == std::string::npos,
+            "unresolved preview offers no Go To control");
+    require(fixture.interactions.previewSnapshot().front().id == preview,
+            "display-query mismatch does not remove the interaction record");
 }
 
 void independent_pins_and_live_values() {
@@ -220,6 +253,8 @@ int main() {
     try {
         native_condensed_overviews_and_stable_identity();
         std::cout << "PASS condensed native previews and stable window identity\n";
+        unresolved_display_omits_navigation_control();
+        std::cout << "PASS unresolved display omits Go To\n";
         independent_pins_and_live_values();
         std::cout << "PASS duplicate pins, live DTOs, and world lifecycle\n";
         return EXIT_SUCCESS;

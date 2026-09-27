@@ -21,6 +21,15 @@ struct MainSelectionIntent {
     std::optional<ObjectTarget> target;
 };
 
+// Validated preview-originated navigation data. The UI navigation coordinator
+// decides where to go and whether to close the source after successful travel.
+struct PreviewGoToRequest {
+    PreviewId sourcePreviewId;
+    ObjectReference target;
+    bool sourceWasPinned = false;
+    bool operator==(const PreviewGoToRequest&) const = default;
+};
+
 class InformationInteractionAdapter {
 public:
     // The service and callback's workflow owners must outlive this adapter's use.
@@ -45,6 +54,11 @@ public:
     [[nodiscard]] bool pin(PreviewId id);
     [[nodiscard]] bool unpin(PreviewId id);
     [[nodiscard]] bool closePreview(PreviewId id);
+
+    // Bind an explicit Go To click to the exact preview and target displayed at
+    // activation. Reconcile and validate live existence; return data only.
+    [[nodiscard]] std::optional<PreviewGoToRequest> requestGoTo(
+        PreviewId sourcePreviewId, ObjectReference displayedTarget);
 
     // Shared by File and legacy-panel routes through SaveLoadPanel. Execute once,
     // then acknowledge the returned result once. Preserve the original result;

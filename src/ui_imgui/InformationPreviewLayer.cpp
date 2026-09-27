@@ -146,14 +146,14 @@ void unavailable() {
     wrappedText("Current information could not be resolved.");
 }
 
-void bodyPreview(const SimulationQueries& queries, const BodyId id) {
+[[nodiscard]] bool bodyPreview(const SimulationQueries& queries, const BodyId id) {
     const auto bodies = queries.bodySystemOverview();
     const auto body = std::find_if(bodies.begin(), bodies.end(), [id](const BodySystemSummary& row) {
         return row.id == id;
     });
     if (body == bodies.end()) {
         unavailable();
-        return;
+        return false;
     }
 
     identity(body->name, "BODY \xc2\xb7 " + namedOrUnknown(body->typeName));
@@ -167,16 +167,17 @@ void bodyPreview(const SimulationQueries& queries, const BodyId id) {
         fact("Deposits", std::to_string(body->mineralDepositCount));
         ImGui::EndTable();
     }
+    return true;
 }
 
-void colonyPreview(const SimulationQueries& queries, const ColonyId id) {
+[[nodiscard]] bool colonyPreview(const SimulationQueries& queries, const ColonyId id) {
     const auto colonies = queries.colonies();
     const auto colony = std::find_if(colonies.begin(), colonies.end(), [id](const ColonySummary& row) {
         return row.id == id;
     });
     if (colony == colonies.end()) {
         unavailable();
-        return;
+        return false;
     }
 
     identity(colony->name, "COLONY \xc2\xb7 " + namedOrUnknown(colony->bodyName));
@@ -189,13 +190,14 @@ void colonyPreview(const SimulationQueries& queries, const ColonyId id) {
         fact("Processed stockpile", quantity(colony->totalProcessedStockpile, 1, "units"));
         ImGui::EndTable();
     }
+    return true;
 }
 
-void fleetPreview(const SimulationQueries& queries, const FleetId id) {
+[[nodiscard]] bool fleetPreview(const SimulationQueries& queries, const FleetId id) {
     const auto fleet = queries.fleet(id);
     if (!fleet.has_value()) {
         unavailable();
-        return;
+        return false;
     }
 
     const std::string location = fleet->hasActiveOrder
@@ -213,24 +215,26 @@ void fleetPreview(const SimulationQueries& queries, const FleetId id) {
             : (fleet->activeOrderEtaDays.has_value() ? std::to_string(*fleet->activeOrderEtaDays) + " d" : "Unknown"));
         ImGui::EndTable();
     }
+    return true;
 }
 
-void renderTarget(const SimulationQueries& queries, const ObjectTarget& target) {
-    std::visit([&](const auto id) {
+[[nodiscard]] bool renderTarget(const SimulationQueries& queries, const ObjectTarget& target) {
+    return std::visit([&](const auto id) -> bool {
         using IdType = std::decay_t<decltype(id)>;
         if constexpr (std::is_same_v<IdType, BodyId>) {
-            bodyPreview(queries, id);
+            return bodyPreview(queries, id);
         } else if constexpr (std::is_same_v<IdType, ColonyId>) {
-            colonyPreview(queries, id);
+            return colonyPreview(queries, id);
         } else {
-            fleetPreview(queries, id);
+            return fleetPreview(queries, id);
         }
     }, target);
 }
 
 void renderOne(const SimulationQueries& queries, const InformationPreview& preview,
                const ShellRegion work, std::vector<PreviewAction>& actions,
-               std::vector<ObjectReference>& inspectionRequests) {
+               std::vector<ObjectReference>& inspectionRequests,
+               std::optional<PreviewGoToIntent>& goToIntent) {
     const std::string name = informationPreviewWindowName(preview.id);
     const ShellRegion initial = initialPreviewGeometry(preview.id, work);
     ImGui::SetNextWindowPos({initial.x, initial.y}, ImGuiCond_Once);
@@ -257,7 +261,8 @@ void renderOne(const SimulationQueries& queries, const InformationPreview& previ
     ImGui::PushStyleColor(ImGuiCol_ButtonActive, kButtonActive);
     constexpr ImGuiWindowFlags flags = ImGuiWindowFlags_NoDocking |
         ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing |
-        ImGuiWindowFlags_NoCollapse;
+        ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar |
+        ImGuiWindowFlags_NoScrollWithMouse;
     bool open = true;
     if (ImGui::Begin(name.c_str(), &open, flags) && open) {
         ImGui::PushStyleColor(ImGuiCol_Text, kAccent);
@@ -271,9 +276,34 @@ void renderOne(const SimulationQueries& queries, const InformationPreview& previ
             actions.push_back({preview.id, ActionKind::Close});
         }
         ImGui::Separator();
-        renderTarget(queries, preview.target.object);
-        renderInformationRelationshipRows(
-            informationRelationships(queries, preview.target), inspectionRequests);
+        // Keep facts and relationships scrollable while Go To remains visible
+        // at the bottom of a compact or resized preview.
+        const float footerHeight = ImGui::GetFrameHeightWithSpacing() +
+                                   ImGui::GetStyle().ItemSpacing.y * 2.0F;
+        bool resolved = false;
+        const std::string contentName = informationPreviewContentName(preview.target);
+        if (ImGui::BeginChild(contentName.c_str(), {0.0F, -footerHeight})) {
+            resolved = renderTarget(queries, preview.target.object);
+            if (resolved) {
+                renderInformationRelationshipRows(
+                    informationRelationships(queries, preview.target), inspectionRequests);
+            }
+        }
+        ImGui::EndChild();
+        if (resolved) {
+            ImGui::Separator();
+            // The window name contains the immutable PreviewId and world. The
+            // explicit scope keeps this control independent of object names.
+            ImGui::PushID(name.c_str());
+            ImGui::PushStyleColor(ImGuiCol_Text, kAccent);
+            if (ImGui::Button("Go To >##preview_go_to",
+                              {ImGui::GetContentRegionAvail().x, 0.0F}) &&
+                !goToIntent.has_value()) {
+                goToIntent = PreviewGoToIntent{preview.id, preview.target};
+            }
+            ImGui::PopStyleColor();
+            ImGui::PopID();
+        }
     }
     ImGui::End();
     ImGui::PopStyleColor(9);
@@ -290,20 +320,28 @@ std::string informationPreviewWindowName(const PreviewId id) {
            "_P" + std::to_string(id.value);
 }
 
-void InformationPreviewLayer::render(const SimulationQueries& queries,
-                                     InformationInteractionAdapter& interactions,
-                                     const ShellRegion workArea) const {
+std::string informationPreviewContentName(const ObjectReference target) {
+    const auto value = std::visit([](const auto id) { return id.value; }, target.object);
+    return "##preview_content_W" + std::to_string(target.world.value) +
+           "_T" + std::to_string(target.object.index()) +
+           "_" + std::to_string(value);
+}
+
+std::optional<PreviewGoToIntent> InformationPreviewLayer::render(
+    const SimulationQueries& queries, InformationInteractionAdapter& interactions,
+    const ShellRegion workArea) const {
     const auto previews = interactions.previewSnapshot();
     // An almost minimized shell cannot expose a usable title bar. Keep the
     // records intact; the same native windows recover when the shell is larger.
     if (workArea.width < 80.0F || workArea.height < 50.0F) {
-        return;
+        return std::nullopt;
     }
     std::vector<PreviewAction> actions;
     std::vector<ObjectReference> inspectionRequests;
+    std::optional<PreviewGoToIntent> goToIntent;
     actions.reserve(previews.size());
     for (const auto& preview : previews) {
-        renderOne(queries, preview, workArea, actions, inspectionRequests);
+        renderOne(queries, preview, workArea, actions, inspectionRequests, goToIntent);
     }
     for (const auto& action : actions) {
         switch (action.kind) {
@@ -324,6 +362,7 @@ void InformationPreviewLayer::render(const SimulationQueries& queries,
     for (const auto& target : inspectionRequests) {
         (void)interactions.inspect(target);
     }
+    return goToIntent;
 }
 
 } // namespace deep::ui_imgui
