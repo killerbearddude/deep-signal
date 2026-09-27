@@ -1124,6 +1124,11 @@ void SaveGameRepository::save(const std::filesystem::path& path, const GameState
     if (hasUserSchema(db)) {
         const std::int64_t version = readSchemaVersion(db);
         if (version == kLegacySchemaVersion) {
+            // The version marker alone does not establish that this is a valid
+            // legacy save. Give new-path guidance only after the v10 structure
+            // and its complete logical snapshot have passed read validation.
+            requireV10Structure(db);
+            (void)readSnapshot(db, false);
             throw std::runtime_error{"Cannot overwrite a v10 save; choose a new path for v11"};
         }
         if (version != kSchemaVersion) throw std::runtime_error{"Unsupported save schema version"};

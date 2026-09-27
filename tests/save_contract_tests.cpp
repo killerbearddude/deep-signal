@@ -388,7 +388,6 @@ void test_legacy_and_incompatible_destinations() {
         {"unsupported", "PRAGMA ignore_check_constraints=ON; UPDATE schema_version SET version=999;"},
         {"malformed", "PRAGMA ignore_check_constraints=ON; UPDATE schema_version SET version='11junk';"},
         {"ambiguous", "PRAGMA ignore_check_constraints=ON; INSERT INTO schema_version(id,version) VALUES (2,11);"},
-        {"relabelled", "PRAGMA ignore_check_constraints=ON; UPDATE schema_version SET version=10;"},
         {"missing-index", "DROP INDEX idx_events_day;"},
         {"extra-table", "CREATE TABLE unrelated(value INTEGER);"}
     };
@@ -405,6 +404,75 @@ void test_legacy_and_incompatible_destinations() {
     const auto missing = temp.path / "missing.sqlite";
     (void)expectLoadReject(missing);
     require(!std::filesystem::exists(missing), "read-only Load does not create a missing file");
+}
+
+void test_v10_marker_requires_valid_legacy_save() {
+    TempDirectory temp;
+    const GameState source = makeOrderedState();
+    const auto noLegacyGuidance = [](const std::string& message) {
+        require(!message.empty() && message.find("new path") == std::string::npos
+                && message.find("Cannot overwrite a v10 save") == std::string::npos,
+                "an invalid destination is not described as a valid v10 save needing a new path");
+    };
+
+    const auto v11 = temp.path / "valid-v11.sqlite";
+    SaveGameRepository::save(v11, source);
+    const auto relabeled = temp.path / "v11-marker-changed-to-10.sqlite";
+    std::filesystem::copy_file(v11, relabeled);
+    executeSql(relabeled, "PRAGMA ignore_check_constraints=ON; UPDATE schema_version SET version=10;");
+    require(versionAt(relabeled) == kLegacySchemaVersion, "relabeled v11 file presents a v10 marker");
+    const auto relabeledBefore = logicalSnapshot(relabeled);
+    const std::string relabeledLoad = expectLoadReject(relabeled);
+    const std::string relabeledSave = expectSaveReject(relabeled, source);
+    require(relabeledLoad.find("incompatible") != std::string::npos
+            && relabeledSave.find("incompatible") != std::string::npos,
+            "v11 structure under a v10 marker is rejected on both Load and Save");
+    noLegacyGuidance(relabeledSave);
+    require(logicalSnapshot(relabeled) == relabeledBefore,
+            "relabelled v11 destination is unchanged after both rejections");
+
+    const auto fake = temp.path / "fake-v10-marker.sqlite";
+    executeSql(fake, R"sql(
+        CREATE TABLE schema_version(id INTEGER PRIMARY KEY, version INTEGER NOT NULL);
+        INSERT INTO schema_version(id, version) VALUES (1, 10);
+        CREATE TABLE notes(value TEXT);
+        INSERT INTO notes(value) VALUES ('keep');
+    )sql");
+    require(versionAt(fake) == kLegacySchemaVersion, "unrelated database carries a syntactically valid v10 marker");
+    const auto fakeBefore = logicalSnapshot(fake);
+    const std::string fakeLoad = expectLoadReject(fake);
+    const std::string fakeSave = expectSaveReject(fake, source);
+    require(fakeLoad.find("incompatible") != std::string::npos
+            && fakeSave.find("incompatible") != std::string::npos,
+            "marker-only database without Deep Signal structure is rejected");
+    noLegacyGuidance(fakeSave);
+    require(logicalSnapshot(fake) == fakeBefore,
+            "fake v10 destination retains its schema and rows after rejection");
+
+    const auto fixture = fixtureV10();
+    require(std::filesystem::is_regular_file(fixture), "authentic v10 fixture is available");
+    const auto invalid = temp.path / "v10-invalid-game-state.sqlite";
+    std::filesystem::copy_file(fixture, invalid);
+    executeSql(invalid, R"sql(
+        PRAGMA ignore_check_constraints=ON;
+        UPDATE shipyard_orders SET quantity_completed=2 WHERE id=1;
+    )sql");
+    require(versionAt(invalid) == kLegacySchemaVersion, "corrupted authentic fixture retains v10 metadata");
+    {
+        Database db{invalid, Database::OpenMode::ReadOnly};
+        Transaction transaction{db, Transaction::Mode::Read};
+        requireV10Structure(db);
+        transaction.commit();
+    }
+    const auto invalidBefore = logicalSnapshot(invalid);
+    const std::string invalidLoad = expectLoadReject(invalid);
+    const std::string invalidSave = expectSaveReject(invalid, source);
+    require(invalidLoad.find("shipyard order") != std::string::npos
+            && invalidSave.find("shipyard order") != std::string::npos,
+            "structurally authentic v10 with invalid domain state is rejected on Load and Save");
+    noLegacyGuidance(invalidSave);
+    require(logicalSnapshot(invalid) == invalidBefore,
+            "logically invalid v10 destination is unchanged after rejection");
 }
 
 void test_v11_ordinal_failures() {
@@ -524,6 +592,7 @@ int main() {
         {"compatible rewrite and invalid source", test_compatible_rewrite_and_invalid_source},
         {"equivalent CREATE TABLE formatting", test_equivalent_create_table_formatting_is_compatible},
         {"v10 and incompatible destination policy", test_legacy_and_incompatible_destinations},
+        {"v10 marker requires valid legacy structure and state", test_v10_marker_requires_valid_legacy_save},
         {"v11 ordinal corruption and constraints", test_v11_ordinal_failures},
         {"writer contention and post-delete rollback", test_contention_and_post_delete_rollback},
         {"known-table trigger is load only", test_known_table_trigger_is_load_only}

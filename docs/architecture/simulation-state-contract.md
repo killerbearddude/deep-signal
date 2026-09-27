@@ -156,9 +156,11 @@ switch. The check does not require
 byte-identical `CREATE TABLE` text or silently add missing columns.
 
 Save accepts a new path, a schema-empty database, or an existing compatible,
-valid v11 save. It rejects overwrite of v10 with guidance to use a new path,
-and rejects unsupported, malformed, or unrecognized databases without trying
-to repair them. A database with unrelated user schema objects is not empty.
+valid v11 save. It gives v10 new-path guidance only after checking both the
+legacy structure and complete logical snapshot; a marker of `10` alone does
+not identify a valid v10 save. Unsupported, malformed, mismatched, or
+unrecognized databases reject without that guidance or attempted repair.
+A database with unrelated user schema objects is not empty.
 There is no in-place v10 migration or automatic downgrade. A player may load a
 valid v10 game and save its reconstructed state to a **new** v11 destination;
 the original v10 ordering information that was never stored remains lost.

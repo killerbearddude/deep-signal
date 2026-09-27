@@ -105,3 +105,28 @@ transaction before row replacement. A failed replacement preserves its prior
 logical rows and schema; a failed first save can leave an empty file. This does
 not promise byte-identical SQLite files after every open, power-loss recovery,
 cross-compiler bitwise determinism, or continuity after gameplay rules change.
+
+## Review correction: truthful v10 destination classification
+
+Review of the first H1B commit found that Save used a parseable version marker
+of `10` to issue legacy new-path guidance before verifying the destination was
+actually a valid v10 snapshot. The corrected Save path now checks authentic
+v10 structure and reconstructs and validates its complete logical state inside
+the existing write transaction before issuing that special rejection. It still
+performs no migration or write to the v10 destination.
+
+The extended destination test distinguishes four cases:
+
+| Destination | Save result | Preservation |
+|---|---|---|
+| Genuine baseline-written v10 fixture | Reject with v10/new-path guidance | Logical schema and rows unchanged |
+| V11 save relabeled as version 10 | Reject incompatible structure; no valid-v10 guidance | Unchanged |
+| Unrelated database with a version-10 marker | Reject incompatible structure; no valid-v10 guidance | Unchanged |
+| Authentic v10 structure with invalid shipyard state | Reject logical validation; no valid-v10 guidance | Unchanged |
+
+Load also rejects the three mismatched or invalid destinations. This review
+fix changes only classification and error truthfulness; the existing v11
+ordering, continuation, transaction, and native lifecycle evidence remains
+applicable. The final sequential rerun passed **6/6 core**, **14/14 app/save**,
+and **19/19 UI-enabled** tests. The follow-up commit SHA is reported in the
+PR handoff after the correction is committed.
