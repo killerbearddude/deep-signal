@@ -45,4 +45,11 @@ struct ProcessingAllocationResult {
     const std::array<double, processedMaterialCount()>& weights,
     bool requireActiveManual) noexcept;
 
+// Active presets historically allocate no capacity when their derived total is
+// at or below the processing epsilon. Keep that execution rule separate from
+// validation: small positive dormant Manual storage remains valid and retains
+// its normalized shares. Requires a valid evaluation result.
+[[nodiscard]] std::array<double, processedMaterialCount()> processingSharesForActivePolicy(
+    const ProcessingAllocationResult& allocation, ProcessingPolicy policy) noexcept;
+
 } // namespace deep

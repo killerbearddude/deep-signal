@@ -179,6 +179,36 @@ void test_normalize_primitive_validates_arrays() {
                  "normalization rejects an overflowing combined total");
 }
 
+void test_active_preset_cutoff_does_not_invalidate_dormant_manual_storage() {
+    const double epsilon = deep::kProcessedMaterialComparisonEpsilon;
+    std::array<double, deep::processedMaterialCount()> weights{};
+    const auto index = deep::processedMaterialIndex(deep::ProcessedMaterial::Electronics);
+    for (const double total : {std::nextafter(epsilon, 0.0), epsilon}) {
+        weights[index] = total;
+        const auto allocation = deep::normalizeProcessingWeights(weights, false);
+        require(allocation.valid() && allocation.shares[index] == 1.0,
+                "small positive dormant Manual storage stays valid and normalized");
+        const auto active = deep::processingSharesForActivePolicy(
+            allocation, deep::ProcessingPolicy::StockpileRecovery);
+        require(active[index] == 0.0,
+                "active preset retains the baseline zero-share cutoff through epsilon");
+    }
+    weights[index] = std::nextafter(epsilon, std::numeric_limits<double>::infinity());
+    const auto above = deep::normalizeProcessingWeights(weights, false);
+    require(above.valid() && deep::processingSharesForActivePolicy(
+        above, deep::ProcessingPolicy::StockpileRecovery)[index] == 1.0,
+        "active preset resumes normalized allocation just above epsilon");
+
+    weights.fill(1.0);
+    const auto ordinary = deep::normalizeProcessingWeights(weights, false);
+    const auto ordinaryShares = deep::processingSharesForActivePolicy(
+        ordinary, deep::ProcessingPolicy::StockpileRecovery);
+    for (const double share : ordinaryShares) {
+        requireNear(share, 1.0 / 6.0,
+                    "ordinary equal Recovery weights retain one-sixth shares");
+    }
+}
+
 } // namespace
 
 int main() {
@@ -188,6 +218,7 @@ int main() {
         test_bad_rows_are_rejected_even_for_dormant_storage();
         test_overflow_categories_and_large_valid_weight();
         test_normalize_primitive_validates_arrays();
+        test_active_preset_cutoff_does_not_invalidate_dormant_manual_storage();
     } catch (const std::exception& error) {
         std::cerr << "Processing allocation rule test failure: " << error.what() << '\n';
         return EXIT_FAILURE;

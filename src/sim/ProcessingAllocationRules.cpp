@@ -77,4 +77,13 @@ ProcessingAllocationResult normalizeProcessingWeights(
     return normalizeChecked(weights, requireActiveManual);
 }
 
+std::array<double, processedMaterialCount()> processingSharesForActivePolicy(
+    const ProcessingAllocationResult& allocation, const ProcessingPolicy policy) noexcept {
+    if (policy != ProcessingPolicy::Manual &&
+        allocation.totalWeight <= kProcessedMaterialComparisonEpsilon) {
+        return {};
+    }
+    return allocation.shares;
+}
+
 } // namespace deep

@@ -48,6 +48,15 @@ active Manual distribution: simulation rules neither divide by zero nor invent
 equal shares. The processing editor may separately initialize an unapplied
 draft for usability.
 
+An active preset has a separate, existing execution cutoff: if its derived
+weight total is at or below `kProcessedMaterialComparisonEpsilon`, it allocates
+zero processing capacity. This includes Stockpile Recovery when large processed
+stockpiles make all six derived weights tiny. Effective and draft preset
+percentages, and forecast output, use the same active cutoff. It does not make
+small positive dormant Manual storage invalid; that storage still has checked,
+normalized working shares. Active Manual instead requires a total above the
+cutoff at admission.
+
 The shared simulation-layer allocation rule supplies these checks and derived
 shares to the processing-policy command, `validateGameState`, the active Manual
 daily calculation, stored and draft application projections, and Manual

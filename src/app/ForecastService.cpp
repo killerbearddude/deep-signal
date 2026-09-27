@@ -220,7 +220,7 @@ void addProcessingWeight(ProcessingShares& weights, const ProcessedMaterial mate
         ? evaluateProcessingAllocations(colony.manualProcessingAllocations, true)
         : normalizeProcessingWeights(policyProcessingWeights(colony), false);
     if (!allocation.valid()) throw std::runtime_error{"Invalid live processing allocation in forecast"};
-    return allocation.shares;
+    return processingSharesForActivePolicy(allocation, colony.processingPolicy);
 }
 
 void addMineralSet(MineralAmountTotals& totals, const MineralSet& minerals, const double scale = 1.0) noexcept {

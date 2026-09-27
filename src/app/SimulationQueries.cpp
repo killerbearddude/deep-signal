@@ -748,19 +748,22 @@ void addProcessingWeight(ProcessingShares& weights, const ProcessedMaterial mate
     return weights;
 }
 
-[[nodiscard]] std::vector<ProcessingAllocationSummary> summarizeProcessingWeights(const ProcessingShares& weights) {
+[[nodiscard]] std::vector<ProcessingAllocationSummary> summarizeProcessingWeights(
+    const ProcessingShares& weights, const std::optional<ProcessingPolicy> activePolicy = std::nullopt) {
     std::vector<ProcessingAllocationSummary> summaries;
     summaries.reserve(weights.size());
 
     const ProcessingAllocationResult allocation = normalizeProcessingWeights(weights, false);
     if (!allocation.valid()) throw std::runtime_error{"Invalid live processing weights"};
+    const ProcessingShares shares = activePolicy
+        ? processingSharesForActivePolicy(allocation, *activePolicy) : allocation.shares;
     for (std::size_t i = 0; i < weights.size(); ++i) {
         const ProcessedMaterial material = static_cast<ProcessedMaterial>(i);
         summaries.push_back(ProcessingAllocationSummary{
             .material = material,
             .materialName = processedMaterialName(material),
             .weight = allocation.weights[i],
-            .normalizedPercent = allocation.shares[i] * 100.0
+            .normalizedPercent = shares[i] * 100.0
         });
     }
 
@@ -945,7 +948,8 @@ std::vector<ColonySummary> SimulationQueries::colonies() const {
             .ownerInstitutionId = colony.ownerInstitutionId,
             .ownerInstitutionName = optionalInstitutionName(state, colony.ownerInstitutionId),
             .manualProcessingAllocations = summarizeManualProcessingAllocations(colony),
-            .effectiveProcessingAllocations = summarizeProcessingWeights(processingWeightsForPolicy(colony, colony.processingPolicy)),
+            .effectiveProcessingAllocations = summarizeProcessingWeights(
+                processingWeightsForPolicy(colony, colony.processingPolicy), colony.processingPolicy),
             .processedStockpiles = summarizeProcessedStockpiles(colony),
             .shipyardCapacity = colony.shipyardCapacity,
             .effectiveShipyardCapacity = effectiveShipyardCapacity(state, colony),
@@ -1015,7 +1019,7 @@ std::optional<ColonyProcessingDraftPreview> SimulationQueries::previewColonyProc
     // Reuse this query layer's native policy projection. Actual output still
     // depends on available raw inputs and the authoritative command boundary.
     result.effectiveAllocations = summarizeProcessingWeights(
-        processingWeightsForPolicy(*colony, policy, &allocation.weights));
+        processingWeightsForPolicy(*colony, policy, &allocation.weights), policy);
     result.valid = true;
     return result;
 }

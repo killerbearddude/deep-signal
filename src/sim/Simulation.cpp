@@ -241,7 +241,7 @@ void addProcessingWeight(ProcessingShares& weights, const ProcessedMaterial mate
     // Simulation admission validates stored rows, including dormant Manual
     // intent. An unexpected failure here is corrupt live state, not zero output.
     if (!allocation.valid()) throw std::logic_error{"Invalid live processing allocation"};
-    return allocation.shares;
+    return processingSharesForActivePolicy(allocation, colony.processingPolicy);
 }
 
 

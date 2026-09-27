@@ -495,6 +495,32 @@ void test_single_maximum_manual_weight_produces_finite_output() {
                 "a single large Manual weight does not allocate capacity elsewhere");
 }
 
+void test_stockpile_recovery_preserves_active_preset_cutoff() {
+    // At 1e12 stored units, each Recovery weight is about 1e-12 and their
+    // six-material total is below 1e-9. The pinned baseline allocated zero
+    // processor capacity in this valid state, despite abundant raw minerals.
+    const auto run = [](const double initialStockpile) {
+        deep::GameState state = deep::createHomeSystemScenario();
+        deep::Colony& ceres = state.colonies.at(2); // No shipyard capacity.
+        ceres.mines = 0.0;
+        ceres.processorCapacity = 60.0;
+        ceres.stockpile.amount.fill(1'000'000.0);
+        ceres.processedStockpile.amount.fill(initialStockpile);
+        ceres.processingPolicy = deep::ProcessingPolicy::StockpileRecovery;
+        deep::Simulation sim{std::move(state)};
+        sim.advanceDays(1);
+        for (const double amount : sim.state().colonies.at(2).processedStockpile.amount) {
+            requireNear(amount - initialStockpile, initialStockpile == 0.0 ? 10.0 : 0.0,
+                        "Recovery output follows the baseline preset cutoff");
+        }
+    };
+    const double highWeight = 1.0 / (1.0 + 1'000'000'000'000.0);
+    require(6.0 * highWeight < deep::kProcessedMaterialComparisonEpsilon,
+            "independent high-stockpile Recovery fixture is below the cutoff");
+    run(1'000'000'000'000.0);
+    run(0.0);
+}
+
 void test_shipyard_completion() {
     // Verifies that a command-created shipyard order consumes build time and
     // produces a ship plus fleet. Prevents direct-state-mutation regressions.
@@ -1102,6 +1128,7 @@ int main() {
         test_processing_policy_command_rejects_invalid_enum();
         test_processing_policy_rejects_aggregate_overflow_without_gameplay_mutation();
         test_single_maximum_manual_weight_produces_finite_output();
+        test_stockpile_recovery_preserves_active_preset_cutoff();
         test_shipyard_completion();
         test_shipyard_capacity_is_shared_by_fifo_orders();
         test_shipyard_temporary_processed_material_shortage_recovers();

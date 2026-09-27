@@ -325,6 +325,42 @@ void test_large_manual_allocation_queries_keep_finite_percentages_and_do_not_wri
     require(stateSignature() == before, "colony and draft queries leave authoritative state unchanged");
 }
 
+void test_recovery_preset_presentations_keep_baseline_cutoff() {
+    const auto check = [](const double initialStockpile, const double expectedPercent) {
+        deep::GameState state = deep::createHomeSystemScenario();
+        deep::Colony& ceres = state.colonies.at(2);
+        ceres.processedStockpile.amount.fill(initialStockpile);
+        ceres.manualProcessingAllocations = {
+            {.material = deep::ProcessedMaterial::Electronics, .weight = 0.5e-9}
+        }; // Valid dormant storage, independently smaller than the active cutoff.
+        const deep::ColonyId id = ceres.id;
+        deep::SimulationService service{std::move(state)};
+        const deep::SimulationQueries queries{service};
+        const auto before = service.state().colonies.at(2).processedStockpile.amount;
+        const auto summary = queries.colonies().at(2);
+        const auto draft = queries.previewColonyProcessingPolicy(
+            id, deep::ProcessingPolicy::StockpileRecovery, {});
+        require(draft && draft->valid, "Recovery draft remains valid at both stockpile levels");
+        for (std::size_t i = 0; i < deep::processedMaterialCount(); ++i) {
+            requireNear(summary.effectiveProcessingAllocations.at(i).normalizedPercent,
+                        expectedPercent,
+                        "effective Recovery summary keeps the active preset cutoff");
+            requireNear(draft->effectiveAllocations.at(i).normalizedPercent,
+                        expectedPercent,
+                        "draft Recovery summary keeps the active preset cutoff");
+        }
+        requireNear(summary.manualProcessingAllocations.at(
+            deep::processedMaterialIndex(deep::ProcessedMaterial::Electronics)).normalizedPercent,
+                    100.0, "small positive dormant Manual storage retains its own valid share");
+        require(service.state().colonies.at(2).processedStockpile.amount == before,
+                "Recovery summaries and draft remain read-only");
+    };
+    // At 1e12 per material, six Recovery weights sum to about 6e-12 and the
+    // baseline effective percentage is zero. At zero stockpile, 1/6 is 16.67%.
+    check(1'000'000'000'000.0, 0.0);
+    check(0.0, 100.0 / 6.0);
+}
+
 void test_shipyard_order_summaries_resolve_names() {
     // Verifies that accepted build orders can be shown without joining colony
     // and ship-class vectors in UI code.
@@ -1202,6 +1238,7 @@ int main() {
         test_colony_summaries_include_processing_policy();
         test_colony_processing_draft_preview_is_read_only_and_validated();
         test_large_manual_allocation_queries_keep_finite_percentages_and_do_not_write();
+        test_recovery_preset_presentations_keep_baseline_cutoff();
         test_shipyard_order_summaries_resolve_names();
         test_production_backlog_summaries_expose_queue_eta();
         test_personnel_summaries_resolve_institution_context();

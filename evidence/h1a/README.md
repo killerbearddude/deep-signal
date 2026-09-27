@@ -84,3 +84,35 @@ agent-driven input, not human verification or broader save-continuity proof.
 H1A leaves the write/read format at v10. It does not repair malformed extreme
 saves, prove ordering across Save/Load, or implement schema v11. Those are
 separate H1B concerns.
+
+## Review correction: preserve active-preset low-total behavior
+
+Review of the first H1A commit found that a small positive Stockpile Recovery
+weight total had started receiving full normalized shares. This changed a
+baseline preset rule outside the approved Manual-integrity scope. The
+[Recovery reproduction](recovery_repro.cpp) isolates Ceres with 60 daily
+processor units, sufficient raw inputs, mining disabled, and each processed
+stockpile at `1e12`. Each derived Recovery weight is about `1e-12`; the six
+weights total about `6e-12`, below the existing `1e-9` cutoff.
+
+| Executed version | Structural Alloys after one day, minus before |
+|---|---:|
+| Pinned baseline `72f90ba` | `0` |
+| Initial H1A commit `21c3229` | `10` |
+| Review correction | `0` |
+
+The pure allocation result still validates and normalizes a positive dormant
+Manual total below the cutoff. A separate active-policy projection restores
+zero shares for presets at or below the cutoff. Simulation, forecast, effective
+Colony summaries, and draft preset previews all use that projection. Focused
+tests independently expect zero output for the high-stockpile fixture, 10 units
+per material for ordinary equal Recovery weights at 60 capacity, and the
+correct behavior at, below, and just above the cutoff. The existing Manual
+epsilon, duplicate-small-row, and large-finite-weight tests remain in the
+final suites. The three sequential full suites passed 6/6 core, 12/12 app/save,
+and 17/17 UI-enabled after the correction. A targeted [native Recovery preview](recovery-zero-preview.png)
+from a disposable validated v10 fixture showed `0.0%` and `0.0 units/day` for
+each material at 60 processor capacity; advancing to day 2 retained the same
+processed stockpile total. The test-owned save was removed before final clean
+rebuild and smoke launch. The follow-up commit SHA is reported in the PR
+handoff after this correction is committed.

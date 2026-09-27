@@ -352,6 +352,35 @@ void test_manual_forecast_uses_checked_shares_without_mutating_state() {
     require(stateSignature() == maximumBefore, "maximum-weight forecast leaves authoritative state unchanged");
 }
 
+void test_recovery_forecast_preserves_baseline_low_total_cutoff() {
+    const auto check = [](const double initialStockpile, const double expectedPerMaterial) {
+        deep::GameState state = deep::createHomeSystemScenario();
+        for (auto& colony : state.colonies) colony.processorCapacity = 0.0;
+        deep::Colony& ceres = state.colonies.at(2);
+        ceres.processorCapacity = 60.0;
+        ceres.mines = 0.0;
+        ceres.stockpile.amount.fill(1'000'000.0);
+        ceres.processedStockpile.amount.fill(initialStockpile);
+        ceres.processingPolicy = deep::ProcessingPolicy::StockpileRecovery;
+        deep::SimulationService service{std::move(state)};
+        const auto before = service.state().colonies.at(2).processedStockpile.amount;
+        const deep::ForecastService forecasts{service};
+        const auto rows = forecasts.processedMaterialForecastCauseChains();
+        for (std::size_t i = 0; i < deep::processedMaterialCount(); ++i) {
+            requireNear(requireMaterialCauseChain(rows, static_cast<deep::ProcessedMaterial>(i))
+                            .processingIncomePerDay,
+                        expectedPerMaterial,
+                        "Recovery forecast preserves the baseline active-preset cutoff");
+        }
+        require(service.state().colonies.at(2).processedStockpile.amount == before,
+                "Recovery forecast remains read-only");
+    };
+    // Six weights near 1e-12 total below 1e-9: zero output. Zero stockpile
+    // gives six weights of one: a hand-calculated 60/6 = 10 units per material.
+    check(1'000'000'000'000.0, 0.0);
+    check(0.0, 10.0);
+}
+
 void test_mineral_forecast_cause_chains_include_processing_demand() {
     // Verifies raw minerals include processing demand even without active
     // shipyard orders, because processors now consume raw inputs daily.
@@ -697,6 +726,7 @@ int main() {
         test_processed_material_forecast_respects_processing_policy();
         test_processed_material_forecast_normalizes_manual_weights();
         test_manual_forecast_uses_checked_shares_without_mutating_state();
+        test_recovery_forecast_preserves_baseline_low_total_cutoff();
         test_mineral_forecast_cause_chains_include_processing_demand();
         test_mineral_forecast_distinguishes_estimated_and_unknown_supply();
         test_mineral_forecast_warns_when_shortage_depends_on_uncertain_supply();
