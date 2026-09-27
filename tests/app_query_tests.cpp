@@ -37,7 +37,7 @@ void require(const bool condition, const std::string_view message) {
 }
 
 void requireNear(const double actual, const double expected, const std::string_view message) {
-    if (std::abs(actual - expected) > 1.0e-6) {
+    if (!std::isfinite(actual) || !std::isfinite(expected) || std::abs(actual - expected) > 1.0e-6) {
         throw TestFailure{message};
     }
 }
@@ -244,6 +244,121 @@ void test_colony_processing_draft_preview_is_read_only_and_validated() {
         colonyId, deep::ProcessingPolicy::StockpileRecovery, {});
     require(stockpileBefore && stockpileAfter && stockpileBefore->valid && stockpileAfter->valid,
             "Stockpile Recovery draft resolves current processed stockpiles on each call");
+}
+
+void test_large_manual_allocation_queries_keep_finite_percentages_and_do_not_write() {
+    // One maximum finite weight is a legal relative allocation. Multiplying it
+    // by 100 before dividing would overflow even though its share is exactly 1.
+    deep::SimulationService service;
+    const deep::ColonyId colonyId = service.state().colonies.front().id;
+    constexpr deep::ProcessedMaterial kPrimary = deep::ProcessedMaterial::Propellant;
+    constexpr deep::ProcessedMaterial kSecondary = deep::ProcessedMaterial::ReactorFuel;
+    const double maximum = std::numeric_limits<double>::max();
+    require(service.execute(deep::SetColonyProcessingPolicyCommand{
+        .colonyId = colonyId,
+        .policy = deep::ProcessingPolicy::Manual,
+        .manualAllocations = {{.material = kPrimary, .weight = maximum}}
+    }).ok, "single maximum finite Manual weight is accepted before queries");
+
+    const auto stateSignature = [&service]() {
+        const deep::GameState& state = service.state();
+        const deep::Colony& colony = state.colonies.front();
+        std::vector<std::pair<deep::ProcessedMaterial, double>> storedRows;
+        for (const auto& row : colony.manualProcessingAllocations) {
+            storedRows.emplace_back(row.material, row.weight);
+        }
+        return std::tuple{state.date.day, state.ids.nextEventId, state.eventLog.size(),
+            colony.processingPolicy, std::move(storedRows), colony.stockpile.amount,
+            colony.processedStockpile.amount, colony.processorCapacity};
+    };
+    const auto before = stateSignature();
+    const deep::SimulationQueries queries{service};
+
+    const auto colonies = queries.colonies();
+    const auto& stored = colonies.front().manualProcessingAllocations;
+    const auto& effective = colonies.front().effectiveProcessingAllocations;
+    const auto primaryIndex = deep::processedMaterialIndex(kPrimary);
+    require(stored.at(primaryIndex).weight == maximum, "stored query preserves maximum input weight");
+    requireNear(stored.at(primaryIndex).normalizedPercent, 100.0,
+                "stored maximum weight is 100 percent without intermediate overflow");
+    requireNear(effective.at(primaryIndex).normalizedPercent, 100.0,
+                "effective maximum weight is 100 percent without intermediate overflow");
+    for (const auto& row : stored) require(std::isfinite(row.normalizedPercent), "all stored percentages are finite");
+    for (const auto& row : effective) require(std::isfinite(row.normalizedPercent), "all effective percentages are finite");
+
+    const auto maximumDraft = queries.previewColonyProcessingPolicy(colonyId, deep::ProcessingPolicy::Manual,
+        {{.material = kPrimary, .weight = maximum}});
+    require(maximumDraft && maximumDraft->valid, "maximum finite Manual draft has a valid preview");
+    requireNear(maximumDraft->effectiveAllocations.at(primaryIndex).normalizedPercent, 100.0,
+                "maximum finite draft percentage remains finite");
+
+    // Two duplicate primary rows yield 75/25 by hand: (50 + 25) / 100 and
+    // 25 / 100. This also checks aggregation without relying on the helper's
+    // own reported total as the expected answer.
+    const auto repeatedDraft = queries.previewColonyProcessingPolicy(colonyId, deep::ProcessingPolicy::Manual, {
+        {.material = kPrimary, .weight = 50.0},
+        {.material = kSecondary, .weight = 25.0},
+        {.material = kPrimary, .weight = 25.0}
+    });
+    require(repeatedDraft && repeatedDraft->valid, "duplicate rows produce a valid Manual preview");
+    requireNear(repeatedDraft->effectiveAllocations.at(primaryIndex).weight, 75.0,
+                "duplicate primary rows retain their hand-calculated subtotal");
+    requireNear(repeatedDraft->effectiveAllocations.at(primaryIndex).normalizedPercent, 75.0,
+                "duplicate primary rows receive 75 percent");
+    requireNear(repeatedDraft->effectiveAllocations.at(deep::processedMaterialIndex(kSecondary)).normalizedPercent,
+                25.0, "secondary row receives 25 percent");
+
+    // Even a preset must reject malformed supplied Manual rows, including a
+    // combined overflow across two otherwise representable material subtotals.
+    const auto badPreset = queries.previewColonyProcessingPolicy(colonyId, deep::ProcessingPolicy::Balanced, {
+        {.material = kPrimary, .weight = maximum},
+        {.material = kSecondary, .weight = maximum}
+    });
+    require(badPreset && !badPreset->valid && !badPreset->validationMessage.empty(),
+            "preset draft rejects cross-material combined overflow");
+    const auto badDuplicatePreset = queries.previewColonyProcessingPolicy(colonyId, deep::ProcessingPolicy::Balanced, {
+        {.material = kPrimary, .weight = maximum},
+        {.material = kPrimary, .weight = maximum}
+    });
+    require(badDuplicatePreset && !badDuplicatePreset->valid && !badDuplicatePreset->validationMessage.empty(),
+            "preset draft rejects same-material subtotal overflow");
+    require(stateSignature() == before, "colony and draft queries leave authoritative state unchanged");
+}
+
+void test_recovery_preset_presentations_keep_baseline_cutoff() {
+    const auto check = [](const double initialStockpile, const double expectedPercent) {
+        deep::GameState state = deep::createHomeSystemScenario();
+        deep::Colony& ceres = state.colonies.at(2);
+        ceres.processedStockpile.amount.fill(initialStockpile);
+        ceres.manualProcessingAllocations = {
+            {.material = deep::ProcessedMaterial::Electronics, .weight = 0.5e-9}
+        }; // Valid dormant storage, independently smaller than the active cutoff.
+        const deep::ColonyId id = ceres.id;
+        deep::SimulationService service{std::move(state)};
+        const deep::SimulationQueries queries{service};
+        const auto before = service.state().colonies.at(2).processedStockpile.amount;
+        const auto summary = queries.colonies().at(2);
+        const auto draft = queries.previewColonyProcessingPolicy(
+            id, deep::ProcessingPolicy::StockpileRecovery, {});
+        require(draft && draft->valid, "Recovery draft remains valid at both stockpile levels");
+        for (std::size_t i = 0; i < deep::processedMaterialCount(); ++i) {
+            requireNear(summary.effectiveProcessingAllocations.at(i).normalizedPercent,
+                        expectedPercent,
+                        "effective Recovery summary keeps the active preset cutoff");
+            requireNear(draft->effectiveAllocations.at(i).normalizedPercent,
+                        expectedPercent,
+                        "draft Recovery summary keeps the active preset cutoff");
+        }
+        requireNear(summary.manualProcessingAllocations.at(
+            deep::processedMaterialIndex(deep::ProcessedMaterial::Electronics)).normalizedPercent,
+                    100.0, "small positive dormant Manual storage retains its own valid share");
+        require(service.state().colonies.at(2).processedStockpile.amount == before,
+                "Recovery summaries and draft remain read-only");
+    };
+    // At 1e12 per material, six Recovery weights sum to about 6e-12 and the
+    // baseline effective percentage is zero. At zero stockpile, 1/6 is 16.67%.
+    check(1'000'000'000'000.0, 0.0);
+    check(0.0, 100.0 / 6.0);
 }
 
 void test_shipyard_order_summaries_resolve_names() {
@@ -1122,6 +1237,8 @@ int main() {
         test_colony_summaries_resolve_body_context();
         test_colony_summaries_include_processing_policy();
         test_colony_processing_draft_preview_is_read_only_and_validated();
+        test_large_manual_allocation_queries_keep_finite_percentages_and_do_not_write();
+        test_recovery_preset_presentations_keep_baseline_cutoff();
         test_shipyard_order_summaries_resolve_names();
         test_production_backlog_summaries_expose_queue_eta();
         test_personnel_summaries_resolve_institution_context();

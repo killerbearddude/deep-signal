@@ -7,6 +7,7 @@
 // change. These rate estimates are not a replay of authoritative daily ticks.
 
 #include "sim/GameState.h"
+#include "sim/ProcessingAllocationRules.h"
 
 #include <algorithm>
 #include <array>
@@ -15,6 +16,7 @@
 #include <initializer_list>
 #include <limits>
 #include <sstream>
+#include <stdexcept>
 #include <string_view>
 
 namespace deep {
@@ -206,33 +208,19 @@ void addProcessingWeight(ProcessingShares& weights, const ProcessedMaterial mate
         }
         break;
     case ProcessingPolicy::Manual:
-        for (const ProcessingAllocation& allocation : colony.manualProcessingAllocations) {
-            addProcessingWeight(weights, allocation.material, allocation.weight);
-        }
+        // Evaluated through the shared row rule below.
         break;
     }
 
     return weights;
 }
 
-[[nodiscard]] ProcessingShares normalizedProcessingShares(const Colony& colony) noexcept {
-    ProcessingShares weights = policyProcessingWeights(colony);
-    double totalWeight = 0.0;
-    for (const double weight : weights) {
-        totalWeight += weight;
-    }
-
-    if (totalWeight <= kProcessedMaterialComparisonEpsilon) {
-        return {};
-    }
-
-    // Manual allocations and preset policies both use relative weights. Convert
-    // them to shares here so forecasts match Simulation::simulateProcessing and
-    // never treat UI-entered values as literal percentages.
-    for (double& weight : weights) {
-        weight /= totalWeight;
-    }
-    return weights;
+[[nodiscard]] ProcessingShares normalizedProcessingShares(const Colony& colony) {
+    const ProcessingAllocationResult allocation = colony.processingPolicy == ProcessingPolicy::Manual
+        ? evaluateProcessingAllocations(colony.manualProcessingAllocations, true)
+        : normalizeProcessingWeights(policyProcessingWeights(colony), false);
+    if (!allocation.valid()) throw std::runtime_error{"Invalid live processing allocation in forecast"};
+    return processingSharesForActivePolicy(allocation, colony.processingPolicy);
 }
 
 void addMineralSet(MineralAmountTotals& totals, const MineralSet& minerals, const double scale = 1.0) noexcept {

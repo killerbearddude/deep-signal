@@ -1,4 +1,5 @@
 #include "sim/GameStateValidation.h"
+#include "sim/ProcessingAllocationRules.h"
 
 // Implements zero-trust validation for fully assembled simulation snapshots.
 // The checks intentionally duplicate some SQLite CHECK/FOREIGN KEY constraints
@@ -152,11 +153,6 @@ void requireState(const bool condition, const std::string_view message) {
     return index < mineralCount();
 }
 
-[[nodiscard]] bool isValidProcessedMaterial(const ProcessedMaterial value) noexcept {
-    const auto index = static_cast<std::size_t>(value);
-    return index < processedMaterialCount();
-}
-
 template <typename T, typename IdT>
 [[nodiscard]] bool containsId(const std::vector<T>& items, const IdT id) noexcept {
     return std::any_of(items.begin(), items.end(), [id](const T& item) {
@@ -254,22 +250,29 @@ void validateBodyParentGraph(const std::vector<Body>& bodies) {
 
 void validateProcessingPolicy(const Colony& colony) {
     requireState(isValidProcessingPolicy(colony.processingPolicy), "colony processing policy must be valid");
-
-    double manualWeightTotal = 0.0;
-    for (const ProcessingAllocation& allocation : colony.manualProcessingAllocations) {
-        requireState(isValidProcessedMaterial(allocation.material),
-                     "manual processing allocation material must be valid");
-        requireState(isFinite(allocation.weight), "manual processing allocation weight must be finite");
-        requireState(allocation.weight >= 0.0, "manual processing allocation weight must be non-negative");
-        manualWeightTotal += allocation.weight;
-    }
-
-    // Manual policy has no preset fallback. Require a positive total to reject
-    // an intentionally empty allocation. Individual finiteness checks above do
-    // not protect this sum from overflow; normalization has the same limitation.
-    if (colony.processingPolicy == ProcessingPolicy::Manual) {
-        requireState(manualWeightTotal > kProcessedMaterialComparisonEpsilon,
-                     "manual processing policy requires positive total weight");
+    // Validate dormant preset storage too: it may become active after the next
+    // policy switch. Admission must not preserve an unrepresentable aggregate.
+    const ProcessingAllocationResult allocation = evaluateProcessingAllocations(
+        colony.manualProcessingAllocations, colony.processingPolicy == ProcessingPolicy::Manual);
+    switch (allocation.error) {
+    case ProcessingAllocationError::None: return;
+    case ProcessingAllocationError::InvalidMaterial:
+        requireState(false, "manual processing allocation material must be valid");
+        break;
+    case ProcessingAllocationError::NonFiniteWeight:
+        requireState(false, "manual processing allocation weight must be finite");
+        break;
+    case ProcessingAllocationError::NegativeWeight:
+        requireState(false, "manual processing allocation weight must be non-negative");
+        break;
+    case ProcessingAllocationError::MaterialSubtotalOverflow:
+    case ProcessingAllocationError::CombinedTotalOverflow:
+    case ProcessingAllocationError::InvalidNormalizedShare:
+        requireState(false, "manual processing allocation total must be finite and representable");
+        break;
+    case ProcessingAllocationError::InsufficientManualTotal:
+        requireState(false, "manual processing policy requires positive total weight");
+        break;
     }
 }
 

@@ -1,5 +1,6 @@
 #include "sim/Simulation.h"
 #include "sim/GameStateValidation.h"
+#include "sim/ProcessingAllocationRules.h"
 #include "sim/TransitPlanning.h"
 
 // Implements deterministic daily simulation rules and command validation.
@@ -14,6 +15,7 @@
 #include <initializer_list>
 #include <limits>
 #include <sstream>
+#include <stdexcept>
 #include <string_view>
 #include <type_traits>
 #include <utility>
@@ -127,6 +129,26 @@ using ProcessingShares = std::array<double, processedMaterialCount()>;
     return false;
 }
 
+[[nodiscard]] const char* processingAllocationRejection(const ProcessingAllocationError error) noexcept {
+    switch (error) {
+    case ProcessingAllocationError::InvalidMaterial:
+        return "Manual processing allocation has invalid material";
+    case ProcessingAllocationError::NonFiniteWeight:
+        return "Manual processing allocation weight must be finite";
+    case ProcessingAllocationError::NegativeWeight:
+        return "Manual processing allocation weight cannot be negative";
+    case ProcessingAllocationError::MaterialSubtotalOverflow:
+    case ProcessingAllocationError::CombinedTotalOverflow:
+    case ProcessingAllocationError::InvalidNormalizedShare:
+        return "Manual processing allocation total is too large";
+    case ProcessingAllocationError::InsufficientManualTotal:
+        return "Manual processing policy requires positive allocation weight";
+    case ProcessingAllocationError::None:
+        break;
+    }
+    return "Manual processing allocation is invalid";
+}
+
 [[nodiscard]] bool isValidAppointmentRole(const AppointmentRole role) noexcept {
     switch (role) {
     case AppointmentRole::FleetCommander:
@@ -205,33 +227,21 @@ void addProcessingWeight(ProcessingShares& weights, const ProcessedMaterial mate
         break;
 
     case ProcessingPolicy::Manual:
-        for (const ProcessingAllocation& allocation : colony.manualProcessingAllocations) {
-            addProcessingWeight(weights, allocation.material, allocation.weight);
-        }
+        // Manual rows are evaluated separately, preserving duplicate order.
         break;
     }
 
     return weights;
 }
 
-[[nodiscard]] ProcessingShares normalizedProcessingShares(const Colony& colony) noexcept {
-    // FIXME: Finite individual manual weights can still overflow their sum (or
-    // a repeated-material subtotal), producing zero/NaN shares. Bound or scale
-    // weights before normalizing when tightening the processing input contract.
-    ProcessingShares weights = policyProcessingWeights(colony);
-    double totalWeight = 0.0;
-    for (const double weight : weights) {
-        totalWeight += weight;
-    }
-
-    if (totalWeight <= kProcessedMaterialComparisonEpsilon) {
-        return {};
-    }
-
-    for (double& weight : weights) {
-        weight /= totalWeight;
-    }
-    return weights;
+[[nodiscard]] ProcessingShares normalizedProcessingShares(const Colony& colony) {
+    const ProcessingAllocationResult allocation = colony.processingPolicy == ProcessingPolicy::Manual
+        ? evaluateProcessingAllocations(colony.manualProcessingAllocations, true)
+        : normalizeProcessingWeights(policyProcessingWeights(colony), false);
+    // Simulation admission validates stored rows, including dormant Manual
+    // intent. An unexpected failure here is corrupt live state, not zero output.
+    if (!allocation.valid()) throw std::logic_error{"Invalid live processing allocation"};
+    return processingSharesForActivePolicy(allocation, colony.processingPolicy);
 }
 
 
@@ -737,40 +747,32 @@ CommandResult Simulation::setColonyProcessingPolicy(const SetColonyProcessingPol
         return CommandResult::failure("Processing policy is invalid");
     }
 
-    double manualWeightTotal = 0.0;
-    for (const ProcessingAllocation& allocation : command.manualAllocations) {
-        if (!isValidProcessedMaterial(allocation.material)) {
-            appendEvent(EventSeverity::Warning, CommandRejectedEvent{"Manual processing allocation has invalid material"});
-            return CommandResult::failure("Manual processing allocation has invalid material");
-        }
-
-        if (!std::isfinite(allocation.weight)) {
-            appendEvent(EventSeverity::Warning, CommandRejectedEvent{"Manual processing allocation weight must be finite"});
-            return CommandResult::failure("Manual processing allocation weight must be finite");
-        }
-
-        if (allocation.weight < 0.0) {
-            appendEvent(EventSeverity::Warning, CommandRejectedEvent{"Manual processing allocation weight cannot be negative"});
-            return CommandResult::failure("Manual processing allocation weight cannot be negative");
-        }
-
-        manualWeightTotal += allocation.weight;
+    const ProcessingAllocationResult allocation = evaluateProcessingAllocations(
+        command.manualAllocations, command.policy == ProcessingPolicy::Manual);
+    if (!allocation.valid()) {
+        const char* reason = processingAllocationRejection(allocation.error);
+        appendEvent(EventSeverity::Warning, CommandRejectedEvent{reason});
+        return CommandResult::failure(reason);
     }
 
-    if (command.policy == ProcessingPolicy::Manual && manualWeightTotal <= kProcessedMaterialComparisonEpsilon) {
-        appendEvent(EventSeverity::Warning, CommandRejectedEvent{"Manual processing policy requires positive allocation weight"});
-        return CommandResult::failure("Manual processing policy requires positive allocation weight");
-    }
-
-    colony->processingPolicy = command.policy;
+    // Prepare every allocating success value before either field changes.
+    // Vector swap and enum assignment are non-throwing for this allocator; this
+    // is a focused command guarantee, not global rollback for all commands.
+    std::vector<ProcessingAllocation> preparedManual;
     if (command.policy == ProcessingPolicy::Manual) {
         // Manual weights are persistent player intent. Preset policies derive
         // their own weights every day, so do not overwrite the last manual
         // setup when the player temporarily switches to a preset.
-        colony->manualProcessingAllocations = command.manualAllocations;
+        preparedManual = command.manualAllocations;
     }
-
-    return CommandResult::success("Colony processing policy updated");
+    CommandResult success = CommandResult::success("Colony processing policy updated");
+    static_assert(std::is_nothrow_swappable_v<std::vector<ProcessingAllocation>>);
+    static_assert(std::is_nothrow_move_constructible_v<CommandResult>);
+    if (command.policy == ProcessingPolicy::Manual) {
+        colony->manualProcessingAllocations.swap(preparedManual);
+    }
+    colony->processingPolicy = command.policy;
+    return success;
 }
 
 bool Simulation::startNextQueuedFleetOrder(Fleet& fleet, std::vector<SimEvent>* emitted) {

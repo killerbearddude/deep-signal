@@ -27,6 +27,7 @@ set(DEEP_SIGNAL_WARNINGS
 
 add_library(deep_signal_sim
     src/sim/GameStateValidation.cpp
+    src/sim/ProcessingAllocationRules.cpp
     src/sim/Simulation.cpp
     src/sim/ScenarioFactory.cpp
     src/sim/TransitPlanning.cpp
@@ -238,6 +239,13 @@ if(DEEP_SIGNAL_BUILD_TESTS)
     target_compile_options(deep_signal_sim_tests PRIVATE ${DEEP_SIGNAL_WARNINGS})
 
     add_test(NAME deep_signal_sim_tests COMMAND deep_signal_sim_tests)
+
+    add_executable(deep_signal_processing_allocation_rules_tests
+        tests/processing_allocation_rules_tests.cpp
+    )
+    target_link_libraries(deep_signal_processing_allocation_rules_tests PRIVATE deep_signal_sim)
+    target_compile_options(deep_signal_processing_allocation_rules_tests PRIVATE ${DEEP_SIGNAL_WARNINGS})
+    add_test(NAME deep_signal_processing_allocation_rules_tests COMMAND deep_signal_processing_allocation_rules_tests)
 
     add_executable(deep_signal_validation_tests
         tests/validation_tests.cpp

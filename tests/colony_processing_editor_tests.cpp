@@ -203,6 +203,41 @@ void draft_cancel_and_manual_apply() {
             "simulation stores deterministic Manual relative weights");
 }
 
+void tiny_positive_weights_remain_distinct() {
+    Fixture f;
+    require(f.openMain(f.a()).accepted(), "open A for small positive Manual weights");
+    const auto first = f.editor.current()->id;
+    require(f.editor.setDraftPolicy(first, ProcessingPolicy::Manual), "select Manual");
+    for (std::size_t i = 0; i < processedMaterialCount(); ++i) {
+        require(f.editor.setManualWeight(first, static_cast<ProcessedMaterial>(i), 0.0), "clear Manual row");
+    }
+    require(f.editor.setManualWeight(first, ProcessedMaterial::StructuralAlloys, 0.6e-9) &&
+            f.editor.setManualWeight(first, ProcessedMaterial::Electronics, 0.6e-9),
+            "set two individually small weights with a valid combined total");
+    const auto rows = processingAllocationsForDraft(f.editor.current()->draft);
+    require(rows.size() == 2 && rows.at(0).weight == 0.6e-9 && rows.at(1).weight == 0.6e-9,
+            "editor conversion retains positive weights below individual epsilon");
+    require(f.editor.assess(f.queries, f.adapter).canApply &&
+            f.editor.apply(first, f.queries, f.service, f.adapter).applied(),
+            "small positive Manual configuration reaches the authoritative command");
+
+    require(f.openMain(f.a()).accepted(), "reopen A on applied small Manual weights");
+    const auto second = f.editor.current()->id;
+    require(f.editor.setManualWeight(second, ProcessedMaterial::Electronics, 0.7e-9),
+            "make a small but distinct draft edit");
+    require(f.editor.assess(f.queries, f.adapter).dirty &&
+            f.editor.assess(f.queries, f.adapter).canApply,
+            "configuration identity does not use the allocation-validity epsilon");
+    require(f.service.execute(SetColonyProcessingPolicyCommand{
+        .colonyId = f.a(), .policy = ProcessingPolicy::Manual,
+        .manualAllocations = {{ProcessedMaterial::StructuralAlloys, 0.6e-9},
+                              {ProcessedMaterial::Electronics, 0.8e-9}}
+    }).ok, "another real command changes A by less than epsilon");
+    require(f.editor.assess(f.queries, f.adapter).stale &&
+            f.editor.apply(second, f.queries, f.service, f.adapter).outcome == EditorApplyOutcome::StaleBasis,
+            "small competing edit rejects stale Apply and retains the draft");
+}
+
 void stale_basis_time_and_revalidation() {
     Fixture f;
     require(f.openMain(f.a()).accepted(), "open A");
@@ -345,6 +380,7 @@ int main(){
   source_validation_and_fixed_target();std::cout<<"PASS source validation and fixed target\n";
   source_rejections_and_id_lifecycle();std::cout<<"PASS source rejection and EditorId lifecycle\n";
   draft_cancel_and_manual_apply();std::cout<<"PASS draft Cancel and Manual Apply\n";
+  tiny_positive_weights_remain_distinct();std::cout<<"PASS small positive editor weights and stale basis\n";
   stale_basis_time_and_revalidation();std::cout<<"PASS stale basis, review, and live time\n";
   lifecycle_and_missing_target();std::cout<<"PASS world lifecycle and missing target\n";
   native_editor_text_and_identity();std::cout<<"PASS native editor text and literal identity\n";

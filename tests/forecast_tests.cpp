@@ -8,13 +8,16 @@
 // projections from src/app instead of recalculating against raw GameState data.
 
 #include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <exception>
 #include <iostream>
+#include <limits>
 #include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -35,7 +38,7 @@ void require(const bool condition, const std::string_view message) {
 void requireNear(const double actual, const double expected, const std::string_view message) {
     constexpr double kTolerance = 1.0e-9;
     const double delta = actual > expected ? actual - expected : expected - actual;
-    if (delta > kTolerance) {
+    if (!std::isfinite(actual) || !std::isfinite(expected) || delta > kTolerance) {
         throw TestFailure{message};
     }
 }
@@ -291,6 +294,91 @@ void test_processed_material_forecast_normalizes_manual_weights() {
 
     requireNear(alloys.processingIncomePerDay, 37.5, "weight 3 forecasts 75 percent of processor output");
     requireNear(electronics.processingIncomePerDay, 12.5, "weight 1 forecasts 25 percent of processor output");
+}
+
+void test_manual_forecast_uses_checked_shares_without_mutating_state() {
+    // Give one colony exactly 40 capacity and sufficient raw input for both
+    // recipes. This isolates the 75/25 allocation from forecast supply limits
+    // and from every other colony's processor capacity.
+    deep::GameState state = deep::createHomeSystemScenario();
+    for (auto& colony : state.colonies) colony.processorCapacity = 0.0;
+    state.colonies.front().processorCapacity = 40.0;
+    for (double& amount : state.colonies.front().stockpile.amount) amount = 1000.0;
+    deep::SimulationService service{std::move(state)};
+    const deep::ColonyId colonyId = service.state().colonies.front().id;
+    require(service.execute(deep::SetColonyProcessingPolicyCommand{
+        .colonyId = colonyId,
+        .policy = deep::ProcessingPolicy::Manual,
+        .manualAllocations = {
+            {.material = deep::ProcessedMaterial::StructuralAlloys, .weight = 50.0},
+            {.material = deep::ProcessedMaterial::Electronics, .weight = 25.0},
+            {.material = deep::ProcessedMaterial::StructuralAlloys, .weight = 25.0}
+        }
+    }).ok, "duplicate Manual rows are accepted before forecast");
+
+    const auto stateSignature = [&service]() {
+        const deep::GameState& current = service.state();
+        const deep::Colony& colony = current.colonies.front();
+        std::vector<std::pair<deep::ProcessedMaterial, double>> rows;
+        for (const auto& row : colony.manualProcessingAllocations) rows.emplace_back(row.material, row.weight);
+        return std::tuple{current.date.day, current.ids.nextEventId, current.eventLog.size(),
+            colony.processingPolicy, std::move(rows), colony.stockpile.amount,
+            colony.processedStockpile.amount, colony.processorCapacity};
+    };
+    const deep::ForecastService forecasts{service};
+    const auto before = stateSignature();
+    const auto forecast = forecasts.processedMaterialForecastCauseChains();
+    requireNear(requireMaterialCauseChain(forecast, deep::ProcessedMaterial::StructuralAlloys).processingIncomePerDay,
+                30.0, "duplicate 75 percent alloy share forecasts 30 of 40 capacity");
+    requireNear(requireMaterialCauseChain(forecast, deep::ProcessedMaterial::Electronics).processingIncomePerDay,
+                10.0, "25 percent electronics share forecasts 10 of 40 capacity");
+    (void)forecasts.mineralForecastCauseChains();
+    require(stateSignature() == before, "forecast reads do not mutate colony configuration or stockpiles");
+
+    // A single near-maximum finite weight should still be a one-material share
+    // of one, even though intermediate weight-times-percentage math overflows.
+    require(service.execute(deep::SetColonyProcessingPolicyCommand{
+        .colonyId = colonyId,
+        .policy = deep::ProcessingPolicy::Manual,
+        .manualAllocations = {{.material = deep::ProcessedMaterial::StructuralAlloys,
+                               .weight = std::numeric_limits<double>::max()}}
+    }).ok, "maximum finite Manual weight is accepted before forecast");
+    const auto maximumBefore = stateSignature();
+    const auto maximumForecast = forecasts.processedMaterialForecastCauseChains();
+    requireNear(requireMaterialCauseChain(maximumForecast, deep::ProcessedMaterial::StructuralAlloys).processingIncomePerDay,
+                40.0, "maximum finite single weight forecasts all 40 capacity units");
+    requireNear(requireMaterialCauseChain(maximumForecast, deep::ProcessedMaterial::Electronics).processingIncomePerDay,
+                0.0, "zero electronics share forecasts no output");
+    require(stateSignature() == maximumBefore, "maximum-weight forecast leaves authoritative state unchanged");
+}
+
+void test_recovery_forecast_preserves_baseline_low_total_cutoff() {
+    const auto check = [](const double initialStockpile, const double expectedPerMaterial) {
+        deep::GameState state = deep::createHomeSystemScenario();
+        for (auto& colony : state.colonies) colony.processorCapacity = 0.0;
+        deep::Colony& ceres = state.colonies.at(2);
+        ceres.processorCapacity = 60.0;
+        ceres.mines = 0.0;
+        ceres.stockpile.amount.fill(1'000'000.0);
+        ceres.processedStockpile.amount.fill(initialStockpile);
+        ceres.processingPolicy = deep::ProcessingPolicy::StockpileRecovery;
+        deep::SimulationService service{std::move(state)};
+        const auto before = service.state().colonies.at(2).processedStockpile.amount;
+        const deep::ForecastService forecasts{service};
+        const auto rows = forecasts.processedMaterialForecastCauseChains();
+        for (std::size_t i = 0; i < deep::processedMaterialCount(); ++i) {
+            requireNear(requireMaterialCauseChain(rows, static_cast<deep::ProcessedMaterial>(i))
+                            .processingIncomePerDay,
+                        expectedPerMaterial,
+                        "Recovery forecast preserves the baseline active-preset cutoff");
+        }
+        require(service.state().colonies.at(2).processedStockpile.amount == before,
+                "Recovery forecast remains read-only");
+    };
+    // Six weights near 1e-12 total below 1e-9: zero output. Zero stockpile
+    // gives six weights of one: a hand-calculated 60/6 = 10 units per material.
+    check(1'000'000'000'000.0, 0.0);
+    check(0.0, 10.0);
 }
 
 void test_mineral_forecast_cause_chains_include_processing_demand() {
@@ -637,6 +725,8 @@ int main() {
         test_processed_material_forecast_cause_chains_report_shipyard_demand();
         test_processed_material_forecast_respects_processing_policy();
         test_processed_material_forecast_normalizes_manual_weights();
+        test_manual_forecast_uses_checked_shares_without_mutating_state();
+        test_recovery_forecast_preserves_baseline_low_total_cutoff();
         test_mineral_forecast_cause_chains_include_processing_demand();
         test_mineral_forecast_distinguishes_estimated_and_unknown_supply();
         test_mineral_forecast_warns_when_shortage_depends_on_uncertain_supply();
