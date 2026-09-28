@@ -9,6 +9,7 @@
 #include "sim/Minerals.h"
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <variant>
 
@@ -51,6 +52,14 @@ struct ShipyardOrderCreatedEvent {
     ColonyId colonyId;
     ShipClassId shipClassId;
     int quantity = 1;
+};
+
+// Audit identity for a newly saved design. Components live in the immutable
+// class record; event payloads need only identify its revision and lineage.
+struct ShipClassRevisionCreatedEvent {
+    ShipClassId shipClassId;
+    std::optional<ShipClassId> basedOnClassId;
+    int revision = 1;
 };
 
 // Emitted once per completed ship. Prototype 0.1 creates one new fleet for each
@@ -99,6 +108,7 @@ struct CommandRejectedEvent {
 using SimEventPayload = std::variant<
     MineralExtractedEvent,
     ShipyardOrderCreatedEvent,
+    ShipClassRevisionCreatedEvent,
     ShipCompletedEvent,
     FleetOrderAssignedEvent,
     FleetArrivedEvent,

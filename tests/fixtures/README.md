@@ -57,3 +57,18 @@ A read-only SQLite check returned `schema_version = 10`,
 the generated save through the baseline repository and advanced both simulations
 one day. Rebuilding with a different SQLite release may yield different file
 bytes; compare the schema and logical contents as well as the probe output.
+
+## P1 v11 reference save for P2
+
+`schema_v11_p1_reference.sql` is a text dump of a valid save written by the
+P1 `SaveGameRepository::save()` at integrated commit
+`7aa01bb53a208a0952922d9e1a0948946c913d2c`. The source state was
+`createHomeSystemScenario()` with its original aggregate Survey Cutter. A small
+standalone program compiled against that commit's headers and save/simulation
+libraries wrote the SQLite file; Python `sqlite3.Connection.iterdump()` then
+produced the checked-in SQL. The dump includes only deterministic prototype
+scenario data and uses `PRAGMA foreign_keys = OFF` during reconstruction because
+the dump orders tables alphabetically. The P2 contract test reconstructs a
+throwaway file and verifies read-only v11 loading, canonical component mapping,
+and a new-path v12 save. The P1 source save reported schema version 11 and its
+Survey Cutter row carried 500 build points and 1000 fuel capacity.

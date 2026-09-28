@@ -1,4 +1,5 @@
 #include "app/ForecastService.h"
+#include "sim/ShipDesignRules.h"
 
 // Responsibility: compute advisory economy, production, and fleet projections
 // without advancing simulation state. Local balances own temporary calculations;
@@ -425,7 +426,7 @@ struct DepositQuantityTotals {
     return out.str();
 }
 
-[[nodiscard]] double totalBuildPointsRemaining(const ShipyardOrder& order, const ShipClass& shipClass) noexcept {
+[[nodiscard]] double totalBuildPointsRemaining(const ShipyardOrder& order, const double buildPoints) noexcept {
     const int shipsRemaining = std::max(0, order.quantityRequested - order.quantityCompleted);
     if (shipsRemaining == 0) {
         return 0.0;
@@ -434,7 +435,7 @@ struct DepositQuantityTotals {
     // accumulatedBuildPoints applies to the next ship in the order. Treat it as
     // progress against the remaining total capacity requirement, then clamp away
     // small or corrupted over-progress so projections never report negative work.
-    const double remaining = static_cast<double>(shipsRemaining) * shipClass.buildPoints - order.accumulatedBuildPoints;
+    const double remaining = static_cast<double>(shipsRemaining) * buildPoints - order.accumulatedBuildPoints;
     return std::max(0.0, remaining);
 }
 
@@ -531,18 +532,18 @@ void addModifierRow(std::vector<ForecastModifierBreakdownRow>& rows, const std::
 }
 
 [[nodiscard]] std::optional<int> shipyardEtaDays(const ShipyardOrder& order,
-                                                 const ShipClass& shipClass,
+                                                 const double buildPoints,
                                                  const Colony&,
                                                  const double effectiveCapacity) {
     if (order.status == ShipyardOrderStatus::Completed || order.quantityCompleted >= order.quantityRequested) {
         return 0;
     }
 
-    if (shipClass.buildPoints <= 0.0 || effectiveCapacity <= 0.0) {
+    if (buildPoints <= 0.0 || effectiveCapacity <= 0.0) {
         return std::nullopt;
     }
 
-    return ceilToNonNegativeDays(totalBuildPointsRemaining(order, shipClass) / effectiveCapacity);
+    return ceilToNonNegativeDays(totalBuildPointsRemaining(order, buildPoints) / effectiveCapacity);
 }
 
 [[nodiscard]] ProcessedMaterialAmountTotals activeShipyardDemandByMaterial(const GameState& state) {
@@ -562,14 +563,17 @@ void addModifierRow(std::vector<ForecastModifierBreakdownRow>& rows, const std::
             continue;
         }
 
-        const std::optional<int> etaDays = shipyardEtaDays(order, *shipClass, *colony, effectiveShipyardCapacity(state, *colony));
+        const ShipDesignEvaluation design = evaluateShipDesign(state.shipComponents, shipClass->components);
+        const std::optional<int> etaDays = design.constructible
+            ? shipyardEtaDays(order, design.buildPoints, *colony, effectiveShipyardCapacity(state, *colony))
+            : std::nullopt;
         if (!etaDays.has_value() || *etaDays <= 0) {
             continue;
         }
 
         const int shipsRemaining = std::max(0, order.quantityRequested - order.quantityCompleted);
         const double perDayScale = static_cast<double>(shipsRemaining) / static_cast<double>(*etaDays);
-        addProcessedMaterialSet(totals, shipClass->buildCost, perDayScale);
+        addProcessedMaterialSet(totals, design.buildCost, perDayScale);
     }
 
     return totals;
@@ -612,11 +616,16 @@ void addModifierRow(std::vector<ForecastModifierBreakdownRow>& rows, const std::
 }
 
 [[nodiscard]] std::string productionBacklogStatusName(const ShipyardOrder& order,
+                                                      const bool constructible,
+                                                      const bool blockedByDesignAhead,
                                                       const double colonyCapacity,
                                                       const bool blockedByMaterial) {
     if (order.status == ShipyardOrderStatus::Completed || order.quantityCompleted >= order.quantityRequested) {
         return "Complete";
     }
+
+    if (!constructible) return "Waiting for design";
+    if (blockedByDesignAhead) return "Queued behind design blocker";
 
     if (colonyCapacity <= 0.0) {
         return "Waiting for capacity";
@@ -634,6 +643,8 @@ void addModifierRow(std::vector<ForecastModifierBreakdownRow>& rows, const std::
                                                        const double orderBuildPointsRemaining,
                                                        const double colonyCapacity,
                                                        const std::optional<int> etaDays,
+                                                       const std::string& designConstraint,
+                                                       const bool blockedByDesignAhead,
                                                        const bool blockedByMaterial,
                                                        const std::string& blockingMaterialName) {
     std::ostringstream out;
@@ -641,7 +652,11 @@ void addModifierRow(std::vector<ForecastModifierBreakdownRow>& rows, const std::
         << buildPointsAhead << " build points ahead + "
         << orderBuildPointsRemaining << " order build points remaining";
 
-    if (etaDays.has_value()) {
+    if (!designConstraint.empty()) {
+        out << "; design cannot be constructed: " << designConstraint;
+    } else if (blockedByDesignAhead) {
+        out << "; earlier non-constructible design holds the FIFO queue";
+    } else if (etaDays.has_value()) {
         out << " / " << colonyCapacity << " colony capacity per day = " << *etaDays << " day(s)";
     } else {
         out << "; no positive colony shipyard capacity, so ETA cannot be estimated";
@@ -659,7 +674,8 @@ void addModifierRow(std::vector<ForecastModifierBreakdownRow>& rows, const std::
                                                  const Colony* colony,
                                                  const double effectiveCapacity,
                                                  const double modifierPercent,
-                                                 const std::optional<int> etaDays) {
+                                                 const std::optional<int> etaDays,
+                                                 const ShipDesignEvaluation& design) {
     if (shipClass == nullptr || colony == nullptr) {
         return "Order references missing colony or ship class; ETA cannot be estimated";
     }
@@ -668,12 +684,14 @@ void addModifierRow(std::vector<ForecastModifierBreakdownRow>& rows, const std::
         return "Order is already complete";
     }
 
+    if (!design.constructible) return "Design cannot be constructed: " + design.constraints.front();
+
     if (!etaDays.has_value()) {
         return "No positive shipyard capacity or build-point requirement; ETA cannot be estimated";
     }
 
     std::ostringstream out;
-    out << totalBuildPointsRemaining(order, *shipClass) << " build points remaining / "
+    out << totalBuildPointsRemaining(order, design.buildPoints) << " build points remaining / "
         << effectiveCapacity << " effective capacity per day = " << *etaDays
         << " day(s); shipyard appointment modifier " << modifierPercent
         << "% ; processed material shortages may pause completion";
@@ -718,7 +736,7 @@ void addModifierRow(std::vector<ForecastModifierBreakdownRow>& rows, const std::
     return total;
 }
 
-[[nodiscard]] double fleetFuelCapacity(const GameState& state, const Fleet& fleet) noexcept {
+[[nodiscard]] double fleetFuelCapacity(const GameState& state, const Fleet& fleet) {
     double total = 0.0;
     for (const ShipId shipId : fleet.shipIds) {
         const Ship* ship = findById(state.ships, shipId);
@@ -727,7 +745,7 @@ void addModifierRow(std::vector<ForecastModifierBreakdownRow>& rows, const std::
         }
         const ShipClass* shipClass = findById(state.shipClasses, ship->shipClassId);
         if (shipClass != nullptr) {
-            total += shipClass->fuelCapacity;
+            total += evaluateShipDesign(state.shipComponents, shipClass->components).propellantCapacity;
         }
     }
     return total;
@@ -939,14 +957,16 @@ std::vector<ShipyardOrderEtaForecast> ForecastService::shipyardOrderEtas() const
         const Colony* colony = findById(state.colonies, order.colonyId);
         const ShipClass* shipClass = findById(state.shipClasses, order.shipClassId);
         const int shipsRemaining = std::max(0, order.quantityRequested - order.quantityCompleted);
-        const double remainingBuildPoints = shipClass == nullptr ? 0.0 : totalBuildPointsRemaining(order, *shipClass);
+        const ShipDesignEvaluation design = shipClass == nullptr ? ShipDesignEvaluation{}
+            : evaluateShipDesign(state.shipComponents, shipClass->components);
+        const double remainingBuildPoints = shipClass == nullptr ? 0.0 : totalBuildPointsRemaining(order, design.buildPoints);
         const ForecastModifierDetails modifier = colony == nullptr
             ? ForecastModifierDetails{}
             : appointmentModifierDetailsFor(state, AppointmentRole::ShipyardDirector, AppointmentScopeType::Colony, colony->id.value);
         const double effectiveCapacity = colony == nullptr ? 0.0 : effectiveShipyardCapacity(state, *colony);
-        const std::optional<int> eta = (colony == nullptr || shipClass == nullptr)
+        const std::optional<int> eta = (colony == nullptr || shipClass == nullptr || !design.constructible)
             ? std::nullopt
-            : shipyardEtaDays(order, *shipClass, *colony, effectiveCapacity);
+            : shipyardEtaDays(order, design.buildPoints, *colony, effectiveCapacity);
 
         forecasts.push_back(ShipyardOrderEtaForecast{
             .orderId = order.id,
@@ -960,7 +980,7 @@ std::vector<ShipyardOrderEtaForecast> ForecastService::shipyardOrderEtas() const
             .shipyardModifierPercent = modifier.modifier * 100.0,
             .shipyardModifierBreakdown = modifier.breakdown,
             .etaDays = eta,
-            .explanation = shipyardEtaExplanation(order, shipClass, colony, effectiveCapacity, modifier.modifier * 100.0, eta)
+            .explanation = shipyardEtaExplanation(order, shipClass, colony, effectiveCapacity, modifier.modifier * 100.0, eta, design)
         });
     }
 
@@ -974,6 +994,7 @@ std::vector<ProductionBacklogForecast> ForecastService::productionBacklog() cons
         ColonyId colonyId;
         int nextQueuePosition = 1;
         double buildPointsAhead = 0.0;
+        bool blockedByDesign = false;
     };
 
     std::vector<ColonyQueueForecastState> queueStates;
@@ -982,7 +1003,8 @@ std::vector<ProductionBacklogForecast> ForecastService::productionBacklog() cons
         queueStates.push_back(ColonyQueueForecastState{
             .colonyId = colony.id,
             .nextQueuePosition = 1,
-            .buildPointsAhead = 0.0
+            .buildPointsAhead = 0.0,
+            .blockedByDesign = false
         });
     }
 
@@ -993,13 +1015,16 @@ std::vector<ProductionBacklogForecast> ForecastService::productionBacklog() cons
         const Colony* colony = findById(state.colonies, order.colonyId);
         const ShipClass* shipClass = findById(state.shipClasses, order.shipClassId);
         const int shipsRemaining = std::max(0, order.quantityRequested - order.quantityCompleted);
-        const double buildPointsRemaining = shipClass == nullptr ? 0.0 : totalBuildPointsRemaining(order, *shipClass);
+        const ShipDesignEvaluation design = shipClass == nullptr ? ShipDesignEvaluation{}
+            : evaluateShipDesign(state.shipComponents, shipClass->components);
+        const double buildPointsRemaining = shipClass == nullptr ? 0.0 : totalBuildPointsRemaining(order, design.buildPoints);
         const ProcessedMaterialSet requiredMaterials = shipClass == nullptr
             ? ProcessedMaterialSet{}
-            : scaledMaterialSet(shipClass->buildCost, shipsRemaining);
+            : scaledMaterialSet(design.buildCost, shipsRemaining);
 
         int queuePosition = 0;
         double buildPointsAhead = 0.0;
+        bool blockedByDesignAhead = false;
         const ForecastModifierDetails modifier = colony == nullptr
             ? ForecastModifierDetails{}
             : appointmentModifierDetailsFor(state, AppointmentRole::ShipyardDirector, AppointmentScopeType::Colony, colony->id.value);
@@ -1016,13 +1041,17 @@ std::vector<ProductionBacklogForecast> ForecastService::productionBacklog() cons
             if (queueIt != queueStates.end()) {
                 queuePosition = queueIt->nextQueuePosition;
                 buildPointsAhead = queueIt->buildPointsAhead;
-                etaDays = queueAwareShipyardEtaDays(buildPointsAhead, buildPointsRemaining, colonyCapacity);
+                blockedByDesignAhead = queueIt->blockedByDesign;
+                if (design.constructible && !blockedByDesignAhead) {
+                    etaDays = queueAwareShipyardEtaDays(buildPointsAhead, buildPointsRemaining, colonyCapacity);
+                }
 
                 // Match simulation's FIFO capacity rule: this order's remaining
                 // build-point need is queued before later active orders at the
                 // same colony, regardless of whether materials later delay it.
                 ++queueIt->nextQueuePosition;
                 queueIt->buildPointsAhead += buildPointsRemaining;
+                if (!design.constructible) queueIt->blockedByDesign = true;
             }
         }
 
@@ -1058,12 +1087,15 @@ std::vector<ProductionBacklogForecast> ForecastService::productionBacklog() cons
             .blockingMaterial = blockedByMaterial ? blockingMaterial : std::nullopt,
             .blockingMaterialName = blockedByMaterial ? blockerName : std::string{},
             .etaDays = etaDays,
-            .statusName = productionBacklogStatusName(order, colonyCapacity, blockedByMaterial),
+            .statusName = productionBacklogStatusName(order, design.constructible,
+                                                      blockedByDesignAhead, colonyCapacity, blockedByMaterial),
             .explanation = productionBacklogExplanation(queuePosition,
                                                         buildPointsAhead,
                                                         buildPointsRemaining,
                                                         colonyCapacity,
                                                         etaDays,
+                                                        design.constructible ? std::string{} : design.constraints.front(),
+                                                        blockedByDesignAhead,
                                                         blockedByMaterial,
                                                         blockerName)
         });

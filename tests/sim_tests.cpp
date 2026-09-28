@@ -2,6 +2,7 @@
 #include "sim/Events.h"
 #include "sim/Minerals.h"
 #include "sim/ScenarioFactory.h"
+#include "sim/ShipDesignRules.h"
 #include "sim/Simulation.h"
 
 // Self-contained regression tests for the headless simulation layer.
@@ -87,7 +88,7 @@ deep::FleetId addTestFleetAt(deep::GameState& state, const deep::BodyId bodyId) 
         .shipClassId = shipClass.id,
         .name = "Test Survey Cutter",
         .fleetId = fleetId,
-        .fuel = shipClass.fuelCapacity
+        .fuel = deep::evaluateShipDesign(state.shipComponents, shipClass.components).propellantCapacity
     });
 
     return fleetId;

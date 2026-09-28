@@ -1,6 +1,7 @@
 #include "app/InformationInteractionAdapter.h"
 #include "app/SimulationQueries.h"
 #include "sim/ScenarioFactory.h"
+#include "sim/ShipDesignRules.h"
 #include "ui_imgui/ColonyPanel.h"
 #include "ui_imgui/FleetOrdersPanel.h"
 #include "ui_imgui/InspectorPanel.h"
@@ -126,7 +127,7 @@ GameState makeWorld(std::string_view label) {
     });
     state.ships.push_back(Ship{
         .id = ship, .shipClassId = shipClass.id, .name = std::string{label} + " ship",
-        .fleetId = fleet, .fuel = shipClass.fuelCapacity
+        .fleetId = fleet, .fuel = deep::evaluateShipDesign(state.shipComponents, shipClass.components).propellantCapacity
     });
     state.colonies.front().name = std::string{label} + " colony";
     return state;

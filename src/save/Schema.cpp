@@ -1,6 +1,6 @@
 #include "save/Schema.h"
 
-// Responsibility: define schema v11 tables and inspect version/structure.
+// Responsibility: define schema v11/v12 tables and inspect version/structure.
 // Tables mirror durable GameState records; event payloads remain inspectable JSON
 // text. Foreign keys and CHECK constraints provide a first line of validation,
 // not complete type/graph validation. Repository reconstruction and the domain
@@ -385,6 +385,59 @@ void createSchemaV11(Database& db) {
     )sql");
 }
 
+void createSchemaV12(Database& db) {
+    // Preserve the v11 declaration as the structural reference for legacy
+    // snapshots. The new schema replaces aggregate class values with catalog
+    // definitions and ordered installations; SQLite 3.37 supports DROP COLUMN.
+    createSchemaV11(db);
+    db.execute(R"sql(
+        DROP TABLE schema_version;
+        CREATE TABLE schema_version (
+            id INTEGER PRIMARY KEY CHECK(id = 1),
+            version INTEGER NOT NULL CHECK(version = 12)
+        );
+        DROP TABLE ship_class_material_costs;
+        ALTER TABLE ship_classes DROP COLUMN build_points;
+        ALTER TABLE ship_classes DROP COLUMN fuel_capacity;
+        ALTER TABLE ship_classes ADD COLUMN revision INTEGER NOT NULL DEFAULT 1 CHECK(revision > 0);
+        ALTER TABLE ship_classes ADD COLUMN based_on_class_id INTEGER NULL
+            REFERENCES ship_classes(id) DEFERRABLE INITIALLY DEFERRED
+            CHECK(based_on_class_id IS NULL OR based_on_class_id > 0);
+
+        CREATE TABLE ship_components (
+            id INTEGER PRIMARY KEY NOT NULL CHECK(id > 0),
+            ordinal INTEGER NOT NULL UNIQUE CHECK(typeof(ordinal) = 'integer' AND ordinal >= 0),
+            name TEXT NOT NULL CHECK(length(name) > 0),
+            kind INTEGER NOT NULL CHECK(kind BETWEEN 0 AND 4),
+            mass REAL NOT NULL CHECK(mass >= 0.0),
+            volume REAL NOT NULL CHECK(volume >= 0.0),
+            internal_volume_capacity REAL NOT NULL CHECK(internal_volume_capacity >= 0.0),
+            power_generation REAL NOT NULL CHECK(power_generation >= 0.0),
+            power_demand REAL NOT NULL CHECK(power_demand >= 0.0),
+            propellant_capacity REAL NOT NULL CHECK(propellant_capacity >= 0.0),
+            survey_capability REAL NOT NULL CHECK(survey_capability >= 0.0),
+            build_points REAL NOT NULL CHECK(build_points >= 0.0)
+        );
+        CREATE TABLE ship_component_material_costs (
+            component_id INTEGER NOT NULL CHECK(component_id > 0),
+            material INTEGER NOT NULL CHECK(material BETWEEN 0 AND 5),
+            amount REAL NOT NULL CHECK(amount >= 0.0),
+            PRIMARY KEY(component_id, material),
+            FOREIGN KEY(component_id) REFERENCES ship_components(id)
+        );
+        CREATE TABLE ship_class_installs (
+            ship_class_id INTEGER NOT NULL CHECK(ship_class_id > 0),
+            ordinal INTEGER NOT NULL CHECK(typeof(ordinal) = 'integer' AND ordinal >= 0),
+            component_id INTEGER NOT NULL CHECK(component_id > 0),
+            quantity INTEGER NOT NULL CHECK(quantity > 0),
+            PRIMARY KEY(ship_class_id, ordinal),
+            UNIQUE(ship_class_id, component_id),
+            FOREIGN KEY(ship_class_id) REFERENCES ship_classes(id),
+            FOREIGN KEY(component_id) REFERENCES ship_components(id)
+        );
+    )sql");
+}
+
 bool hasUserSchema(Database& db) {
     Statement stmt{db, "SELECT 1 FROM sqlite_schema WHERE name NOT GLOB 'sqlite_*' LIMIT 1;"};
     return stmt.step();
@@ -463,12 +516,13 @@ namespace {
     return legacy;
 }
 
-void requireStructure(Database& db, const bool legacy, const bool allowKnownTableTriggers) {
+void requireStructure(Database& db, const std::int64_t version, const bool allowKnownTableTriggers) {
     // Use the current declaration as a structural reference, then remove only
     // fields newly introduced in v11 when recognizing an authentic v10 file.
     // All destination reads use db, inside the caller's own transaction.
     Database reference{std::filesystem::path{":memory:"}};
-    createSchemaV11(reference);
+    if (version == kSchemaVersion) createSchemaV12(reference);
+    else createSchemaV11(reference);
     const auto expectedObjects = readUserObjects(reference);
     std::vector<std::string> tables;
     for (const auto& object : expectedObjects) {
@@ -476,8 +530,8 @@ void requireStructure(Database& db, const bool legacy, const bool allowKnownTabl
             tables.push_back(object.name);
         }
     }
-    if (readUserObjects(db, legacy ? std::vector<std::string>{} : tables,
-                        allowKnownTableTriggers && !legacy) != expectedObjects) {
+    if (readUserObjects(db, version == kLegacySchemaVersion ? std::vector<std::string>{} : tables,
+                        allowKnownTableTriggers && version != kLegacySchemaVersion) != expectedObjects) {
         throw std::runtime_error{"Save file has an incompatible schema object set"};
     }
 
@@ -485,7 +539,7 @@ void requireStructure(Database& db, const bool legacy, const bool allowKnownTabl
         const std::string quoted = quoteIdentifier(table);
         auto expectedColumns = readPragmaRows(reference, "PRAGMA table_xinfo(" + quoted + ");", 7);
         auto expectedIndexes = readIndexShapes(reference, table);
-        if (legacy) {
+        if (version == kLegacySchemaVersion) {
             expectedColumns = legacyColumnShape(table, std::move(expectedColumns));
             expectedIndexes = legacyIndexShapes(table, std::move(expectedIndexes), expectedColumns);
         }
@@ -501,9 +555,13 @@ void requireStructure(Database& db, const bool legacy, const bool allowKnownTabl
 } // namespace
 
 void requireV11Structure(Database& db, const bool allowKnownTableTriggers) {
-    requireStructure(db, false, allowKnownTableTriggers);
+    requireStructure(db, kPreviousSchemaVersion, allowKnownTableTriggers);
 }
 
-void requireV10Structure(Database& db) { requireStructure(db, true, false); }
+void requireV12Structure(Database& db, const bool allowKnownTableTriggers) {
+    requireStructure(db, kSchemaVersion, allowKnownTableTriggers);
+}
+
+void requireV10Structure(Database& db) { requireStructure(db, kLegacySchemaVersion, false); }
 
 } // namespace deep::save

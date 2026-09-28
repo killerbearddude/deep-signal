@@ -31,6 +31,11 @@ struct EventPrinter {
                   << " quantity=" << event.quantity << '\n';
     }
 
+    void operator()(const deep::ShipClassRevisionCreatedEvent& event) const {
+        std::cout << "  Ship class revision created: class=" << event.shipClassId.value
+                  << " revision=" << event.revision << '\n';
+    }
+
     void operator()(const deep::ShipCompletedEvent& event) const {
         std::cout << "  Ship completed: ship=" << event.shipId.value
                   << " fleet=" << event.fleetId.value << '\n';

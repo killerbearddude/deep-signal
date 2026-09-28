@@ -8,6 +8,8 @@
 #include "sim/IdTypes.h"
 
 #include <cstdint>
+#include <optional>
+#include <string>
 #include <variant>
 #include <vector>
 
@@ -25,6 +27,15 @@ struct AssignShipyardBuildCommand {
     ColonyId colonyId;
     ShipClassId shipClassId;
     int quantity = 1;
+};
+
+// Commits a complete draft as a new immutable class. Invalid composition is
+// rejected, while volume overflow is retained as a non-constructible design.
+struct CreateShipClassRevisionCommand {
+    std::string name;
+    ShipRole role = ShipRole::Survey;
+    std::optional<ShipClassId> basedOnClassId;
+    std::vector<ShipComponentInstall> components;
 };
 
 // Requests a sustained-burn transit to another body. The fleet must be idle,
@@ -59,9 +70,9 @@ struct CancelFleetOrderCommand {
     FleetId fleetId;
 };
 
-// Requests an immediate resource survey at the fleet's current body. V1 has no
-// survey duration or module requirement, so accepted commands synchronously
-// improve deposit confidence and emit an audit event.
+// Requests an immediate resource survey at the fleet's current body. P2 has no
+// survey duration; installed powered survey equipment is required. Accepted
+// commands synchronously improve deposit confidence and emit an audit event.
 struct ResourceSurveyCommand {
     FleetId fleetId;
     BodyId bodyId;
@@ -93,6 +104,7 @@ struct SetColonyProcessingPolicyCommand {
 using SimCommand = std::variant<
     AdvanceDaysCommand,
     AssignShipyardBuildCommand,
+    CreateShipClassRevisionCommand,
     MoveFleetCommand,
     QueueFleetMoveOrderCommand,
     ClearFleetOrderQueueCommand,

@@ -2,6 +2,7 @@
 #include "app/SimulationService.h"
 #include "sim/Commands.h"
 #include "sim/ScenarioFactory.h"
+#include "sim/ShipDesignRules.h"
 
 // Self-contained regression tests for app-layer forecast DTOs.
 // These tests protect the future UI contract: panels should receive explainable
@@ -86,7 +87,7 @@ deep::FleetId addTestFleetAt(deep::GameState& state, const deep::BodyId bodyId) 
         .shipClassId = shipClass.id,
         .name = "Forecast Survey Cutter",
         .fleetId = fleetId,
-        .fuel = shipClass.fuelCapacity
+        .fuel = deep::evaluateShipDesign(state.shipComponents, shipClass.components).propellantCapacity
     });
 
     return fleetId;
@@ -631,6 +632,33 @@ void test_production_backlog_reports_capacity_before_material_shortage() {
             "material shortage fields remain truthful during capacity wait");
 }
 
+void test_production_backlog_explains_non_constructible_revision() {
+    deep::SimulationService service;
+    const auto original = service.state().shipClasses.front();
+    auto overflow = original.components;
+    overflow.at(2).quantity = 8;
+    require(service.execute(deep::CreateShipClassRevisionCommand{
+        .name = "Overflow", .role = original.role,
+        .basedOnClassId = original.id, .components = overflow
+    }).ok, "overflow revision is saved for forecast test");
+    const auto colonyId = service.state().colonies.front().id;
+    const auto overflowId = service.state().shipClasses.back().id;
+    require(service.execute(deep::AssignShipyardBuildCommand{colonyId, overflowId, 1}).ok,
+            "overflow order is accepted for forecast test");
+    require(service.execute(deep::AssignShipyardBuildCommand{colonyId, original.id, 1}).ok,
+            "later constructible order remains queued");
+    const auto backlog = deep::ForecastService{service}.productionBacklog();
+    require(backlog.size() == 2 && backlog.front().queuePosition == 1 && backlog.at(1).queuePosition == 2,
+            "backlog preserves FIFO positions");
+    require(backlog.front().statusName == "Waiting for design" &&
+            backlog.front().explanation.find("Internal volume") != std::string::npos &&
+            !backlog.front().etaDays.has_value(),
+            "overflow order names the physical blocker without inventing ETA");
+    require(backlog.at(1).statusName == "Queued behind design blocker" &&
+            !backlog.at(1).etaDays.has_value(),
+            "later FIFO order cannot leapfrog a non-constructible predecessor");
+}
+
 void test_fleet_arrival_eta_reports_active_move_order() {
     // Verifies fleet forecasts expose movement arrival timing and destination
     // names without future map panels reading raw Fleet records directly.
@@ -762,6 +790,7 @@ int main() {
         test_production_backlog_uses_fifo_colony_capacity();
         test_production_backlog_reports_blocking_material();
         test_production_backlog_reports_capacity_before_material_shortage();
+        test_production_backlog_explains_non_constructible_revision();
         test_fleet_arrival_eta_reports_active_move_order();
         test_fleet_fuel_forecast_reports_range_after_move_start();
         test_fleet_fuel_forecast_exposes_commander_modifier();

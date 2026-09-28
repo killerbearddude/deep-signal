@@ -1,7 +1,8 @@
 #include "save/SaveGameRepository.h"
+#include "sim/ShipDesignRules.h"
 
-// Responsibility: map durable simulation records to v11 rows and reconstruct
-// v10 or v11 snapshots without altering a loaded file.
+// Responsibility: map durable simulation records to v12 rows and reconstruct
+// v10/v11/v12 snapshots without altering a loaded file.
 // Each operation owns its connection and reconstructed data; the input snapshot
 // is borrowed unchanged during save. Parameter binding separates values from SQL.
 // Destination recognition, schema creation, row replacement, and reads use
@@ -72,6 +73,8 @@ template <typename EnumT>
         return value >= 0 && value <= static_cast<std::int64_t>(StrategicZone::DeepSurveyFrontier);
     } else if constexpr (std::is_same_v<EnumT, ShipRole>) {
         return value >= 0 && value <= static_cast<std::int64_t>(ShipRole::Escort);
+    } else if constexpr (std::is_same_v<EnumT, ShipComponentKind>) {
+        return value >= 0 && value <= static_cast<std::int64_t>(ShipComponentKind::Utility);
     } else if constexpr (std::is_same_v<EnumT, ProcessingPolicy>) {
         return value >= 0 && value <= static_cast<std::int64_t>(ProcessingPolicy::Manual);
     } else if constexpr (std::is_same_v<EnumT, ShipyardOrderStatus>) {
@@ -181,7 +184,7 @@ void reuse(Statement& stmt) {
 }
 
 void clearExistingSave(Database& db) {
-    // Delete child tables first because v11 retains explicit foreign keys
+    // Delete child tables first because v12 retains explicit foreign keys
     // without ON DELETE CASCADE. This all runs inside the write transaction.
     db.execute(R"sql(
         DELETE FROM event_log;
@@ -190,8 +193,10 @@ void clearExistingSave(Database& db) {
         DELETE FROM fleet_order_queue;
         DELETE FROM fleets;
         DELETE FROM shipyard_orders;
-        DELETE FROM ship_class_material_costs;
+        DELETE FROM ship_class_installs;
+        DELETE FROM ship_component_material_costs;
         DELETE FROM ship_classes;
+        DELETE FROM ship_components;
         DELETE FROM colony_processing_allocations;
         DELETE FROM colony_materials;
         DELETE FROM colony_minerals;
@@ -239,6 +244,7 @@ void saveIdCounters(Database& db, const IdCounters& ids) {
     insertCounter("next_institution_id", ids.nextInstitutionId);
     insertCounter("next_person_id", ids.nextPersonId);
     insertCounter("next_ship_class_id", ids.nextShipClassId);
+    insertCounter("next_ship_component_id", ids.nextShipComponentId);
     insertCounter("next_shipyard_order_id", ids.nextShipyardOrderId);
     insertCounter("next_ship_id", ids.nextShipId);
     insertCounter("next_fleet_id", ids.nextFleetId);
@@ -421,31 +427,70 @@ void saveMineralDeposits(Database& db, const GameState& state) {
     }
 }
 
+void saveShipComponents(Database& db, const GameState& state) {
+    Statement component{db, R"sql(
+        INSERT INTO ship_components(id, ordinal, name, kind, mass, volume,
+            internal_volume_capacity, power_generation, power_demand,
+            propellant_capacity, survey_capability, build_points)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+    )sql"};
+    Statement cost{db, "INSERT INTO ship_component_material_costs(component_id, material, amount) VALUES (?, ?, ?);"};
+    for (std::size_t ordinal = 0; ordinal < state.shipComponents.size(); ++ordinal) {
+        const ShipComponentDefinition& row = state.shipComponents.at(ordinal);
+        component.bindInt64(1, idValue(row.id));
+        component.bindInt64(2, checkedOrdinal(ordinal, "ship_components"));
+        component.bindText(3, row.name);
+        component.bindInt64(4, enumValue(row.kind));
+        component.bindDouble(5, row.mass);
+        component.bindDouble(6, row.volume);
+        component.bindDouble(7, row.internalVolumeCapacity);
+        component.bindDouble(8, row.powerGeneration);
+        component.bindDouble(9, row.powerDemand);
+        component.bindDouble(10, row.propellantCapacity);
+        component.bindDouble(11, row.surveyCapability);
+        component.bindDouble(12, row.buildPoints);
+        component.execute();
+        reuse(component);
+        for (std::size_t material = 0; material < processedMaterialCount(); ++material) {
+            cost.bindInt64(1, idValue(row.id));
+            cost.bindInt64(2, static_cast<std::int64_t>(material));
+            cost.bindDouble(3, row.buildCost.amount.at(material));
+            cost.execute();
+            reuse(cost);
+        }
+    }
+}
+
 void saveShipClasses(Database& db, const GameState& state) {
     Statement classStmt{db, R"sql(
-        INSERT INTO ship_classes(id, name, role, build_points, speed_km_per_day, fuel_capacity, ordinal)
+        INSERT INTO ship_classes(id, name, role, speed_km_per_day, ordinal, revision, based_on_class_id)
         VALUES (?, ?, ?, ?, ?, ?, ?);
     )sql"};
-    Statement costStmt{db, "INSERT INTO ship_class_material_costs(ship_class_id, material, amount) VALUES (?, ?, ?);"};
+    Statement installStmt{db, R"sql(
+        INSERT INTO ship_class_installs(ship_class_id, ordinal, component_id, quantity)
+        VALUES (?, ?, ?, ?);
+    )sql"};
 
     for (std::size_t ordinal = 0; ordinal < state.shipClasses.size(); ++ordinal) {
         const ShipClass& shipClass = state.shipClasses.at(ordinal);
         classStmt.bindInt64(1, idValue(shipClass.id));
         classStmt.bindText(2, shipClass.name);
         classStmt.bindInt64(3, enumValue(shipClass.role));
-        classStmt.bindDouble(4, shipClass.buildPoints);
-        classStmt.bindDouble(5, shipClass.speedKmPerDay);
-        classStmt.bindDouble(6, shipClass.fuelCapacity);
-        classStmt.bindInt64(7, checkedOrdinal(ordinal, "ship_classes"));
+        classStmt.bindDouble(4, shipClass.speedKmPerDay);
+        classStmt.bindInt64(5, checkedOrdinal(ordinal, "ship_classes"));
+        classStmt.bindInt64(6, shipClass.revision);
+        bindOptionalId(classStmt, 7, shipClass.basedOnClassId);
         classStmt.execute();
         reuse(classStmt);
 
-        for (std::size_t material = 0; material < processedMaterialCount(); ++material) {
-            costStmt.bindInt64(1, idValue(shipClass.id));
-            costStmt.bindInt64(2, static_cast<std::int64_t>(material));
-            costStmt.bindDouble(3, shipClass.buildCost.amount.at(material));
-            costStmt.execute();
-            reuse(costStmt);
+        for (std::size_t index = 0; index < shipClass.components.size(); ++index) {
+            const ShipComponentInstall& row = shipClass.components.at(index);
+            installStmt.bindInt64(1, idValue(shipClass.id));
+            installStmt.bindInt64(2, checkedOrdinal(index, "ship_class_installs"));
+            installStmt.bindInt64(3, idValue(row.componentId));
+            installStmt.bindInt64(4, row.quantity);
+            installStmt.execute();
+            reuse(installStmt);
         }
     }
 }
@@ -615,13 +660,14 @@ void requireNoForeignKeyViolations(Database& db) {
     }
 }
 
-void loadIdCounters(Database& db, IdCounters& ids) {
+void loadIdCounters(Database& db, IdCounters& ids, const bool v12) {
     ids.nextStarSystemId = loadCounter(db, "next_star_system_id");
     ids.nextBodyId = loadCounter(db, "next_body_id");
     ids.nextColonyId = loadCounter(db, "next_colony_id");
     ids.nextInstitutionId = loadCounter(db, "next_institution_id");
     ids.nextPersonId = loadCounter(db, "next_person_id");
     ids.nextShipClassId = loadCounter(db, "next_ship_class_id");
+    if (v12) ids.nextShipComponentId = loadCounter(db, "next_ship_component_id");
     ids.nextShipyardOrderId = loadCounter(db, "next_shipyard_order_id");
     ids.nextShipId = loadCounter(db, "next_ship_id");
     ids.nextFleetId = loadCounter(db, "next_fleet_id");
@@ -870,9 +916,17 @@ void loadMineralDeposits(Database& db, GameState& state, const bool v11) {
     }
 }
 
-void loadShipClasses(Database& db, GameState& state, const bool v11) {
-    // As with colony resources, absent cost rows remain zero. Reconstruction
-    // does not distinguish an omitted component from a persisted zero cost.
+void loadLegacyShipClasses(Database& db, GameState& state, const bool v11) {
+    struct LegacyClass {
+        ShipClassId id;
+        std::string name;
+        ShipRole role;
+        ProcessedMaterialSet cost;
+        double buildPoints;
+        double speed;
+        double fuelCapacity;
+    };
+    std::vector<LegacyClass> legacy;
     Statement classes{db, v11 ? R"sql(
         SELECT id, name, role, build_points, speed_km_per_day, fuel_capacity, ordinal
         FROM ship_classes
@@ -885,13 +939,13 @@ void loadShipClasses(Database& db, GameState& state, const bool v11) {
     std::int64_t nextOrdinal = 0;
     while (classes.step()) {
         if (v11) requireNextOrdinal(classes, 6, nextOrdinal, "ship_classes");
-        state.shipClasses.push_back(ShipClass{
+        legacy.push_back(LegacyClass{
             .id = ShipClassId{classes.columnInt64(0)},
             .name = classes.columnText(1),
             .role = enumFromValue<ShipRole>(classes.columnInt64(2)),
-            .buildCost = ProcessedMaterialSet{},
+            .cost = ProcessedMaterialSet{},
             .buildPoints = classes.columnDouble(3),
-            .speedKmPerDay = classes.columnDouble(4),
+            .speed = classes.columnDouble(4),
             .fuelCapacity = classes.columnDouble(5)
         });
     }
@@ -900,19 +954,151 @@ void loadShipClasses(Database& db, GameState& state, const bool v11) {
     Statement costs{db, "SELECT ship_class_id, material, amount FROM ship_class_material_costs ORDER BY ship_class_id, material;"};
     while (costs.step()) {
         const ShipClassId shipClassId{costs.columnInt64(0)};
-        ShipClass* shipClass = findById(state.shipClasses, shipClassId);
-        if (shipClass == nullptr) {
+        const auto row = std::find_if(legacy.begin(), legacy.end(), [shipClassId](const LegacyClass& item) {
+            return item.id == shipClassId;
+        });
+        if (row == legacy.end()) {
             throw std::runtime_error{"ship_class_material_costs references a missing ship class"};
         }
-        shipClass->buildCost.set(enumFromValue<ProcessedMaterial>(costs.columnInt64(1)), costs.columnDouble(2));
+        row->cost.set(enumFromValue<ProcessedMaterial>(costs.columnInt64(1)), costs.columnDouble(2));
         ++costRows[shipClassId.value];
     }
     if (v11) {
-        for (const ShipClass& shipClass : state.shipClasses) {
-            if (costRows[shipClass.id.value] != processedMaterialCount()) {
+        for (const LegacyClass& row : legacy) {
+            if (costRows[row.id.value] != processedMaterialCount()) {
                 throw std::runtime_error{"v11 ship-class cost rows must be complete"};
             }
         }
+    }
+
+    state.shipComponents = standardShipComponentCatalog();
+    state.ids.nextShipComponentId = 6;
+    for (const LegacyClass& row : legacy) {
+        if (!std::isfinite(row.buildPoints) || row.buildPoints <= 0.0 ||
+            !std::isfinite(row.speed) || row.speed < 0.0 ||
+            !std::isfinite(row.fuelCapacity) || row.fuelCapacity < 0.0 ||
+            std::any_of(row.cost.amount.begin(), row.cost.amount.end(),
+                        [](double amount) { return !std::isfinite(amount) || amount < 0.0; })) {
+            throw std::runtime_error{"Legacy ship class contains invalid aggregate values"};
+        }
+        const bool reference = row.name == "Survey Cutter" && row.role == ShipRole::Survey &&
+            row.buildPoints == 500.0 && row.fuelCapacity == 1000.0 && row.speed == 50.0 &&
+            row.cost.get(ProcessedMaterial::StructuralAlloys) == 250.0 &&
+            row.cost.get(ProcessedMaterial::Electronics) == 80.0 &&
+            row.cost.get(ProcessedMaterial::Propellant) == 150.0 &&
+            row.cost.get(ProcessedMaterial::ReactorFuel) == 20.0 &&
+            row.cost.get(ProcessedMaterial::IndustrialComposites) == 50.0 &&
+            row.cost.get(ProcessedMaterial::OrdnanceMaterials) == 0.0;
+        std::vector<ShipComponentInstall> installs;
+        if (reference) {
+            installs = referenceSurveyCutterComponents();
+        } else {
+            // Legacy aggregate snapshots can contain custom classes. Give each
+            // one a private component composition retaining its work/material
+            // demand and tankage; propellant is removed from hull cost because
+            // commissioning now transfers it from real colony stock.
+            ShipComponentDefinition hull{
+                .id = ShipComponentId{state.ids.nextShipComponentId++},
+                .name = row.name + " Legacy Hull", .kind = ShipComponentKind::Hull,
+                .internalVolumeCapacity = 1.0,
+                .buildCost = row.cost, .buildPoints = row.buildPoints
+            };
+            hull.buildCost.set(ProcessedMaterial::Propellant, 0.0);
+            installs.push_back({hull.id, 1});
+            state.shipComponents.push_back(std::move(hull));
+            if (row.fuelCapacity > 0.0) {
+                ShipComponentDefinition tank{
+                    .id = ShipComponentId{state.ids.nextShipComponentId++},
+                    .name = row.name + " Legacy Tank", .kind = ShipComponentKind::PropellantTank,
+                    .propellantCapacity = row.fuelCapacity, .buildCost = ProcessedMaterialSet{}
+                };
+                installs.push_back({tank.id, 1});
+                state.shipComponents.push_back(std::move(tank));
+            }
+            if (row.role == ShipRole::Survey) {
+                ShipComponentDefinition sensor{
+                    .id = ShipComponentId{state.ids.nextShipComponentId++},
+                    .name = row.name + " Legacy Survey Sensor", .kind = ShipComponentKind::SurveySensor,
+                    .surveyCapability = 1.0, .buildCost = ProcessedMaterialSet{}
+                };
+                installs.push_back({sensor.id, 1});
+                state.shipComponents.push_back(std::move(sensor));
+            }
+        }
+        state.shipClasses.push_back(ShipClass{
+            .id = row.id, .name = row.name, .role = row.role,
+            .basedOnClassId = std::nullopt,
+            .components = std::move(installs), .speedKmPerDay = row.speed
+        });
+    }
+}
+
+void loadV12ShipComponentsAndClasses(Database& db, GameState& state) {
+    Statement components{db, R"sql(
+        SELECT id, name, kind, mass, volume, internal_volume_capacity,
+               power_generation, power_demand, propellant_capacity,
+               survey_capability, build_points, ordinal
+        FROM ship_components ORDER BY ordinal;
+    )sql"};
+    std::int64_t nextOrdinal = 0;
+    while (components.step()) {
+        requireNextOrdinal(components, 11, nextOrdinal, "ship_components");
+        state.shipComponents.push_back(ShipComponentDefinition{
+            .id = ShipComponentId{components.columnInt64(0)}, .name = components.columnText(1),
+            .kind = enumFromValue<ShipComponentKind>(components.columnInt64(2)),
+            .mass = components.columnDouble(3), .volume = components.columnDouble(4),
+            .internalVolumeCapacity = components.columnDouble(5),
+            .powerGeneration = components.columnDouble(6), .powerDemand = components.columnDouble(7),
+            .propellantCapacity = components.columnDouble(8), .surveyCapability = components.columnDouble(9),
+            .buildCost = ProcessedMaterialSet{}, .buildPoints = components.columnDouble(10)
+        });
+    }
+    std::unordered_map<std::int64_t, std::size_t> costRows;
+    Statement costs{db, "SELECT component_id, material, amount FROM ship_component_material_costs ORDER BY component_id, material;"};
+    while (costs.step()) {
+        const ShipComponentId id{costs.columnInt64(0)};
+        ShipComponentDefinition* row = findById(state.shipComponents, id);
+        if (row == nullptr) throw std::runtime_error{"component cost references missing definition"};
+        row->buildCost.set(enumFromValue<ProcessedMaterial>(costs.columnInt64(1)), costs.columnDouble(2));
+        ++costRows[id.value];
+    }
+    for (const ShipComponentDefinition& row : state.shipComponents) {
+        if (costRows[row.id.value] != processedMaterialCount()) {
+            throw std::runtime_error{"v12 component cost rows must be complete"};
+        }
+    }
+    Statement classes{db, R"sql(
+        SELECT id, name, role, speed_km_per_day, revision, based_on_class_id, ordinal
+        FROM ship_classes ORDER BY ordinal;
+    )sql"};
+    nextOrdinal = 0;
+    while (classes.step()) {
+        requireNextOrdinal(classes, 6, nextOrdinal, "ship_classes");
+        state.shipClasses.push_back(ShipClass{
+            .id = ShipClassId{classes.columnInt64(0)}, .name = classes.columnText(1),
+            .revision = checkedIntFromSql(classes.columnInt64(4), "ship_classes.revision"),
+            .role = enumFromValue<ShipRole>(classes.columnInt64(2)),
+            .basedOnClassId = optionalIdFromColumn<ShipClassId>(classes, 5),
+            .components = {},
+            .speedKmPerDay = classes.columnDouble(3)
+        });
+    }
+    Statement installs{db, R"sql(
+        SELECT ship_class_id, ordinal, component_id, quantity
+        FROM ship_class_installs ORDER BY ship_class_id, ordinal;
+    )sql"};
+    std::int64_t currentClass = 0;
+    nextOrdinal = 0;
+    while (installs.step()) {
+        const ShipClassId id{installs.columnInt64(0)};
+        if (id.value != currentClass) { currentClass = id.value; nextOrdinal = 0; }
+        requireNextOrdinal(installs, 1, nextOrdinal, "ship_class_installs");
+        ShipClass* row = findById(state.shipClasses, id);
+        if (row == nullptr) throw std::runtime_error{"installation references missing class"};
+        row->components.push_back(ShipComponentInstall{
+            .componentId = ShipComponentId{installs.columnInt64(2)},
+            .quantity = checkedIntFromSql(installs.columnInt64(3), "ship_class_installs.quantity")
+        });
     }
 }
 
@@ -1082,22 +1268,24 @@ void loadEvents(Database& db, GameState& state) {
     }
 }
 
-[[nodiscard]] GameState readSnapshot(Database& db, const bool v11) {
+[[nodiscard]] GameState readSnapshot(Database& db, const std::int64_t version) {
     requireNoForeignKeyViolations(db);
     GameState state;
+    const bool ordered = version >= kPreviousSchemaVersion;
     state.date.day = loadMetaInt64(db, "current_day");
-    loadIdCounters(db, state.ids);
-    loadStarSystems(db, state, v11);
-    loadInstitutions(db, state, v11);
-    loadPeople(db, state, v11);
-    loadBodies(db, state, v11);
-    loadColonies(db, state, v11);
-    loadMineralDeposits(db, state, v11);
-    loadShipClasses(db, state, v11);
-    loadShipyardOrders(db, state, v11);
-    loadFleets(db, state, v11);
-    loadShips(db, state, v11);
-    loadAppointments(db, state, v11);
+    loadIdCounters(db, state.ids, version == kSchemaVersion);
+    loadStarSystems(db, state, ordered);
+    loadInstitutions(db, state, ordered);
+    loadPeople(db, state, ordered);
+    loadBodies(db, state, ordered);
+    loadColonies(db, state, ordered);
+    loadMineralDeposits(db, state, ordered);
+    if (version == kSchemaVersion) loadV12ShipComponentsAndClasses(db, state);
+    else loadLegacyShipClasses(db, state, ordered);
+    loadShipyardOrders(db, state, ordered);
+    loadFleets(db, state, ordered);
+    loadShips(db, state, ordered);
+    loadAppointments(db, state, ordered);
     loadEvents(db, state);
 
     // Telemetry is session-only. Both readers reconstruct detached durable
@@ -1123,21 +1311,23 @@ void SaveGameRepository::save(const std::filesystem::path& path, const GameState
     Transaction transaction{db, Transaction::Mode::Write};
     if (hasUserSchema(db)) {
         const std::int64_t version = readSchemaVersion(db);
-        if (version == kLegacySchemaVersion) {
+        if (version == kLegacySchemaVersion || version == kPreviousSchemaVersion) {
             // The version marker alone does not establish that this is a valid
             // legacy save. Give new-path guidance only after the v10 structure
             // and its complete logical snapshot have passed read validation.
-            requireV10Structure(db);
-            (void)readSnapshot(db, false);
-            throw std::runtime_error{"Cannot overwrite a v10 save; choose a new path for v11"};
+            if (version == kLegacySchemaVersion) requireV10Structure(db);
+            else requireV11Structure(db);
+            (void)readSnapshot(db, version);
+            throw std::runtime_error{"Cannot overwrite a v" + std::to_string(version) +
+                                     " save; choose a new path for v12"};
         }
         if (version != kSchemaVersion) throw std::runtime_error{"Unsupported save schema version"};
-        requireV11Structure(db);
-        (void)readSnapshot(db, true);
+        requireV12Structure(db);
+        (void)readSnapshot(db, kSchemaVersion);
     } else {
         // DDL and rows share this transaction. A failed new-path save may
         // leave an empty file, but not a partially initialized schema.
-        createSchemaV11(db);
+        createSchemaV12(db);
     }
     clearExistingSave(db);
     saveSchemaVersion(db);
@@ -1156,6 +1346,7 @@ void SaveGameRepository::save(const std::filesystem::path& path, const GameState
     saveBodies(db, state);
     saveColonies(db, state);
     saveMineralDeposits(db, state);
+    saveShipComponents(db, state);
     saveShipClasses(db, state);
     saveShipyardOrders(db, state);
     saveFleets(db, state);
@@ -1164,7 +1355,7 @@ void SaveGameRepository::save(const std::filesystem::path& path, const GameState
     // Re-read on this connection before commit. This catches incomplete rows,
     // ordinal gaps, and foreign-key problems while rollback can still restore
     // the previous logical snapshot. Save rejects user triggers in preflight.
-    (void)readSnapshot(db, true);
+    (void)readSnapshot(db, kSchemaVersion);
     // dailyEconomySnapshots is runtime-only telemetry for the active session.
     // The schema deliberately omits it, so saves contain durable state and audit
     // events only; graphs can regenerate new samples after loading and advancing.
@@ -1180,10 +1371,11 @@ GameState SaveGameRepository::load(const std::filesystem::path& path) {
 
     Transaction transaction{db, Transaction::Mode::Read};
     const std::int64_t version = readSchemaVersion(db);
-    if (version == kSchemaVersion) requireV11Structure(db, true);
+    if (version == kSchemaVersion) requireV12Structure(db, true);
+    else if (version == kPreviousSchemaVersion) requireV11Structure(db, true);
     else if (version == kLegacySchemaVersion) requireV10Structure(db);
     else throw std::runtime_error{"Unsupported save schema version"};
-    GameState state = readSnapshot(db, version == kSchemaVersion);
+    GameState state = readSnapshot(db, version);
 
     transaction.commit();
     return state;

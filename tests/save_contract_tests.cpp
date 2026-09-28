@@ -3,16 +3,19 @@
 #include "save/Schema.h"
 #include "sim/GameStateValidation.h"
 #include "sim/ScenarioFactory.h"
+#include "sim/ShipDesignRules.h"
 #include "sim/Simulation.h"
 
-// Destination and failure contracts for v11 full-snapshot persistence. Every
+// Destination and failure contracts for v12 full-snapshot persistence. Every
 // database belongs to a unique temporary directory; no personal save is touched.
 
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <iterator>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -106,11 +109,11 @@ struct ScopedSaveFailureInjection {
         .ownerInstitutionId = std::nullopt
     });
     state.ships.push_back(Ship{.id = firstShip, .shipClassId = shipClass.id, .name = "First ship",
-                               .fleetId = firstFleet, .fuel = shipClass.fuelCapacity});
+                               .fleetId = firstFleet, .fuel = deep::evaluateShipDesign(state.shipComponents, shipClass.components).propellantCapacity});
     state.ships.push_back(Ship{.id = thirdShip, .shipClassId = shipClass.id, .name = "Third ship",
-                               .fleetId = secondFleet, .fuel = shipClass.fuelCapacity});
+                               .fleetId = secondFleet, .fuel = deep::evaluateShipDesign(state.shipComponents, shipClass.components).propellantCapacity});
     state.ships.push_back(Ship{.id = secondShip, .shipClassId = shipClass.id, .name = "Second ship",
-                               .fleetId = firstFleet, .fuel = shipClass.fuelCapacity});
+                               .fleetId = firstFleet, .fuel = deep::evaluateShipDesign(state.shipComponents, shipClass.components).propellantCapacity});
     validateGameState(state);
     return state;
 }
@@ -245,13 +248,13 @@ void test_new_and_schema_empty_destinations() {
     const GameState state = makeOrderedState();
     const auto fresh = temp.path / "fresh.sqlite";
     SaveGameRepository::save(fresh, state);
-    require(versionAt(fresh) == kSchemaVersion, "new path writes v11");
+    require(versionAt(fresh) == kSchemaVersion, "new path writes v12");
     requireOrder(state, SaveGameRepository::load(fresh));
 
     const auto empty = temp.path / "empty.sqlite";
     { Database created{empty}; require(!hasUserSchema(created), "created database has no user schema"); }
     SaveGameRepository::save(empty, state);
-    require(versionAt(empty) == kSchemaVersion, "schema-empty database writes v11");
+    require(versionAt(empty) == kSchemaVersion, "schema-empty database writes v12");
     requireOrder(state, SaveGameRepository::load(empty));
 }
 
@@ -265,7 +268,7 @@ void test_compatible_rewrite_and_invalid_source() {
     GameState invalid = original;
     invalid.bodies.front().name.clear();
     require(!expectSaveReject(path, invalid).empty(), "invalid source is rejected");
-    require(logicalSnapshot(path) == before, "invalid source leaves existing v11 logical contents intact");
+    require(logicalSnapshot(path) == before, "invalid source leaves existing v12 logical contents intact");
     const auto absent = temp.path / "invalid-new.sqlite";
     (void)expectSaveReject(absent, invalid);
     require(!std::filesystem::exists(absent), "invalid source fails before creating a new destination");
@@ -275,7 +278,7 @@ void test_compatible_rewrite_and_invalid_source() {
     replacement.bodies.front().name = "Replacement body";
     validateGameState(replacement);
     SaveGameRepository::save(path, replacement);
-    require(versionAt(path) == kSchemaVersion, "compatible rewrite stays v11");
+    require(versionAt(path) == kSchemaVersion, "compatible rewrite stays v12");
     const GameState loaded = SaveGameRepository::load(path);
     require(loaded.date.day == 3 && loaded.bodies.front().name == "Replacement body",
             "compatible rewrite replaces durable values");
@@ -306,7 +309,7 @@ void test_equivalent_create_table_formatting_is_compatible() {
     {
         Database db{formatted, Database::OpenMode::ReadOnly};
         Transaction transaction{db, Transaction::Mode::Read};
-        requireV11Structure(db);
+        requireV12Structure(db);
         transaction.commit();
     }
     requireOrder(state, SaveGameRepository::load(formatted));
@@ -317,7 +320,7 @@ void test_equivalent_create_table_formatting_is_compatible() {
     SaveGameRepository::save(formatted, replacement);
     const GameState loaded = SaveGameRepository::load(formatted);
     require(loaded.date.day == 2 && loaded.bodies.front().name == "Formatted destination replacement",
-            "equivalent formatted schema accepts a successful v11 overwrite");
+            "equivalent formatted schema accepts a successful v12 overwrite");
     requireOrder(replacement, loaded);
 }
 
@@ -343,7 +346,7 @@ void test_legacy_and_incompatible_destinations() {
             "v10 overwrite rejection leaves the legacy file unchanged");
     const auto migratedBySave = temp.path / "from-v10-new-path.sqlite";
     SaveGameRepository::save(migratedBySave, legacyLoaded);
-    require(versionAt(migratedBySave) == kSchemaVersion, "loaded v10 state can be saved to a new v11 path");
+    require(versionAt(migratedBySave) == kSchemaVersion, "loaded v10 state can be saved to a new v12 path");
     const GameState v11Loaded = SaveGameRepository::load(migratedBySave);
     require(v11Loaded.shipyardOrders.size() == 2
             && v11Loaded.shipyardOrders.at(0).id == ShipyardOrderId{1}
@@ -404,6 +407,77 @@ void test_legacy_and_incompatible_destinations() {
     const auto missing = temp.path / "missing.sqlite";
     (void)expectLoadReject(missing);
     require(!std::filesystem::exists(missing), "read-only Load does not create a missing file");
+}
+
+void test_v11_reference_load_maps_to_components() {
+    TempDirectory temp;
+    const auto fixture = std::filesystem::path{DEEP_SIGNAL_TEST_SOURCE_DIR} /
+        "tests" / "fixtures" / "schema_v11_p1_reference.sql";
+    require(std::filesystem::is_regular_file(fixture), "pinned P1 v11 fixture exists");
+    const auto legacy = temp.path / "p1-v11.sqlite";
+    std::ifstream source{fixture};
+    require(source.good(), "P1 v11 SQL fixture is readable");
+    const std::string fixtureSql{std::istreambuf_iterator<char>{source}, std::istreambuf_iterator<char>{}};
+    executeSql(legacy, fixtureSql);
+    const auto before = logicalSnapshot(legacy);
+    const GameState loaded = SaveGameRepository::load(legacy);
+    require(versionAt(legacy) == kPreviousSchemaVersion && logicalSnapshot(legacy) == before,
+            "v11 Load remains read-only");
+    require(loaded.shipComponents.size() == 5 && loaded.shipClasses.size() == 1 &&
+            loaded.shipClasses.front().components == referenceSurveyCutterComponents(),
+            "legacy Survey Cutter maps to canonical reference composition");
+    const auto design = evaluateShipDesign(loaded.shipComponents, loaded.shipClasses.front().components);
+    require(design.constructible && design.buildPoints == 500.0 &&
+            design.propellantCapacity == 1000.0 &&
+            design.buildCost.get(ProcessedMaterial::Propellant) == 0.0,
+            "legacy class has P2 derived build and commissioning semantics");
+    const auto guidance = expectSaveReject(legacy, loaded);
+    require(guidance.find("v11") != std::string::npos && guidance.find("new path") != std::string::npos,
+            "v11 overwrite directs the player to a new v12 path");
+    const auto current = temp.path / "from-v11-v12.sqlite";
+    SaveGameRepository::save(current, loaded);
+    require(versionAt(current) == kSchemaVersion, "loaded v11 state saves as v12");
+    const GameState reloaded = SaveGameRepository::load(current);
+    require(reloaded.shipClasses.front().components == loaded.shipClasses.front().components &&
+            reloaded.shipComponents.size() == loaded.shipComponents.size(),
+            "v12 round trip retains migrated component identity");
+
+    const auto malformed = temp.path / "invalid-v11-propellant.sqlite";
+    std::filesystem::copy_file(legacy, malformed);
+    {
+        Database db{malformed};
+        db.execute("PRAGMA ignore_check_constraints = ON;");
+        db.execute("UPDATE ship_class_material_costs SET amount = -1 WHERE ship_class_id = 1 AND material = 2;");
+    }
+    const std::string malformedReason = expectLoadReject(malformed);
+    require(malformedReason.find("negative") != std::string::npos ||
+            malformedReason.find("invalid aggregate") != std::string::npos,
+            "legacy conversion does not hide malformed propellant cost: " + malformedReason);
+}
+
+void test_v12_revision_and_catalog_order_survives_save() {
+    TempDirectory temp;
+    Simulation sim{createHomeSystemScenario()};
+    auto draft = sim.state().shipClasses.front().components;
+    draft.at(2).quantity = 2;
+    require(sim.execute(CreateShipClassRevisionCommand{
+        .name = "Reordered revision", .role = ShipRole::Escort,
+        .basedOnClassId = sim.state().shipClasses.front().id,
+        .components = draft
+    }).ok, "revision exists before ordering test");
+    GameState source = sim.state();
+    std::reverse(source.shipClasses.begin(), source.shipClasses.end());
+    std::reverse(source.shipComponents.begin(), source.shipComponents.end());
+    std::reverse(source.shipClasses.front().components.begin(), source.shipClasses.front().components.end());
+    validateGameState(source);
+    const auto path = temp.path / "reordered-v12.sqlite";
+    SaveGameRepository::save(path, source);
+    const GameState loaded = SaveGameRepository::load(path);
+    require(loaded.shipClasses.front().id == source.shipClasses.front().id &&
+            loaded.shipClasses.front().basedOnClassId == source.shipClasses.front().basedOnClassId &&
+            loaded.shipClasses.front().components == source.shipClasses.front().components &&
+            loaded.shipComponents.front().id == source.shipComponents.front().id,
+            "v12 preserves class/catalog/installation order even when lineage ID order differs");
 }
 
 void test_v10_marker_requires_valid_legacy_save() {
@@ -475,7 +549,7 @@ void test_v10_marker_requires_valid_legacy_save() {
             "logically invalid v10 destination is unchanged after rejection");
 }
 
-void test_v11_ordinal_failures() {
+void test_v12_ordinal_failures() {
     TempDirectory temp;
     const GameState state = makeOrderedState();
     const auto base = temp.path / "base.sqlite";
@@ -499,10 +573,10 @@ void test_v11_ordinal_failures() {
         const auto malformedBefore = logicalSnapshot(path);
         const std::string failure = expectLoadReject(path);
         require(failure.find(test.expectedError) != std::string::npos,
-                "the matching v11 ordinal reader rejected the malformed sequence");
+                "the matching v12 ordinal reader rejected the malformed sequence");
         (void)expectSaveReject(path, state);
         require(logicalSnapshot(path) == malformedBefore,
-                "malformed v11 ordinal destination is not replaced by Save");
+                "malformed v12 ordinal destination is not replaced by Save");
     }
 
     const struct Constraint { const char* name; const char* sql; } constraints[] = {
@@ -588,12 +662,14 @@ void test_known_table_trigger_is_load_only() {
 
 int main() {
     const std::pair<std::string_view, void (*)()> tests[] = {
-        {"new and schema-empty v11 destinations", test_new_and_schema_empty_destinations},
+        {"new and schema-empty v12 destinations", test_new_and_schema_empty_destinations},
         {"compatible rewrite and invalid source", test_compatible_rewrite_and_invalid_source},
         {"equivalent CREATE TABLE formatting", test_equivalent_create_table_formatting_is_compatible},
         {"v10 and incompatible destination policy", test_legacy_and_incompatible_destinations},
+        {"v11 reference loads as components", test_v11_reference_load_maps_to_components},
+        {"v12 revision and catalog ordering", test_v12_revision_and_catalog_order_survives_save},
         {"v10 marker requires valid legacy structure and state", test_v10_marker_requires_valid_legacy_save},
-        {"v11 ordinal corruption and constraints", test_v11_ordinal_failures},
+        {"v12 ordinal corruption and constraints", test_v12_ordinal_failures},
         {"writer contention and post-delete rollback", test_contention_and_post_delete_rollback},
         {"known-table trigger is load only", test_known_table_trigger_is_load_only}
     };

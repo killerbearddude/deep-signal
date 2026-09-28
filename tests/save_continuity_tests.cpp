@@ -2,6 +2,7 @@
 #include "sim/Commands.h"
 #include "sim/GameStateValidation.h"
 #include "sim/ScenarioFactory.h"
+#include "sim/ShipDesignRules.h"
 #include "sim/Simulation.h"
 
 // Behavioral save continuity tests. Vector order is gameplay state: mining,
@@ -74,6 +75,7 @@ void compare(const deep::IdCounters& a, const deep::IdCounters& b, const std::st
     EXACT(nextStarSystemId); EXACT(nextBodyId); EXACT(nextColonyId);
     EXACT(nextInstitutionId); EXACT(nextPersonId); EXACT(nextShipClassId);
     EXACT(nextShipyardOrderId); EXACT(nextShipId); EXACT(nextFleetId);
+    EXACT(nextShipComponentId);
     EXACT(nextEventId);
 }
 
@@ -152,10 +154,19 @@ void compare(const deep::Colony& a, const deep::Colony& b, const std::string& pa
     EXACT(ownerInstitutionId);
 }
 
-void compare(const deep::ShipClass& a, const deep::ShipClass& b, const std::string& path) {
-    EXACT(id); EXACT(name); EXACT(role);
+void compare(const deep::ShipComponentDefinition& a, const deep::ShipComponentDefinition& b,
+             const std::string& path) {
+    EXACT(id); EXACT(name); EXACT(kind);
+    FLOAT(mass); FLOAT(volume); FLOAT(internalVolumeCapacity);
+    FLOAT(powerGeneration); FLOAT(powerDemand); FLOAT(propellantCapacity);
+    FLOAT(surveyCapability); FLOAT(buildPoints);
     compare(a.buildCost, b.buildCost, path + ".buildCost");
-    FLOAT(buildPoints); FLOAT(speedKmPerDay); FLOAT(fuelCapacity);
+}
+
+void compare(const deep::ShipClass& a, const deep::ShipClass& b, const std::string& path) {
+    EXACT(id); EXACT(name); EXACT(revision); EXACT(role); EXACT(basedOnClassId);
+    exactSequence(a.components, b.components, path + ".components");
+    FLOAT(speedKmPerDay);
 }
 
 void compare(const deep::ShipyardOrder& a, const deep::ShipyardOrder& b,
@@ -206,6 +217,11 @@ void compare(const deep::MineralExtractedEvent& a, const deep::MineralExtractedE
 void compare(const deep::ShipyardOrderCreatedEvent& a, const deep::ShipyardOrderCreatedEvent& b,
              const std::string& path) {
     EXACT(orderId); EXACT(colonyId); EXACT(shipClassId); EXACT(quantity);
+}
+
+void compare(const deep::ShipClassRevisionCreatedEvent& a, const deep::ShipClassRevisionCreatedEvent& b,
+             const std::string& path) {
+    EXACT(shipClassId); EXACT(basedOnClassId); EXACT(revision);
 }
 
 void compare(const deep::ShipCompletedEvent& a, const deep::ShipCompletedEvent& b,
@@ -270,7 +286,7 @@ void compareDurableState(const deep::GameState& a, const deep::GameState& b,
     })
     RECORDS(starSystems); RECORDS(institutions); RECORDS(people);
     RECORDS(appointments); RECORDS(bodies); RECORDS(mineralDeposits);
-    RECORDS(colonies); RECORDS(shipClasses); RECORDS(shipyardOrders);
+    RECORDS(colonies); RECORDS(shipComponents); RECORDS(shipClasses); RECORDS(shipyardOrders);
     RECORDS(ships); RECORDS(fleets); RECORDS(eventLog);
 #undef RECORDS
     // dailyEconomySnapshots before a save boundary are session-only telemetry.
@@ -554,6 +570,41 @@ void testWaitingShipyardOrderContinuesAfterCapacityRecovery() {
             "loaded order completes without resubmission or replacement");
 }
 
+void testDesignedRevisionContinuesAcrossSave() {
+    deep::GameState initial = deep::createHomeSystemScenario();
+    initial.colonies.front().processorCapacity = 0.0;
+    deep::Simulation uninterrupted{initial};
+    auto continued = std::make_unique<deep::Simulation>(std::move(initial));
+    auto draft = uninterrupted.state().shipClasses.front().components;
+    draft.at(2).quantity = 2;
+    const deep::CreateShipClassRevisionCommand revision{
+        .name = "Long Range", .role = deep::ShipRole::Survey,
+        .basedOnClassId = uninterrupted.state().shipClasses.front().id,
+        .components = draft
+    };
+    require(uninterrupted.execute(revision).ok && continued->execute(revision).ok,
+            "both branches create same immutable revision");
+    const auto classId = uninterrupted.state().shipClasses.back().id;
+    const auto colonyId = uninterrupted.state().colonies.front().id;
+    const deep::AssignShipyardBuildCommand order{colonyId, classId, 1};
+    require(uninterrupted.execute(order).ok && continued->execute(order).ok,
+            "both branches order exact new revision");
+    uninterrupted.advanceDays(2);
+    continued->advanceDays(2);
+    checkpoint(uninterrupted, *continued, "design.beforeSave");
+    UniqueSavePath save;
+    saveLoadCheckpoint(uninterrupted, continued, save.path(), "design.roundTrip");
+    for (int day = 3; day <= 6; ++day) {
+        uninterrupted.advanceDays(1);
+        continued->advanceDays(1);
+        checkpoint(uninterrupted, *continued, "design.day" + std::to_string(day));
+    }
+    require(uninterrupted.state().ships.size() == 1 &&
+            uninterrupted.state().ships.front().shipClassId == classId &&
+            uninterrupted.state().shipyardOrders.front().status == deep::ShipyardOrderStatus::Completed,
+            "same revised hull and fuel transfer complete after load");
+}
+
 const deep::Fleet& fleetById(const deep::GameState& state, const deep::FleetId id) {
     for (const deep::Fleet& fleet : state.fleets) {
         if (fleet.id == id) {
@@ -579,7 +630,7 @@ deep::FleetId addSingleShipFleet(deep::GameState& state, const deep::BodyId body
     const deep::ShipClass& shipClass = state.shipClasses.front();
     state.ships.push_back(deep::Ship{
         .id = shipId, .shipClassId = shipClass.id,
-        .name = label + " Hull", .fleetId = fleetId, .fuel = shipClass.fuelCapacity
+        .name = label + " Hull", .fleetId = fleetId, .fuel = deep::evaluateShipDesign(state.shipComponents, shipClass.components).propellantCapacity
     });
     state.fleets.push_back(deep::Fleet{
         .id = fleetId, .name = label, .currentBodyId = bodyId,
@@ -1001,6 +1052,7 @@ int main() {
         testSharedDepositCompetition();
         testFifoShipyardCompetition();
         testWaitingShipyardOrderContinuesAfterCapacityRecovery();
+        testDesignedRevisionContinuesAcrossSave();
         testPerHullFuelPayment();
         testSameDayArrivalsAndQueuePromotion();
         testMixedDurableOrdering();

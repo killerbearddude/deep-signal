@@ -203,9 +203,9 @@ template <typename T, typename IdT>
     return "Unknown";
 }
 
-[[nodiscard]] double shipClassBuildPoints(const GameState& state, const ShipClassId id) noexcept {
+[[nodiscard]] double shipClassBuildPoints(const GameState& state, const ShipClassId id) {
     const ShipClass* shipClass = findById(state.shipClasses, id);
-    return shipClass == nullptr ? 0.0 : shipClass->buildPoints;
+    return shipClass == nullptr ? 0.0 : evaluateShipDesign(state.shipComponents, shipClass->components).buildPoints;
 }
 
 [[nodiscard]] std::string statusName(const ShipyardOrderStatus status) {
@@ -228,7 +228,7 @@ struct FleetFuelTotals {
     return MapPosition{.x = body.x, .y = body.y};
 }
 
-[[nodiscard]] FleetFuelTotals fleetFuelTotals(const GameState& state, const Fleet& fleet) noexcept {
+[[nodiscard]] FleetFuelTotals fleetFuelTotals(const GameState& state, const Fleet& fleet) {
     FleetFuelTotals totals;
     for (const ShipId shipId : fleet.shipIds) {
         const Ship* ship = findById(state.ships, shipId);
@@ -239,7 +239,7 @@ struct FleetFuelTotals {
         totals.currentFuel += ship->fuel;
         const ShipClass* shipClass = findById(state.shipClasses, ship->shipClassId);
         if (shipClass != nullptr) {
-            totals.fuelCapacity += shipClass->fuelCapacity;
+            totals.fuelCapacity += evaluateShipDesign(state.shipComponents, shipClass->components).propellantCapacity;
         }
     }
     return totals;
@@ -866,6 +866,8 @@ void addProcessingWeight(ProcessingShares& weights, const ProcessedMaterial mate
             return "mineral_extracted";
         } else if constexpr (std::is_same_v<Event, ShipyardOrderCreatedEvent>) {
             return "shipyard_order_created";
+        } else if constexpr (std::is_same_v<Event, ShipClassRevisionCreatedEvent>) {
+            return "ship_class_revision_created";
         } else if constexpr (std::is_same_v<Event, ShipCompletedEvent>) {
             return "ship_completed";
         } else if constexpr (std::is_same_v<Event, FleetOrderAssignedEvent>) {
@@ -891,6 +893,9 @@ void addProcessingWeight(ProcessingShares& weights, const ProcessedMaterial mate
         } else if constexpr (std::is_same_v<Event, ShipyardOrderCreatedEvent>) {
             out << "Created shipyard order " << idText(event.orderId.value)
                 << " for " << event.quantity << " ship(s)";
+        } else if constexpr (std::is_same_v<Event, ShipClassRevisionCreatedEvent>) {
+            out << "Created ship class revision " << event.revision
+                << " (class " << idText(event.shipClassId.value) << ')';
         } else if constexpr (std::is_same_v<Event, ShipCompletedEvent>) {
             out << "Completed ship " << idText(event.shipId.value)
                 << " for order " << idText(event.orderId.value);
@@ -1087,16 +1092,48 @@ std::vector<ShipClassSummary> SimulationQueries::shipClasses() const {
     summaries.reserve(state.shipClasses.size());
 
     for (const ShipClass& shipClass : state.shipClasses) {
+        const ShipDesignEvaluation design = evaluateShipDesign(state.shipComponents, shipClass.components);
         summaries.push_back(ShipClassSummary{
             .id = shipClass.id,
             .name = shipClass.name,
+            .revision = shipClass.revision,
             .role = shipClass.role,
             .roleName = shipRoleName(shipClass.role),
-            .buildPoints = shipClass.buildPoints
+            .basedOnClassId = shipClass.basedOnClassId,
+            .components = shipClass.components,
+            .design = design,
+            .buildPoints = design.buildPoints
         });
     }
 
     return summaries;
+}
+
+std::vector<ShipComponentSummary> SimulationQueries::shipComponents() const {
+    std::vector<ShipComponentSummary> rows;
+    for (const ShipComponentDefinition& component : service_.state().shipComponents) {
+        rows.push_back(ShipComponentSummary{
+            .id = component.id, .name = component.name, .kind = component.kind,
+            .mass = component.mass, .volume = component.volume,
+            .internalVolumeCapacity = component.internalVolumeCapacity,
+            .powerGeneration = component.powerGeneration, .powerDemand = component.powerDemand,
+            .propellantCapacity = component.propellantCapacity,
+            .surveyCapability = component.surveyCapability,
+            .buildCost = component.buildCost, .buildPoints = component.buildPoints
+        });
+    }
+    return rows;
+}
+
+ShipDesignDraftPreview SimulationQueries::previewShipDesign(
+    const std::vector<ShipComponentInstall>& components) const {
+    ShipDesignDraftPreview preview;
+    preview.design = evaluateShipDesign(service_.state().shipComponents, components);
+    preview.warnings = preview.design.constraints;
+    if (preview.design.powerMargin < 0.0) preview.warnings.push_back("Power deficit: mission systems are unavailable");
+    if (preview.design.surveyCapability <= 0.0) preview.warnings.push_back("No survey capability installed");
+    if (preview.design.propellantCapacity <= 0.0) preview.warnings.push_back("Zero propellant tankage");
+    return preview;
 }
 
 std::vector<FleetSummary> SimulationQueries::fleets() const {
@@ -1451,6 +1488,11 @@ std::optional<ResourceSurveyPreview> SimulationQueries::resourceSurveyPreview(co
         preview.warningText = "Fleet must be stationary to survey.";
     } else if (fleet->currentBodyId != bodyId) {
         preview.warningText = "Fleet must be at the selected body.";
+    } else if (const FleetSurveyEvaluation capability = evaluateFleetSurvey(state, *fleet);
+               capability.operationalCapability <= 0.0) {
+        preview.warningText = capability.installedCapability > 0.0
+            ? "Survey equipment is unavailable due to power deficit."
+            : "Fleet has no installed survey capability.";
     } else if (preview.surveyableDepositCount == 0U) {
         preview.warningText = "No low-confidence deposits remain on this body.";
     } else {

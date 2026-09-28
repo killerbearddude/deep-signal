@@ -4,6 +4,8 @@
 #include "sim/Commands.h"
 #include "sim/Minerals.h"
 #include "sim/ScenarioFactory.h"
+#include "sim/ShipDesignRules.h"
+#include "sim/Simulation.h"
 
 // Regression tests for SQLite save/load round-tripping.
 // These tests verify that the current schema persists durable Prototype 0.1 state,
@@ -103,6 +105,10 @@ bool samePayload(const deep::SimEventPayload& lhs, const deep::SimEventPayload& 
                    left.colonyId == right.colonyId &&
                    left.shipClassId == right.shipClassId &&
                    left.quantity == right.quantity;
+        } else if constexpr (std::is_same_v<Left, deep::ShipClassRevisionCreatedEvent>) {
+            return left.shipClassId == right.shipClassId &&
+                   left.basedOnClassId == right.basedOnClassId &&
+                   left.revision == right.revision;
         } else if constexpr (std::is_same_v<Left, deep::ShipCompletedEvent>) {
             return left.orderId == right.orderId &&
                    left.colonyId == right.colonyId &&
@@ -141,6 +147,7 @@ void requireSameState(const deep::GameState& expected, const deep::GameState& ac
     require(expected.ids.nextInstitutionId == actual.ids.nextInstitutionId, "institution counter round-trips");
     require(expected.ids.nextPersonId == actual.ids.nextPersonId, "person counter round-trips");
     require(expected.ids.nextShipClassId == actual.ids.nextShipClassId, "ship-class counter round-trips");
+    require(expected.ids.nextShipComponentId == actual.ids.nextShipComponentId, "component counter round-trips");
     require(expected.ids.nextShipyardOrderId == actual.ids.nextShipyardOrderId, "shipyard-order counter round-trips");
     require(expected.ids.nextShipId == actual.ids.nextShipId, "ship counter round-trips");
     require(expected.ids.nextFleetId == actual.ids.nextFleetId, "fleet counter round-trips");
@@ -250,6 +257,22 @@ void requireSameState(const deep::GameState& expected, const deep::GameState& ac
         require(almostEqual(left.confidence, right.confidence), "deposit confidence round-trips");
     }
 
+    require(expected.shipComponents.size() == actual.shipComponents.size(), "component row count round-trips");
+    for (std::size_t i = 0; i < expected.shipComponents.size(); ++i) {
+        const auto& left = expected.shipComponents.at(i);
+        const auto& right = actual.shipComponents.at(i);
+        require(left.id == right.id && left.name == right.name && left.kind == right.kind,
+                "component identity round-trips");
+        require(almostEqual(left.mass, right.mass) && almostEqual(left.volume, right.volume) &&
+                almostEqual(left.internalVolumeCapacity, right.internalVolumeCapacity) &&
+                almostEqual(left.powerGeneration, right.powerGeneration) &&
+                almostEqual(left.powerDemand, right.powerDemand) &&
+                almostEqual(left.propellantCapacity, right.propellantCapacity) &&
+                almostEqual(left.surveyCapability, right.surveyCapability) &&
+                almostEqual(left.buildPoints, right.buildPoints) &&
+                sameProcessedMaterialSet(left.buildCost, right.buildCost),
+                "component physical and build data round-trips");
+    }
     require(expected.shipClasses.size() == actual.shipClasses.size(), "ship-class row count round-trips");
     for (std::size_t i = 0; i < expected.shipClasses.size(); ++i) {
         const deep::ShipClass& left = expected.shipClasses.at(i);
@@ -257,10 +280,9 @@ void requireSameState(const deep::GameState& expected, const deep::GameState& ac
         require(left.id == right.id, "ship-class ID round-trips");
         require(left.name == right.name, "ship-class name round-trips");
         require(left.role == right.role, "ship-class role round-trips");
-        require(sameProcessedMaterialSet(left.buildCost, right.buildCost), "ship-class processed cost round-trips");
-        require(almostEqual(left.buildPoints, right.buildPoints), "ship-class build points round-trip");
+        require(left.revision == right.revision && left.basedOnClassId == right.basedOnClassId &&
+                left.components == right.components, "ship-class revision and installation order round-trips");
         require(almostEqual(left.speedKmPerDay, right.speedKmPerDay), "ship-class speed round-trips");
-        require(almostEqual(left.fuelCapacity, right.fuelCapacity), "ship-class fuel capacity round-trips");
     }
 
     require(expected.shipyardOrders.size() == actual.shipyardOrders.size(), "shipyard-order row count round-trips");
@@ -451,6 +473,69 @@ void test_zero_capacity_waiting_order_round_trip() {
             loaded.shipyardOrders.at(0).status == deep::ShipyardOrderStatus::Active &&
             loaded.shipyardOrders.at(0).accumulatedBuildPoints == 0.0,
             "loaded orders retain FIFO sequence and waiting progress");
+    std::filesystem::remove(path);
+}
+
+void test_design_revision_round_trip() {
+    const std::filesystem::path path = testSavePath();
+    std::filesystem::remove(path);
+    deep::SimulationService service;
+    const auto original = service.state().shipClasses.front();
+    auto draft = original.components;
+    draft.at(2).quantity = 2;
+    require(service.execute(deep::CreateShipClassRevisionCommand{
+        .name = "Double Tank", .role = deep::ShipRole::Escort,
+        .basedOnClassId = original.id, .components = draft
+    }).ok, "revision is created before save");
+    const auto revisedId = service.state().shipClasses.back().id;
+    const auto colonyId = service.state().colonies.front().id;
+    require(service.execute(deep::AssignShipyardBuildCommand{colonyId, revisedId, 1}).ok,
+            "order binds revised ID before save");
+    service.advanceDays(6);
+    require(service.state().ships.size() == 1 &&
+            service.state().ships.front().shipClassId == revisedId,
+            "completed ship binds revised ID before save");
+    require(service.execute(deep::AssignShipyardBuildCommand{colonyId, original.id, 1}).ok,
+            "later order binds original revision before save");
+    const deep::GameState expected = service.state();
+    require(service.saveGame(path).ok, "v12 component revision snapshot saves");
+    const deep::GameState loaded = deep::save::SaveGameRepository::load(path);
+    requireSameState(expected, loaded);
+    require(loaded.shipClasses.back().components == draft &&
+            loaded.shipyardOrders.back().shipClassId == original.id &&
+            loaded.ships.front().shipClassId == revisedId,
+            "load preserves component order and exact class bindings");
+    std::filesystem::remove(path);
+}
+
+void test_non_constructible_revision_round_trip() {
+    const std::filesystem::path path = testSavePath();
+    std::filesystem::remove(path);
+    deep::SimulationService service;
+    auto overflow = service.state().shipClasses.front().components;
+    overflow.at(2).quantity = 8;
+    const auto sourceId = service.state().shipClasses.front().id;
+    require(service.execute(deep::CreateShipClassRevisionCommand{
+        .name = "Overflow", .role = deep::ShipRole::Survey,
+        .basedOnClassId = sourceId, .components = overflow
+    }).ok, "overflow revision saves as durable design intent");
+    const auto classId = service.state().shipClasses.back().id;
+    require(service.execute(deep::AssignShipyardBuildCommand{
+        service.state().colonies.front().id, classId, 1
+    }).ok, "overflow order is accepted before save");
+    service.advanceDays(3);
+    const deep::GameState expected = service.state();
+    require(service.saveGame(path).ok, "non-constructible revision and order save");
+    deep::GameState loaded = deep::save::SaveGameRepository::load(path);
+    requireSameState(expected, loaded);
+    require(!deep::evaluateShipDesign(loaded.shipComponents, loaded.shipClasses.back().components).constructible &&
+            loaded.shipyardOrders.front().accumulatedBuildPoints == 0.0,
+            "loaded overflow revision still blocks physical progress");
+    deep::Simulation resumed{std::move(loaded)};
+    resumed.advanceDays(3);
+    require(resumed.state().ships.empty() &&
+            resumed.state().shipyardOrders.front().accumulatedBuildPoints == 0.0,
+            "loaded non-constructible order remains durable and idle");
     std::filesystem::remove(path);
 }
 
@@ -905,7 +990,22 @@ void test_malformed_save_non_finite_numeric_value_is_rejected() {
     // the textual/REAL representation. Forecasting and simulation math require
     // finite values.
     expectMalformedSaveRejected("infinite_build_points",
-                                "UPDATE ship_classes SET build_points = 1e999 WHERE id = 1;");
+                                "UPDATE ship_components SET build_points = 1e999 WHERE id = 1;");
+}
+
+void test_malformed_component_snapshot_is_rejected() {
+    expectMalformedSaveRejected("missing_component_cost",
+                            "DELETE FROM ship_component_material_costs WHERE component_id = 1 AND material = 0;");
+    expectMalformedSaveRejected("bad_component_quantity",
+                            "UPDATE ship_class_installs SET quantity = 0 WHERE ship_class_id = 1 AND ordinal = 0;",
+                            true);
+    expectMalformedSaveRejected("bad_component_kind",
+                            "UPDATE ship_components SET kind = 99 WHERE id = 1;", true);
+    expectMalformedSaveRejected("missing_component_reference",
+                            "UPDATE ship_class_installs SET component_id = 999 WHERE ship_class_id = 1 AND ordinal = 0;",
+                            false, true);
+    expectMalformedSaveRejected("bad_root_revision",
+                            "UPDATE ship_classes SET revision = 2 WHERE id = 1;");
 }
 
 void test_malformed_save_event_payload_missing_field_is_rejected() {
@@ -919,6 +1019,8 @@ void test_malformed_save_event_payload_missing_field_is_rejected() {
 int main() {
     try {
         test_zero_capacity_waiting_order_round_trip();
+        test_design_revision_round_trip();
+        test_non_constructible_revision_round_trip();
         test_sqlite_save_load_round_trip();
         test_institution_identity_and_ownership_round_trip();
         test_personnel_registry_round_trips();
@@ -950,6 +1052,7 @@ int main() {
         test_malformed_save_broken_owner_institution_reference_is_rejected();
         test_malformed_save_negative_colony_mines_is_rejected();
         test_malformed_save_non_finite_numeric_value_is_rejected();
+        test_malformed_component_snapshot_is_rejected();
         test_malformed_save_event_payload_missing_field_is_rejected();
     } catch (const std::exception& ex) {
         std::cerr << "Save/load test failure: " << ex.what() << '\n';

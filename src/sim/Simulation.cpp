@@ -1,6 +1,7 @@
 #include "sim/Simulation.h"
 #include "sim/GameStateValidation.h"
 #include "sim/ProcessingAllocationRules.h"
+#include "sim/ShipDesignRules.h"
 #include "sim/TransitPlanning.h"
 
 // Implements deterministic daily simulation rules and command validation.
@@ -409,6 +410,8 @@ CommandResult Simulation::execute(const SimCommand& command) {
             return CommandResult::success("Advanced simulation time");
         } else if constexpr (std::is_same_v<Command, AssignShipyardBuildCommand>) {
             return assignShipyardBuild(concreteCommand);
+        } else if constexpr (std::is_same_v<Command, CreateShipClassRevisionCommand>) {
+            return createShipClassRevision(concreteCommand);
         } else if constexpr (std::is_same_v<Command, MoveFleetCommand>) {
             return moveFleet(concreteCommand);
         } else if constexpr (std::is_same_v<Command, QueueFleetMoveOrderCommand>) {
@@ -482,6 +485,40 @@ CommandResult Simulation::assignShipyardBuild(const AssignShipyardBuildCommand& 
     });
 
     return CommandResult::success("Shipyard build order accepted");
+}
+
+CommandResult Simulation::createShipClassRevision(const CreateShipClassRevisionCommand& command) {
+    const auto reject = [this](const std::string& reason) {
+        appendEvent(EventSeverity::Warning, CommandRejectedEvent{reason});
+        return CommandResult::failure(reason);
+    };
+    if (command.name.empty()) return reject("Ship class name must be non-empty");
+    if (command.role < ShipRole::Survey || command.role > ShipRole::Escort) {
+        return reject("Ship class role is invalid");
+    }
+    const ShipClass* source = command.basedOnClassId.has_value()
+        ? findShipClass(*command.basedOnClassId) : nullptr;
+    if (command.basedOnClassId.has_value() && source == nullptr) {
+        return reject("Base ship class does not exist");
+    }
+    const ShipDesignEvaluation design = evaluateShipDesign(state_.shipComponents, command.components);
+    for (const std::string& constraint : design.constraints) {
+        if (constraint != "Internal volume exceeds hull capacity") return reject(constraint);
+    }
+    if (source != nullptr && source->revision == std::numeric_limits<int>::max()) {
+        return reject("Ship class revision limit reached");
+    }
+    const int revision = source == nullptr ? 1 : source->revision + 1;
+    const ShipClassId id{state_.ids.nextShipClassId++};
+    state_.shipClasses.push_back(ShipClass{
+        .id = id, .name = command.name, .revision = revision, .role = command.role,
+        .basedOnClassId = command.basedOnClassId, .components = command.components,
+        .speedKmPerDay = source == nullptr ? 0.0 : source->speedKmPerDay
+    });
+    appendEvent(EventSeverity::Info, ShipClassRevisionCreatedEvent{
+        .shipClassId = id, .basedOnClassId = command.basedOnClassId, .revision = revision
+    });
+    return CommandResult::success("Ship class revision created");
 }
 
 CommandResult Simulation::moveFleet(const MoveFleetCommand& command) {
@@ -622,6 +659,15 @@ CommandResult Simulation::resourceSurvey(const ResourceSurveyCommand& command) {
     if (fleet->currentBodyId != command.bodyId) {
         appendEvent(EventSeverity::Warning, CommandRejectedEvent{"Fleet must be at survey target body"});
         return CommandResult::failure("Fleet must be at survey target body");
+    }
+
+    const FleetSurveyEvaluation survey = evaluateFleetSurvey(state_, *fleet);
+    if (survey.operationalCapability <= 0.0) {
+        const std::string reason = survey.installedCapability > 0.0
+            ? "Survey equipment is unavailable due to power deficit"
+            : "Fleet has no installed survey capability";
+        appendEvent(EventSeverity::Warning, CommandRejectedEvent{reason});
+        return CommandResult::failure(reason);
     }
 
     if (!hasSurveyableDeposit(state_, command.bodyId)) {
@@ -963,27 +1009,35 @@ void Simulation::simulateShipyards(std::vector<SimEvent>& emitted) {
             continue;
         }
 
+        const ShipDesignEvaluation design = evaluateShipDesign(state_.shipComponents, shipClass->components);
+        if (!design.constructible) {
+            // An immutable invalid-volume revision remains ordered intent. It
+            // holds FIFO position without inventing build points or warnings.
+            poolIt->remainingBuildPoints = 0.0;
+            continue;
+        }
+
         // Complete as many ships as the order's existing progress plus this
         // colony's remaining daily capacity allows. When this order still needs
         // build points, it consumes the colony pool before later orders at the
         // same colony can receive any capacity.
         while (order.quantityCompleted < order.quantityRequested) {
-            if (order.accumulatedBuildPoints + kBuildPointEpsilon < shipClass->buildPoints) {
+            if (order.accumulatedBuildPoints + kBuildPointEpsilon < design.buildPoints) {
                 if (poolIt->remainingBuildPoints <= kBuildPointEpsilon) {
                     break;
                 }
 
-                const double buildPointsNeeded = shipClass->buildPoints - order.accumulatedBuildPoints;
+                const double buildPointsNeeded = design.buildPoints - order.accumulatedBuildPoints;
                 const double allocatedBuildPoints = std::min(poolIt->remainingBuildPoints, buildPointsNeeded);
                 order.accumulatedBuildPoints += allocatedBuildPoints;
                 poolIt->remainingBuildPoints -= allocatedBuildPoints;
 
-                if (order.accumulatedBuildPoints + kBuildPointEpsilon < shipClass->buildPoints) {
+                if (order.accumulatedBuildPoints + kBuildPointEpsilon < design.buildPoints) {
                     break;
                 }
             }
 
-            if (!colony->processedStockpile.canPay(shipClass->buildCost)) {
+            if (!colony->processedStockpile.canPay(design.buildCost)) {
                 // Processed-material shortages are temporary production pauses.
                 // Keep the order Active so future processing can satisfy the
                 // cost and complete the ship automatically. The blocked FIFO
@@ -994,16 +1048,21 @@ void Simulation::simulateShipyards(std::vector<SimEvent>& emitted) {
                 break;
             }
 
-            colony->processedStockpile.subtract(shipClass->buildCost);
-            order.accumulatedBuildPoints -= shipClass->buildPoints;
+            colony->processedStockpile.subtract(design.buildCost);
+            order.accumulatedBuildPoints -= design.buildPoints;
             ++order.quantityCompleted;
+
+            const double transferredPropellant = std::min(design.propellantCapacity,
+                colony->processedStockpile.get(ProcessedMaterial::Propellant));
+            colony->processedStockpile.set(ProcessedMaterial::Propellant,
+                colony->processedStockpile.get(ProcessedMaterial::Propellant) - transferredPropellant);
 
             const FleetId fleetId = allocateFleetId();
             const ShipId shipId = allocateShipId();
 
             Fleet fleet{
                 .id = fleetId,
-                .name = idLabel("Survey Cutter Fleet", fleetId.value),
+                .name = idLabel(shipClass->name + " Fleet", fleetId.value),
                 .currentBodyId = colony->bodyId,
                 .destinationBodyId = std::nullopt,
                 .shipIds = {shipId},
@@ -1017,7 +1076,7 @@ void Simulation::simulateShipyards(std::vector<SimEvent>& emitted) {
                 .shipClassId = shipClass->id,
                 .name = idLabel(shipClass->name, shipId.value),
                 .fleetId = fleetId,
-                .fuel = shipClass->fuelCapacity
+                .fuel = transferredPropellant
             };
 
             state_.fleets.push_back(std::move(fleet));

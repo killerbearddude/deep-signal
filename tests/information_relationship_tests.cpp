@@ -2,6 +2,7 @@
 #include "app/SimulationQueries.h"
 #include "sim/Commands.h"
 #include "sim/ScenarioFactory.h"
+#include "sim/ShipDesignRules.h"
 #include "ui_imgui/InformationRelationships.h"
 
 // Exercise the UI-only projection through real native DTOs and commands. The
@@ -68,7 +69,7 @@ void requireTarget(const InformationRelationship& row, const WorldGeneration wor
         });
         state.ships.push_back(Ship{
             .id = ship, .shipClassId = shipClass.id, .name = "Relationship test ship",
-            .fleetId = fleet, .fuel = shipClass.fuelCapacity
+            .fleetId = fleet, .fuel = deep::evaluateShipDesign(state.shipComponents, shipClass.components).propellantCapacity
         });
     }
     return state;

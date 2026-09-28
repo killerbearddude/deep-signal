@@ -8,22 +8,31 @@
 #include "app/SimulationService.h"
 
 #include <string>
+#include <array>
+#include <optional>
+#include <vector>
 
 namespace deep::ui_imgui {
 
-// Renders the first production control surface for Prototype 0.1.
-// It supports one Survey Cutter at the first production-capable colony. This is
-// a scenario-specific shortcut; colony/class selection and batch editing remain
-// UI work rather than restrictions in the underlying build command.
+// Keeps a local editable draft while all design calculations and commits cross
+// the query/command boundary. The first colony remains the prototype location.
 class ShipyardPanel {
 public:
-    // Draws current shipyard orders, the Survey Cutter action, and close state.
     void render(const SimulationQueries& queries, SimulationService& service, bool& visible);
+    void resetWorldState();
 
 private:
-    void buildSurveyCutter(const SimulationQueries& queries, SimulationService& service);
+    void buildSelectedClass(const SimulationQueries& queries, SimulationService& service);
+    void renderDesignEditor(const SimulationQueries& queries, SimulationService& service,
+                            const std::vector<ShipClassSummary>& classes);
+    void selectDraftSource(const ShipClassSummary& source,
+                           const std::vector<ShipComponentSummary>& catalog);
     void applyResult(const CommandResult& result);
 
+    std::optional<ShipClassId> selectedBuildClassId_;
+    std::optional<ShipClassId> draftSourceId_;
+    std::array<char, 128> draftName_{};
+    std::vector<int> draftQuantities_;
     std::string lastCommandMessage_ = "Ready";
     bool lastCommandSucceeded_ = true;
 };

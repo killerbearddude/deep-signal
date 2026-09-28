@@ -49,6 +49,7 @@ private:
     GameState state_;
 
     CommandResult assignShipyardBuild(const AssignShipyardBuildCommand& command);
+    CommandResult createShipClassRevision(const CreateShipClassRevisionCommand& command);
     CommandResult moveFleet(const MoveFleetCommand& command);
     CommandResult queueFleetMoveOrder(const QueueFleetMoveOrderCommand& command);
     CommandResult clearFleetOrderQueue(const ClearFleetOrderQueueCommand& command);

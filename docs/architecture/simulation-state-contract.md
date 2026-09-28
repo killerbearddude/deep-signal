@@ -1,7 +1,7 @@
 # Simulation state contract
 
-This document records the H1A processing-configuration contract and the H1B
-save-continuity contract. The in-memory `GameState` remains the authority for
+This document records the H1A processing-configuration, H1B save-continuity,
+P1 shipyard-intent, and P2 vessel-design contracts. The in-memory `GameState` remains the authority for
 gameplay; SQLite stores explicit snapshots, not a second live world or a replay
 stream.
 
@@ -101,7 +101,7 @@ A valid shipyard order is accepted even when its colony has zero capacity. The
 active order remains in FIFO position without progress until capacity is available;
 capacity waiting is derived from current state rather than persisted as a status.
 
-Schema v11 stores a global zero-based `ordinal` for each of these durable
+Schema v11 introduced a global zero-based `ordinal` for each of these durable
 vectors:
 
 | `GameState` vector | SQLite table |
@@ -112,6 +112,7 @@ vectors:
 | `bodies` | `bodies` |
 | `colonies` | `colonies` |
 | `mineralDeposits` | `mineral_deposits` |
+| `shipComponents` (v12) | `ship_components` |
 | `shipClasses` | `ship_classes` |
 | `shipyardOrders` | `shipyard_orders` |
 | `ships` | `ships` |
@@ -123,30 +124,32 @@ ordinal; `colony_processing_allocations` keeps an ordinal per colony; and
 positions**: `ships.ordinal` reconstructs `GameState::ships`, while
 `ships.fleet_ordinal`, unique within its `fleet_id`, reconstructs that Fleet's
 `shipIds` roster. Reconstructing the roster by global Ship order would lose a
-different ordering contract. Resource and ship-class cost arrays remain keyed
+different ordering contract. Resource and component cost arrays remain keyed
 by mineral/material enum index, while metadata and ID counters remain keyed by
 name. `event_log` remains ordered by Event ID, with strictly increasing IDs and
 nondecreasing event days validated; it has no second ordinal.
 
-The v11 writer assigns contiguous ordinals beginning at zero. Schema
+The v11 and v12 writers assign contiguous ordinals beginning at zero. Schema
 constraints require non-null integer, nonnegative, unique values in each scope;
 the reader also checks storage type and contiguity before accepting a sequence.
 Every ordered read uses explicit `ORDER BY`. Missing, duplicate, fractional,
-negative, or gapped v11 order data is rejected rather than reconstructed in
+negative, or gapped v11/v12 order data is rejected rather than reconstructed in
 legacy ID order. Empty collections are valid.
 
 ## Schema versions and destination policy
 
-H1A wrote schema v10. H1B writes **v11 only** and reads validated v10 or v11.
+H1A wrote schema v10. H1B wrote v11. P2 writes **v12 only** and reads validated
+v10, v11, or v12.
 A v10 Load is read-only: it applies the established legacy ID/child-ordinal
 reconstruction and current domain validation, without upgrading the file or
 inventing ordering data that v10 never stored. The authentic
 [v10 fixture](../../tests/fixtures/README.md) demonstrates the limit: a valid
 source shipyard FIFO `[2, 1]` reloads as `[1, 2]`, changing which order
 completes on the next day. A v11 Load requires the v11 table, column, key, and
-foreign-key shape and all its ordering checks. A version marker alone does not
-make either structure valid. Unsupported, malformed, or mismatched versions
-reject; there is no fallback from a failed v11 read to the v10 reader.
+foreign-key shape and all its ordering checks. A v12 Load additionally requires
+component definitions, dense component cost rows, class revision identity, and
+ordered installations. A version marker alone does not make any structure valid.
+Unsupported, malformed, or mismatched versions reject without reader fallback.
 
 Destination recognition compares the user schema object set and each expected
 table's `table_xinfo`, `foreign_key_list`, and index shape with a freshly built
@@ -160,19 +163,19 @@ switch. The check does not require
 byte-identical `CREATE TABLE` text or silently add missing columns.
 
 Save accepts a new path, a schema-empty database, or an existing compatible,
-valid v11 save. It gives v10 new-path guidance only after checking both the
-legacy structure and complete logical snapshot; a marker of `10` alone does
-not identify a valid v10 save. Unsupported, malformed, mismatched, or
+valid v12 save. It gives v10/v11 new-path guidance only after checking both the
+legacy structure and complete logical snapshot; a version marker alone does
+not identify a valid legacy save. Unsupported, malformed, mismatched, or
 unrecognized databases reject without that guidance or attempted repair.
 A database with unrelated user schema objects is not empty.
-There is no in-place v10 migration or automatic downgrade. A player may load a
-valid v10 game and save its reconstructed state to a **new** v11 destination;
+There is no in-place legacy migration or automatic downgrade. A player may load a
+valid v10 or v11 game and save its reconstructed state to a **new** v12 destination;
 the original v10 ordering information that was never stored remains lost.
 
 Save validates its input state before opening the destination. The connection
 enables foreign keys before an immediate write transaction. On that same
 connection and inside that transaction it classifies the destination, verifies
-an existing v11 snapshot before replacement, creates v11 schema only if empty,
+an existing v12 snapshot before replacement, creates v12 schema only if empty,
 replaces rows, rereads the new snapshot, and commits only after validation.
 Load opens read-only, checks version-specific structure and foreign keys, and
 validates a detached snapshot within one read transaction before returning it.
@@ -215,3 +218,35 @@ baseline ordering failure, fixture provenance, current-format round trips and
 same-build continuation, legacy read/no-upgrade behavior, rejection and
 transaction preservation, and running-UI Save/Load checks. This document
 states the contract; it does not itself certify that every check ran.
+
+## P2: component designs and commissioning
+
+`GameState::shipComponents` is the authoritative catalog. Each immutable
+`ShipClass` revision stores an ordered list of component IDs and quantities, a
+role label, and optional base-class lineage. `ShipDesignRules` derives dry mass,
+internal volume, power, tankage, survey equipment, processed-material hull cost,
+and build points from those installations. The role label supplies no capability.
+A draft preview is read-only; saving a complete revision allocates a new class
+ID and emits a revision event without changing the source class or inventory.
+Duplicate installation rows reject. A design with volume overflow can be saved
+and ordered but cannot accrue build points; it holds its FIFO position and the
+backlog names the physical constraint. Power deficit, missing sensor, and zero
+tankage are warnings, not construction blockers.
+
+At completion, the shipyard pays the derived hull materials, then transfers up
+to the derived tank capacity from the colony's actual processed Propellant stock.
+The reference Survey Cutter's former 150 Propellant build-cost entry is removed
+because filling a tank is a separate transfer. A hull can commission with an
+empty or partial tank; P2 has no later refueling command. Powered installed
+survey equipment is required for a fleet to survey; survey role alone is not
+sufficient. P2 does not change sustained-burn transit physics.
+
+Schema v12 replaces class aggregate cost/BP/tank columns with component tables,
+ordered installations, and revision lineage. New saves keep component and class
+vector order and each class's installation order. Read-only v10/v11 loads map the
+canonical old Survey Cutter aggregate to the reference composition. Other
+legacy aggregate classes receive private compatibility components so their
+class IDs, order/ship references, work, and non-propellant material demand remain
+coherent. Their old Propellant build-cost entry is removed under P2's tank
+transfer rule. Saving a loaded legacy game requires a new v12 path; its source
+file is never modified by Load.
