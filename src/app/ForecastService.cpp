@@ -612,9 +612,14 @@ void addModifierRow(std::vector<ForecastModifierBreakdownRow>& rows, const std::
 }
 
 [[nodiscard]] std::string productionBacklogStatusName(const ShipyardOrder& order,
+                                                      const double colonyCapacity,
                                                       const bool blockedByMaterial) {
     if (order.status == ShipyardOrderStatus::Completed || order.quantityCompleted >= order.quantityRequested) {
         return "Complete";
+    }
+
+    if (colonyCapacity <= 0.0) {
+        return "Waiting for capacity";
     }
 
     if (blockedByMaterial) {
@@ -1053,7 +1058,7 @@ std::vector<ProductionBacklogForecast> ForecastService::productionBacklog() cons
             .blockingMaterial = blockedByMaterial ? blockingMaterial : std::nullopt,
             .blockingMaterialName = blockedByMaterial ? blockerName : std::string{},
             .etaDays = etaDays,
-            .statusName = productionBacklogStatusName(order, blockedByMaterial),
+            .statusName = productionBacklogStatusName(order, colonyCapacity, blockedByMaterial),
             .explanation = productionBacklogExplanation(queuePosition,
                                                         buildPointsAhead,
                                                         buildPointsRemaining,

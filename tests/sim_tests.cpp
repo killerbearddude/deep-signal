@@ -549,6 +549,59 @@ void test_shipyard_completion() {
             "ship completion remains in event log");
 }
 
+void test_zero_capacity_shipyard_order_waits_and_recovers() {
+    deep::GameState state = deep::createHomeSystemScenario();
+    state.colonies.front().shipyardCapacity = 0.0;
+    state.colonies.front().processorCapacity = 0.0;
+    const deep::ColonyId colonyId = state.colonies.front().id;
+    const deep::ShipClassId shipClassId = state.shipClasses.front().id;
+    const auto initialMaterials = state.colonies.front().processedStockpile;
+    deep::Simulation sim{std::move(state)};
+
+    const auto result = sim.execute(deep::AssignShipyardBuildCommand{
+        .colonyId = colonyId, .shipClassId = shipClassId, .quantity = 1
+    });
+    require(result.ok, "zero-capacity colony accepts valid build intent");
+    require(sim.state().shipyardOrders.size() == 1, "exactly one waiting order is created");
+    const deep::ShipyardOrderId orderId = sim.state().shipyardOrders.front().id;
+    require(sim.state().shipyardOrders.front().colonyId == colonyId &&
+            sim.state().shipyardOrders.front().shipClassId == shipClassId &&
+            sim.state().shipyardOrders.front().quantityRequested == 1 &&
+            sim.state().shipyardOrders.front().quantityCompleted == 0 &&
+            sim.state().shipyardOrders.front().accumulatedBuildPoints == 0.0 &&
+            sim.state().shipyardOrders.front().status == deep::ShipyardOrderStatus::Active,
+            "waiting order preserves intent without physical progress");
+    require(sim.state().eventLog.size() == 1 &&
+            std::holds_alternative<deep::ShipyardOrderCreatedEvent>(sim.state().eventLog.front().payload),
+            "accepted intent emits only a creation event");
+
+    sim.advanceDays(30);
+    require(sim.state().shipyardOrders.front().id == orderId &&
+            sim.state().shipyardOrders.front().quantityCompleted == 0 &&
+            sim.state().shipyardOrders.front().accumulatedBuildPoints == 0.0 &&
+            sim.state().shipyardOrders.front().status == deep::ShipyardOrderStatus::Active,
+            "zero capacity leaves the same order waiting for thirty days");
+    require(sim.state().ships.empty() && sim.state().fleets.empty(),
+            "zero capacity cannot create a ship or fleet");
+    require(sim.state().eventLog.size() == 1, "routine waiting emits no daily warnings");
+    for (std::size_t i = 0; i < deep::processedMaterialCount(); ++i) {
+        requireNear(sim.state().colonies.front().processedStockpile.amount[i], initialMaterials.amount[i],
+                    "idle yard consumes no processed material");
+    }
+
+    deep::GameState resumedState = sim.state();
+    resumedState.colonies.front().shipyardCapacity = 100.0;
+    deep::Simulation resumed{std::move(resumedState)};
+    resumed.advanceDays(1);
+    require(resumed.state().shipyardOrders.size() == 1 && resumed.state().shipyardOrders.front().id == orderId,
+            "capacity recovery uses the existing order");
+    require(resumed.state().shipyardOrders.front().accumulatedBuildPoints > 0.0,
+            "capacity recovery begins physical progress");
+    resumed.advanceDays(4);
+    require(resumed.state().shipyardOrders.front().status == deep::ShipyardOrderStatus::Completed &&
+            resumed.state().ships.size() == 1, "recovered order completes under existing build rules");
+}
+
 void test_shipyard_capacity_is_shared_by_fifo_orders() {
     // Regression test for colony-level capacity allocation. Multiple active
     // orders at the same colony must not each receive a full daily capacity
@@ -1130,6 +1183,7 @@ int main() {
         test_single_maximum_manual_weight_produces_finite_output();
         test_stockpile_recovery_preserves_active_preset_cutoff();
         test_shipyard_completion();
+        test_zero_capacity_shipyard_order_waits_and_recovers();
         test_shipyard_capacity_is_shared_by_fifo_orders();
         test_shipyard_temporary_processed_material_shortage_recovers();
         test_fleet_movement();

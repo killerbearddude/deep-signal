@@ -131,6 +131,7 @@ struct ProductionBacklogSummary {
     std::optional<int> etaDays;
     std::string blockingMaterialName;
     std::string statusName;
+    std::string explanation;
 };
 
 // Display-ready buildable ship class row. The UI can use these IDs to submit

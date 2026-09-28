@@ -606,6 +606,31 @@ void test_production_backlog_reports_blocking_material() {
     require(backlog.front().statusName == "Waiting for materials", "status reports material wait state");
 }
 
+void test_production_backlog_reports_capacity_before_material_shortage() {
+    deep::GameState state = deep::createHomeSystemScenario();
+    state.colonies.front().shipyardCapacity = 0.0;
+    state.colonies.front().processedStockpile.set(deep::ProcessedMaterial::StructuralAlloys, 0.0);
+    deep::SimulationService service{std::move(state)};
+    const deep::ColonyId colonyId = service.state().colonies.front().id;
+    const deep::ShipClassId shipClassId = service.state().shipClasses.front().id;
+    require(service.execute(deep::AssignShipyardBuildCommand{
+        .colonyId = colonyId, .shipClassId = shipClassId, .quantity = 1
+    }).ok, "zero-capacity order is accepted before backlog forecast");
+
+    const auto backlog = deep::ForecastService{service}.productionBacklog();
+    require(backlog.size() == 1 && backlog.front().queuePosition == 1,
+            "waiting order remains in FIFO backlog");
+    require(!backlog.front().etaDays.has_value(), "capacity wait has no invented ETA");
+    require(backlog.front().statusName == "Waiting for capacity",
+            "capacity is the immediate blocker even when materials are short");
+    require(backlog.front().explanation.find("shipyard capacity") != std::string::npos,
+            "backlog explanation identifies unavailable capacity");
+    require(backlog.front().blockedByMaterial &&
+            backlog.front().blockingMaterialName == "Structural Alloys" &&
+            backlog.front().requiredMaterialsRemaining.get(deep::ProcessedMaterial::StructuralAlloys) == 250.0,
+            "material shortage fields remain truthful during capacity wait");
+}
+
 void test_fleet_arrival_eta_reports_active_move_order() {
     // Verifies fleet forecasts expose movement arrival timing and destination
     // names without future map panels reading raw Fleet records directly.
@@ -736,6 +761,7 @@ int main() {
         test_shipyard_order_eta_uses_capacity_and_accumulated_progress();
         test_production_backlog_uses_fifo_colony_capacity();
         test_production_backlog_reports_blocking_material();
+        test_production_backlog_reports_capacity_before_material_shortage();
         test_fleet_arrival_eta_reports_active_move_order();
         test_fleet_fuel_forecast_reports_range_after_move_start();
         test_fleet_fuel_forecast_exposes_commander_modifier();

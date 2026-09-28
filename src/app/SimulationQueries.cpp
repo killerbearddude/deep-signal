@@ -1073,7 +1073,8 @@ std::vector<ProductionBacklogSummary> SimulationQueries::productionBacklog() con
             .requiredMaterialsRemaining = summarizeMaterialRequirements(row.requiredMaterialsRemaining),
             .etaDays = row.etaDays,
             .blockingMaterialName = row.blockingMaterialName,
-            .statusName = row.statusName
+            .statusName = row.statusName,
+            .explanation = row.explanation
         });
     }
 

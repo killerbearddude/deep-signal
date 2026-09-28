@@ -427,6 +427,26 @@ void test_production_backlog_summaries_expose_queue_eta() {
     require(backlog.front().statusName == "Building", "well-stocked order reports building status");
 }
 
+void test_production_backlog_summary_exposes_capacity_wait() {
+    deep::GameState state = deep::createHomeSystemScenario();
+    state.colonies.front().shipyardCapacity = 0.0;
+    deep::SimulationService service{std::move(state)};
+    require(service.execute(deep::AssignShipyardBuildCommand{
+        .colonyId = service.state().colonies.front().id,
+        .shipClassId = service.state().shipClasses.front().id,
+        .quantity = 1
+    }).ok, "zero-capacity order is accepted before query");
+
+    const auto backlog = deep::SimulationQueries{service}.productionBacklog();
+    require(backlog.size() == 1 && backlog.front().queuePosition == 1,
+            "UI query includes waiting order and FIFO position");
+    require(!backlog.front().etaDays.has_value() &&
+            backlog.front().statusName == "Waiting for capacity",
+            "UI query exposes capacity wait without ETA");
+    require(backlog.front().explanation.find("shipyard capacity") != std::string::npos,
+            "UI query forwards the forecast explanation");
+}
+
 void test_personnel_summaries_resolve_institution_context() {
     // Personnel queries expose durable person records with resolved institution
     // names so future UI can render staff lists without raw GameState access.
@@ -1241,6 +1261,7 @@ int main() {
         test_recovery_preset_presentations_keep_baseline_cutoff();
         test_shipyard_order_summaries_resolve_names();
         test_production_backlog_summaries_expose_queue_eta();
+        test_production_backlog_summary_exposes_capacity_wait();
         test_personnel_summaries_resolve_institution_context();
         test_appointment_summaries_resolve_people_and_scopes();
         test_appointment_candidates_rank_matching_competency_first();

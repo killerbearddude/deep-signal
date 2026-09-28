@@ -454,11 +454,6 @@ CommandResult Simulation::assignShipyardBuild(const AssignShipyardBuildCommand& 
         return CommandResult::failure("Colony does not exist");
     }
 
-    if (colony->shipyardCapacity <= 0.0) {
-        appendEvent(EventSeverity::Warning, CommandRejectedEvent{"Colony has no shipyard capacity"});
-        return CommandResult::failure("Colony has no shipyard capacity");
-    }
-
     if (findShipClass(command.shipClassId) == nullptr) {
         appendEvent(EventSeverity::Warning, CommandRejectedEvent{"Ship class does not exist"});
         return CommandResult::failure("Ship class does not exist");
