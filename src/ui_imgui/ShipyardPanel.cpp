@@ -20,10 +20,7 @@ namespace deep::ui_imgui {
 namespace {
 
 [[nodiscard]] std::optional<ColonySummary> firstProductionColony(const std::vector<ColonySummary>& colonies) {
-    const auto it = std::find_if(colonies.begin(), colonies.end(), [](const ColonySummary& colony) {
-        return colony.shipyardCapacity > 0.0;
-    });
-    return it == colonies.end() ? std::optional<ColonySummary>{} : std::optional<ColonySummary>{*it};
+    return colonies.empty() ? std::optional<ColonySummary>{} : std::optional<ColonySummary>{colonies.front()};
 }
 
 [[nodiscard]] std::optional<ShipClassSummary> surveyCutterClass(const std::vector<ShipClassSummary>& shipClasses) {
@@ -78,7 +75,7 @@ void ShipyardPanel::render(const SimulationQueries& queries, SimulationService& 
     const std::vector<ProductionBacklogSummary> backlog = queries.productionBacklog();
     ImGui::Text("Shipyard orders: %zu", backlog.size());
 
-    if (ImGui::BeginTable("ShipyardOrderTable", 12, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable |
+    if (ImGui::BeginTable("ShipyardOrderTable", 13, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable |
                            ImGuiTableFlags_Reorderable | ImGuiTableFlags_Hideable |
                            ImGuiTableFlags_SizingStretchProp)) {
         ImGui::TableSetupColumn("Colony");
@@ -93,6 +90,7 @@ void ShipyardPanel::render(const SimulationQueries& queries, SimulationService& 
         ImGui::TableSetupColumn("Materials Remaining");
         ImGui::TableSetupColumn("Blocking Material");
         ImGui::TableSetupColumn("Status");
+        ImGui::TableSetupColumn("Explanation");
         ImGui::TableHeadersRow();
 
         for (const ProductionBacklogSummary& order : backlog) {
@@ -133,6 +131,8 @@ void ShipyardPanel::render(const SimulationQueries& queries, SimulationService& 
             ImGui::TextUnformatted(order.blockingMaterialName.empty() ? "--" : order.blockingMaterialName.c_str());
             ImGui::TableSetColumnIndex(11);
             ImGui::TextUnformatted(order.statusName.c_str());
+            ImGui::TableSetColumnIndex(12);
+            ImGui::TextWrapped("%s", order.explanation.c_str());
         }
 
         ImGui::EndTable();
@@ -147,7 +147,7 @@ void ShipyardPanel::buildSurveyCutter(const SimulationQueries& queries, Simulati
     // selectors when exposing multiple production locations or editable classes.
     const std::optional<ColonySummary> colony = firstProductionColony(queries.colonies());
     if (!colony.has_value()) {
-        applyResult(CommandResult::failure("No colony with shipyard capacity is available"));
+        applyResult(CommandResult::failure("No colony is available"));
         return;
     }
 

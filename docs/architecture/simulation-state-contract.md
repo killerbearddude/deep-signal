@@ -97,6 +97,10 @@ order and per-fleet ship-roster order can determine event sequencing and fuel
 payment. Save derives ordering metadata from the current vectors without sorting
 the live state, changing IDs, or adding ordinal fields to domain records.
 
+A valid shipyard order is accepted even when its colony has zero capacity. The
+active order remains in FIFO position without progress until capacity is available;
+capacity waiting is derived from current state rather than persisted as a status.
+
 Schema v11 stores a global zero-based `ordinal` for each of these durable
 vectors:
 

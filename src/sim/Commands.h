@@ -19,8 +19,8 @@ struct AdvanceDaysCommand {
 };
 
 // Requests a new shipyard production order. The colony and ship class IDs must
-// refer to existing records, the colony must have shipyard capacity, and quantity
-// must be positive. Materials are paid per completed hull, not reserved here.
+// refer to existing records, and quantity must be positive. Zero capacity leaves
+// the accepted order waiting. Materials are paid per hull, not reserved here.
 struct AssignShipyardBuildCommand {
     ColonyId colonyId;
     ShipClassId shipClassId;

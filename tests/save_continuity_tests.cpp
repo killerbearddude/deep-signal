@@ -511,6 +511,49 @@ void testFifoShipyardCompetition() {
             "two hulls are complete after ten days of shared capacity");
 }
 
+void testWaitingShipyardOrderContinuesAfterCapacityRecovery() {
+    deep::GameState initial = deep::createHomeSystemScenario();
+    initial.colonies.front().shipyardCapacity = 0.0;
+    initial.colonies.front().processorCapacity = 0.0;
+    deep::Simulation uninterrupted{initial};
+    auto continued = std::make_unique<deep::Simulation>(std::move(initial));
+    const deep::ColonyId colonyId = uninterrupted.state().colonies.front().id;
+    const deep::ShipClassId shipClassId = uninterrupted.state().shipClasses.front().id;
+    const deep::AssignShipyardBuildCommand command{
+        .colonyId = colonyId, .shipClassId = shipClassId, .quantity = 1
+    };
+    require(uninterrupted.execute(command).ok && continued->execute(command).ok,
+            "both branches accept waiting order");
+    uninterrupted.advanceDays(30);
+    continued->advanceDays(30);
+    checkpoint(uninterrupted, *continued, "capacityWait.beforeSave");
+    require(uninterrupted.state().shipyardOrders.front().accumulatedBuildPoints == 0.0,
+            "thirty days without capacity produce no construction");
+
+    UniqueSavePath save;
+    saveLoadCheckpoint(uninterrupted, continued, save.path(), "capacityWait.roundTrip");
+    const deep::ShipyardOrderId orderId = continued->state().shipyardOrders.front().id;
+    deep::GameState left = uninterrupted.state();
+    deep::GameState right = continued->state();
+    left.colonies.front().shipyardCapacity = 100.0;
+    right.colonies.front().shipyardCapacity = 100.0;
+    uninterrupted = deep::Simulation{std::move(left)};
+    continued = std::make_unique<deep::Simulation>(std::move(right));
+    for (int day = 1; day <= 5; ++day) {
+        uninterrupted.advanceDays(1);
+        continued->advanceDays(1);
+        checkpoint(uninterrupted, *continued, "capacityWait.recoveredDay" + std::to_string(day));
+        if (day == 1) {
+            require(uninterrupted.state().shipyardOrders.front().accumulatedBuildPoints > 0.0,
+                    "same order progresses after capacity returns");
+        }
+    }
+    require(uninterrupted.state().shipyardOrders.size() == 1 &&
+            uninterrupted.state().shipyardOrders.front().id == orderId &&
+            uninterrupted.state().shipyardOrders.front().status == deep::ShipyardOrderStatus::Completed,
+            "loaded order completes without resubmission or replacement");
+}
+
 const deep::Fleet& fleetById(const deep::GameState& state, const deep::FleetId id) {
     for (const deep::Fleet& fleet : state.fleets) {
         if (fleet.id == id) {
@@ -957,6 +1000,7 @@ int main() {
     try {
         testSharedDepositCompetition();
         testFifoShipyardCompetition();
+        testWaitingShipyardOrderContinuesAfterCapacityRecovery();
         testPerHullFuelPayment();
         testSameDayArrivalsAndQueuePromotion();
         testMixedDurableOrdering();

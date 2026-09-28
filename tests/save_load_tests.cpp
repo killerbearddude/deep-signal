@@ -427,6 +427,33 @@ void expectMalformedSaveRejected(const std::string_view suffix, const std::strin
     std::filesystem::remove(path);
 }
 
+void test_zero_capacity_waiting_order_round_trip() {
+    const std::filesystem::path path = testSavePath();
+    std::filesystem::remove(path);
+    deep::GameState state = deep::createHomeSystemScenario();
+    state.colonies.front().shipyardCapacity = 0.0;
+    deep::SimulationService service{std::move(state)};
+    const deep::ColonyId colonyId = service.state().colonies.front().id;
+    const deep::ShipClassId shipClassId = service.state().shipClasses.front().id;
+    for (int count = 0; count < 2; ++count) {
+        require(service.execute(deep::AssignShipyardBuildCommand{
+            .colonyId = colonyId, .shipClassId = shipClassId, .quantity = 1
+        }).ok, "waiting FIFO order is accepted before save");
+    }
+    service.advanceDays(3);
+    const deep::GameState expected = service.state();
+    require(service.saveGame(path).ok, "waiting orders save under existing schema");
+    const deep::GameState loaded = deep::save::SaveGameRepository::load(path);
+    requireSameState(expected, loaded);
+    require(loaded.shipyardOrders.size() == 2 &&
+            loaded.shipyardOrders.at(0).id == expected.shipyardOrders.at(0).id &&
+            loaded.shipyardOrders.at(1).id == expected.shipyardOrders.at(1).id &&
+            loaded.shipyardOrders.at(0).status == deep::ShipyardOrderStatus::Active &&
+            loaded.shipyardOrders.at(0).accumulatedBuildPoints == 0.0,
+            "loaded orders retain FIFO sequence and waiting progress");
+    std::filesystem::remove(path);
+}
+
 void test_sqlite_save_load_round_trip() {
     // Saves a non-trivial mid-operation state and reloads it. This catches schema
     // omissions such as active fleet orders, ID counters, event payloads, and
@@ -891,6 +918,7 @@ void test_malformed_save_event_payload_missing_field_is_rejected() {
 
 int main() {
     try {
+        test_zero_capacity_waiting_order_round_trip();
         test_sqlite_save_load_round_trip();
         test_institution_identity_and_ownership_round_trip();
         test_personnel_registry_round_trips();
