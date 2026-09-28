@@ -1,6 +1,6 @@
 #include "save/EventJson.h"
 
-// Responsibility: encode/decode persisted event payload shapes for schema v10.
+// Responsibility: encode/decode persisted event payload shapes in the active schema.
 // This module does not own tables, transactions, or GameState reference checks.
 // Header availability selects the JSON implementation at compilation time; the
 // fallback implements only the compact flat format used by its writer and has

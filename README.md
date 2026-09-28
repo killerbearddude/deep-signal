@@ -14,7 +14,7 @@ First buildable headless simulation slice for **Deep Signal Prototype 0.1 - Home
 - Immutable component-based ship designs and derived build/survey capability
 - Ship and fleet creation
 - Fixed-duration fleet movement
-- SQLite schema v12 save/load layer with read-only v10/v11 compatibility
+- SQLite schema v12 save/load layer; older development saves are unsupported
 - Full-save/full-load transactions
 - Prepared statements for value-bearing SQL
 - CLI smoke runner
@@ -43,7 +43,7 @@ The simulation library now owns domain validation through `src/sim/GameStateVali
 The persistence layer is intentionally isolated under `src/save`:
 
 - `Database.*` owns the SQLite connection, prepared statements, and transactions.
-- `Schema.*` creates and validates schema v12 and checks legacy v10/v11 structures.
+- `Schema.*` creates and validates only the active schema v12 structure.
 - `SaveGameRepository.*` maps `GameState` to/from SQLite rows.
 - `EventJson.*` owns event payload JSON serialization/parsing so the repository does not contain event-specific JSON grammar.
 

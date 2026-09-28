@@ -1,7 +1,7 @@
 #pragma once
 
 // Responsibility: convert typed event payloads to/from the JSON text stored by
-// schema v10. Stable event names and fields are a persistence contract separate
+// the active schema. Stable event names and fields are a persistence contract separate
 // from display wording. This module owns payload conversion, not event ordering,
 // reference integrity, or database transactions; those are checked elsewhere.
 

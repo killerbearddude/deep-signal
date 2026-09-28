@@ -94,7 +94,7 @@ public:
     // verify the stored type or reject fractional/text input before conversion.
     [[nodiscard]] std::int64_t columnInt64(int column) const;
 
-    // Rejects non-INTEGER SQLite storage before reading a v11 ordering ordinal.
+    // Rejects non-INTEGER SQLite storage before reading an ordering ordinal.
     // SQLite numeric conversion in columnInt64 would silently truncate REAL or
     // partially parse TEXT values supplied by a malformed save.
     [[nodiscard]] std::int64_t columnInt64Strict(int column) const;

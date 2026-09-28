@@ -12,8 +12,8 @@ FIFO vector order **[ID 2, ID 1]**. Both need ten build points and the colony
 has a ten-point daily pool. `validateGameState()` accepts the state. Schema v10
 has no order ordinal for `shipyard_orders`, so its loader's `ORDER BY id`
 reconstructs **[ID 1, ID 2]**. The original order cannot be recovered from this
-file. Compatibility tests should verify truthful legacy reconstruction, not
-claim that a v10 load recovers the lost vector order.
+file. Historical H1B tests verified truthful reconstruction at that baseline;
+the current v12 loader rejects this development save without modifying it.
 
 ## Provenance and reproduction
 
@@ -68,7 +68,7 @@ standalone program compiled against that commit's headers and save/simulation
 libraries wrote the SQLite file; Python `sqlite3.Connection.iterdump()` then
 produced the checked-in SQL. The dump includes only deterministic prototype
 scenario data and uses `PRAGMA foreign_keys = OFF` during reconstruction because
-the dump orders tables alphabetically. The P2 contract test reconstructs a
-throwaway file and verifies read-only v11 loading, canonical component mapping,
-and a new-path v12 save. The P1 source save reported schema version 11 and its
+the dump orders tables alphabetically. The current contract test reconstructs a
+throwaway file and verifies that v11 Load rejects it without changing the file.
+The P1 source save reported schema version 11 and its
 Survey Cutter row carried 500 build points and 1000 fuel capacity.

@@ -129,56 +129,41 @@ by mineral/material enum index, while metadata and ID counters remain keyed by
 name. `event_log` remains ordered by Event ID, with strictly increasing IDs and
 nondecreasing event days validated; it has no second ordinal.
 
-The v11 and v12 writers assign contiguous ordinals beginning at zero. Schema
+The current v12 writer assigns contiguous ordinals beginning at zero. Schema
 constraints require non-null integer, nonnegative, unique values in each scope;
 the reader also checks storage type and contiguity before accepting a sequence.
 Every ordered read uses explicit `ORDER BY`. Missing, duplicate, fractional,
-negative, or gapped v11/v12 order data is rejected rather than reconstructed in
+negative, or gapped v12 order data is rejected rather than reconstructed in
 legacy ID order. Empty collections are valid.
 
 ## Schema versions and destination policy
 
-H1A wrote schema v10. H1B wrote v11. P2 writes **v12 only** and reads validated
-v10, v11, or v12.
-A v10 Load is read-only: it applies the established legacy ID/child-ordinal
-reconstruction and current domain validation, without upgrading the file or
-inventing ordering data that v10 never stored. The authentic
-[v10 fixture](../../tests/fixtures/README.md) demonstrates the limit: a valid
-source shipyard FIFO `[2, 1]` reloads as `[1, 2]`, changing which order
-completes on the next day. A v11 Load requires the v11 table, column, key, and
-foreign-key shape and all its ordering checks. A v12 Load additionally requires
-component definitions, dense component cost rows, class revision identity, and
-ordered installations. A version marker alone does not make any structure valid.
-Unsupported, malformed, or mismatched versions reject without reader fallback.
+H1A wrote schema v10 and H1B wrote v11. P2 writes and reads **v12 only**.
+Deep Signal is in active pre-release development: development save files are
+disposable, and compatibility across schema versions is not guaranteed unless
+a future milestone explicitly establishes it. This is the current development
+policy, not a permanent release policy. A v10 or v11 file presented to the
+current loader fails with an unsupported-schema error; Load opens it read-only
+and does not modify it. Save also refuses to overwrite an older or unknown
+schema. No automatic migration or in-place repair is performed.
 
-Destination recognition compares the user schema object set and each expected
-table's `table_xinfo`, `foreign_key_list`, and index shape with a freshly built
-schema reference. The v10 check uses the corresponding legacy columns and
-indexes. Save rejects user triggers even when they target known tables, because
-their write effects cannot be trusted as part of the snapshot contract.
-Read-only Load may tolerate triggers attached to known tables; they cannot
-change the reconstructed rows during that operation. A test-only build injects
-a post-deletion failure to prove rollback without exposing a production failure
-switch. The check does not require
-byte-identical `CREATE TABLE` text or silently add missing columns.
+The v12 reader requires the current table, column, key, and foreign-key shape,
+complete component and material-cost rows, class revision identity, ordered
+installations, and all H1B ordering checks. A version marker alone does not
+make a file valid. Destination recognition compares the user schema object set
+and each table's `table_xinfo`, `foreign_key_list`, and index shape with a
+freshly built v12 reference. Save rejects user triggers even when they target
+known tables because their write effects are not trusted. Read-only Load may
+tolerate triggers on known tables. The check does not require byte-identical
+`CREATE TABLE` text or silently add missing columns.
 
 Save accepts a new path, a schema-empty database, or an existing compatible,
-valid v12 save. It gives v10/v11 new-path guidance only after checking both the
-legacy structure and complete logical snapshot; a version marker alone does
-not identify a valid legacy save. Unsupported, malformed, mismatched, or
-unrecognized databases reject without that guidance or attempted repair.
-A database with unrelated user schema objects is not empty.
-There is no in-place legacy migration or automatic downgrade. A player may load a
-valid v10 or v11 game and save its reconstructed state to a **new** v12 destination;
-the original v10 ordering information that was never stored remains lost.
-
-Save validates its input state before opening the destination. The connection
-enables foreign keys before an immediate write transaction. On that same
-connection and inside that transaction it classifies the destination, verifies
-an existing v12 snapshot before replacement, creates v12 schema only if empty,
-replaces rows, rereads the new snapshot, and commits only after validation.
-Load opens read-only, checks version-specific structure and foreign keys, and
-validates a detached snapshot within one read transaction before returning it.
+valid v12 save. It validates its input state before opening the destination.
+The connection enables foreign keys before an immediate write transaction.
+Inside that transaction it verifies an existing v12 snapshot before replacement,
+creates v12 schema only if empty, replaces rows, rereads the new snapshot, and
+commits only after validation. Load opens read-only, checks v12 structure and
+foreign keys, and validates a detached snapshot within one read transaction.
 A failed replacement rolls back the previous valid save's **logical** contents
 and schema. A failed first save may leave an empty new file; neither path
 promises byte-identical files after every open or recovery from power loss and
@@ -195,29 +180,21 @@ references, processing-editor drafts, and window geometry are also outside the
 game snapshot. Successful Load replaces the world and clears old-world
 interaction and editor state through the existing lifecycle.
 
-The v11 ordering contract supports comparisons of durable state, ordered
+The H1B ordering contract, retained in v12, supports comparisons of durable state, ordered
 children, counters, and meaningful event order when an unsaved and reloaded
 simulation continue under the **same build and same inputs**. It does not
 promise bitwise identical floating-point results across compilers, platforms,
-or build flags, or unchanged outcomes after gameplay rules change. The H1A
-processing checks still reject previously accepted malformed extreme-weight
-saves; v10 read compatibility is for valid snapshots, not automatic repair.
+or build flags, or unchanged outcomes after gameplay rules change. The H1A processing checks remain in force for current v12 snapshots.
 
 ## Review evidence
 
-H1A evidence should include baseline reproduction of same-material and
-cross-material overflow, direct allocation-rule cases at the epsilon boundary,
-hand-calculated Manual shares and percentages, command rejection with only the
-permitted audit effect, imported-state rejection, daily processing output, and
-agreement of read-only query and forecast projections with independent expected
-values. A valid near-maximum finite weight must retain finite shares and
-percentages. Build and test results, native UI checks, and ordinary v10
-Save/Load checks belong in the H1A review report with executed and unperformed
-checks clearly distinguished. H1B evidence should include the pinned v10
-baseline ordering failure, fixture provenance, current-format round trips and
-same-build continuation, legacy read/no-upgrade behavior, rejection and
-transaction preservation, and running-UI Save/Load checks. This document
-states the contract; it does not itself certify that every check ran.
+H1A processing-allocation and H1B durable-ordering tests remain part of the
+current suite. Current persistence evidence covers v12 round trips,
+same-build continuation, malformed-state rejection, transactional rollback,
+and explicit rejection of older development schemas without changing their
+source files. Historical v10/v11 fixtures remain documented as evidence of
+prior development behavior; they no longer establish a current gameplay load
+contract. Native UI checks must be reported separately from automated tests.
 
 ## P2: component designs and commissioning
 
@@ -242,11 +219,7 @@ survey equipment is required for a fleet to survey; survey role alone is not
 sufficient. P2 does not change sustained-burn transit physics.
 
 Schema v12 replaces class aggregate cost/BP/tank columns with component tables,
-ordered installations, and revision lineage. New saves keep component and class
-vector order and each class's installation order. Read-only v10/v11 loads map the
-canonical old Survey Cutter aggregate to the reference composition. Other
-legacy aggregate classes receive private compatibility components so their
-class IDs, order/ship references, work, and non-propellant material demand remain
-coherent. Their old Propellant build-cost entry is removed under P2's tank
-transfer rule. Saving a loaded legacy game requires a new v12 path; its source
-file is never modified by Load.
+ordered installations, and revision lineage. Current saves keep component and
+class vector order and each class's installation order. Older v10/v11 files
+are rejected by the current build. Their historical fixtures remain useful for
+proving that rejection is clean and leaves the source file unchanged.

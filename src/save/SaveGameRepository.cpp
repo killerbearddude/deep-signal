@@ -1,8 +1,7 @@
 #include "save/SaveGameRepository.h"
-#include "sim/ShipDesignRules.h"
 
-// Responsibility: map durable simulation records to v12 rows and reconstruct
-// v10/v11/v12 snapshots without altering a loaded file.
+// Responsibility: map durable simulation records to active v12 rows.
+// Older development schemas are rejected without modifying their files.
 // Each operation owns its connection and reconstructed data; the input snapshot
 // is borrowed unchanged during save. Parameter binding separates values from SQL.
 // Destination recognition, schema creation, row replacement, and reads use
@@ -660,26 +659,25 @@ void requireNoForeignKeyViolations(Database& db) {
     }
 }
 
-void loadIdCounters(Database& db, IdCounters& ids, const bool v12) {
+void loadIdCounters(Database& db, IdCounters& ids) {
     ids.nextStarSystemId = loadCounter(db, "next_star_system_id");
     ids.nextBodyId = loadCounter(db, "next_body_id");
     ids.nextColonyId = loadCounter(db, "next_colony_id");
     ids.nextInstitutionId = loadCounter(db, "next_institution_id");
     ids.nextPersonId = loadCounter(db, "next_person_id");
     ids.nextShipClassId = loadCounter(db, "next_ship_class_id");
-    if (v12) ids.nextShipComponentId = loadCounter(db, "next_ship_component_id");
+    ids.nextShipComponentId = loadCounter(db, "next_ship_component_id");
     ids.nextShipyardOrderId = loadCounter(db, "next_shipyard_order_id");
     ids.nextShipId = loadCounter(db, "next_ship_id");
     ids.nextFleetId = loadCounter(db, "next_fleet_id");
     ids.nextEventId = loadCounter(db, "next_event_id");
 }
 
-void loadStarSystems(Database& db, GameState& state, const bool v11) {
-    Statement stmt{db, v11 ? "SELECT id, name, ordinal FROM star_systems ORDER BY ordinal;"
-                           : "SELECT id, name FROM star_systems ORDER BY id;"};
+void loadStarSystems(Database& db, GameState& state) {
+    Statement stmt{db, "SELECT id, name, ordinal FROM star_systems ORDER BY ordinal;"};
     std::int64_t nextOrdinal = 0;
     while (stmt.step()) {
-        if (v11) requireNextOrdinal(stmt, 2, nextOrdinal, "star_systems");
+        requireNextOrdinal(stmt, 2, nextOrdinal, "star_systems");
         state.starSystems.push_back(StarSystem{
             .id = StarSystemId{stmt.columnInt64(0)},
             .name = stmt.columnText(1)
@@ -687,13 +685,11 @@ void loadStarSystems(Database& db, GameState& state, const bool v11) {
     }
 }
 
-void loadInstitutions(Database& db, GameState& state, const bool v11) {
-    Statement stmt{db, v11
-        ? "SELECT id, name, institution_type, ordinal FROM institutions ORDER BY ordinal;"
-        : "SELECT id, name, institution_type FROM institutions ORDER BY id;"};
+void loadInstitutions(Database& db, GameState& state) {
+    Statement stmt{db, "SELECT id, name, institution_type, ordinal FROM institutions ORDER BY ordinal;"};
     std::int64_t nextOrdinal = 0;
     while (stmt.step()) {
-        if (v11) requireNextOrdinal(stmt, 3, nextOrdinal, "institutions");
+        requireNextOrdinal(stmt, 3, nextOrdinal, "institutions");
         state.institutions.push_back(Institution{
             .id = InstitutionId{stmt.columnInt64(0)},
             .name = stmt.columnText(1),
@@ -702,26 +698,19 @@ void loadInstitutions(Database& db, GameState& state, const bool v11) {
     }
 }
 
-void loadPeople(Database& db, GameState& state, const bool v11) {
-    Statement stmt{db, v11 ? R"sql(
+void loadPeople(Database& db, GameState& state) {
+    Statement stmt{db, R"sql(
         SELECT id, name, institution_id, logistics, industry, survey, command,
                administration, engineering, intelligence, crisis_management,
                seniority_level, successful_assignments, failed_assignments,
                commendations, controversies, ordinal
         FROM people
         ORDER BY ordinal;
-    )sql" : R"sql(
-        SELECT id, name, institution_id, logistics, industry, survey, command,
-               administration, engineering, intelligence, crisis_management,
-               seniority_level, successful_assignments, failed_assignments,
-               commendations, controversies
-        FROM people
-        ORDER BY id;
     )sql"};
 
     std::int64_t nextOrdinal = 0;
     while (stmt.step()) {
-        if (v11) requireNextOrdinal(stmt, 16, nextOrdinal, "people");
+        requireNextOrdinal(stmt, 16, nextOrdinal, "people");
         state.people.push_back(Person{
             .id = PersonId{stmt.columnInt64(0)},
             .name = stmt.columnText(1),
@@ -747,20 +736,16 @@ void loadPeople(Database& db, GameState& state, const bool v11) {
     }
 }
 
-void loadAppointments(Database& db, GameState& state, const bool v11) {
-    Statement stmt{db, v11 ? R"sql(
+void loadAppointments(Database& db, GameState& state) {
+    Statement stmt{db, R"sql(
         SELECT role, scope_type, scope_id, person_id, appointed_day, ordinal
-        FROM appointments
-        ORDER BY ordinal;
-    )sql" : R"sql(
-        SELECT role, scope_type, scope_id, person_id, appointed_day
         FROM appointments
         ORDER BY ordinal;
     )sql"};
 
     std::int64_t nextOrdinal = 0;
     while (stmt.step()) {
-        if (v11) requireNextOrdinal(stmt, 5, nextOrdinal, "appointments");
+        requireNextOrdinal(stmt, 5, nextOrdinal, "appointments");
         state.appointments.push_back(Appointment{
             .role = enumFromValue<AppointmentRole>(stmt.columnInt64(0)),
             .scopeType = enumFromValue<AppointmentScopeType>(stmt.columnInt64(1)),
@@ -771,21 +756,16 @@ void loadAppointments(Database& db, GameState& state, const bool v11) {
     }
 }
 
-void loadBodies(Database& db, GameState& state, const bool v11) {
-    Statement stmt{db, v11 ? R"sql(
+void loadBodies(Database& db, GameState& state) {
+    Statement stmt{db, R"sql(
         SELECT id, system_id, name, body_type, strategic_zone, parent_body_id,
                orbital_radius_km, orbital_period_days, phase_radians, display_radius, x, y, ordinal
         FROM bodies
         ORDER BY ordinal;
-    )sql" : R"sql(
-        SELECT id, system_id, name, body_type, strategic_zone, parent_body_id,
-               orbital_radius_km, orbital_period_days, phase_radians, display_radius, x, y
-        FROM bodies
-        ORDER BY id;
     )sql"};
     std::int64_t nextOrdinal = 0;
     while (stmt.step()) {
-        if (v11) requireNextOrdinal(stmt, 12, nextOrdinal, "bodies");
+        requireNextOrdinal(stmt, 12, nextOrdinal, "bodies");
         state.bodies.push_back(Body{
             .id = BodyId{stmt.columnInt64(0)},
             .systemId = StarSystemId{stmt.columnInt64(1)},
@@ -803,24 +783,19 @@ void loadBodies(Database& db, GameState& state, const bool v11) {
     }
 }
 
-void loadColonies(Database& db, GameState& state, const bool v11) {
+void loadColonies(Database& db, GameState& state) {
     // Resource arrays begin at zero and child rows fill individual entries.
     // Missing entries currently remain zero; this reader does not enforce the
     // dense row set written by saveColonies. Domain validation sees only values.
-    Statement colonies{db, v11 ? R"sql(
+    Statement colonies{db, R"sql(
         SELECT id, body_id, name, owner_institution_id, mines, processor_capacity,
                shipyard_capacity, processing_policy, ordinal
         FROM colonies
         ORDER BY ordinal;
-    )sql" : R"sql(
-        SELECT id, body_id, name, owner_institution_id, mines, processor_capacity,
-               shipyard_capacity, processing_policy
-        FROM colonies
-        ORDER BY id;
     )sql"};
     std::int64_t nextOrdinal = 0;
     while (colonies.step()) {
-        if (v11) requireNextOrdinal(colonies, 8, nextOrdinal, "colonies");
+        requireNextOrdinal(colonies, 8, nextOrdinal, "colonies");
         state.colonies.push_back(Colony{
             .id = ColonyId{colonies.columnInt64(0)},
             .bodyId = BodyId{colonies.columnInt64(1)},
@@ -859,21 +834,15 @@ void loadColonies(Database& db, GameState& state, const bool v11) {
         colony->processedStockpile.set(enumFromValue<ProcessedMaterial>(materials.columnInt64(1)), materials.columnDouble(2));
         ++materialRows[colonyId.value];
     }
-    if (v11) {
-        for (const Colony& colony : state.colonies) {
-            if (mineralRows[colony.id.value] != mineralCount() ||
-                materialRows[colony.id.value] != processedMaterialCount()) {
-                throw std::runtime_error{"v11 colony resource rows must be complete"};
-            }
+    for (const Colony& colony : state.colonies) {
+        if (mineralRows[colony.id.value] != mineralCount() ||
+            materialRows[colony.id.value] != processedMaterialCount()) {
+            throw std::runtime_error{"v12 colony resource rows must be complete"};
         }
     }
 
-    Statement allocations{db, v11 ? R"sql(
+    Statement allocations{db, R"sql(
         SELECT colony_id, material, weight, ordinal
-        FROM colony_processing_allocations
-        ORDER BY colony_id, ordinal;
-    )sql" : R"sql(
-        SELECT colony_id, material, weight
         FROM colony_processing_allocations
         ORDER BY colony_id, ordinal;
     )sql"};
@@ -881,13 +850,11 @@ void loadColonies(Database& db, GameState& state, const bool v11) {
     std::int64_t nextAllocationOrdinal = 0;
     while (allocations.step()) {
         const ColonyId colonyId{allocations.columnInt64(0)};
-        if (v11) {
-            if (colonyId.value != allocationParent) {
-                allocationParent = colonyId.value;
-                nextAllocationOrdinal = 0;
-            }
-            requireNextOrdinal(allocations, 3, nextAllocationOrdinal, "colony_processing_allocations");
+        if (colonyId.value != allocationParent) {
+            allocationParent = colonyId.value;
+            nextAllocationOrdinal = 0;
         }
+        requireNextOrdinal(allocations, 3, nextAllocationOrdinal, "colony_processing_allocations");
         Colony* colony = findById(state.colonies, colonyId);
         if (colony == nullptr) {
             throw std::runtime_error{"colony_processing_allocations references a missing colony"};
@@ -899,136 +866,17 @@ void loadColonies(Database& db, GameState& state, const bool v11) {
     }
 }
 
-void loadMineralDeposits(Database& db, GameState& state, const bool v11) {
-    Statement stmt{db, v11
-        ? "SELECT body_id, mineral, remaining, accessibility, confidence, ordinal FROM mineral_deposits ORDER BY ordinal;"
-        : "SELECT body_id, mineral, remaining, accessibility, confidence FROM mineral_deposits ORDER BY body_id, mineral;"};
+void loadMineralDeposits(Database& db, GameState& state) {
+    Statement stmt{db, "SELECT body_id, mineral, remaining, accessibility, confidence, ordinal FROM mineral_deposits ORDER BY ordinal;"};
     std::int64_t nextOrdinal = 0;
     while (stmt.step()) {
-        if (v11) requireNextOrdinal(stmt, 5, nextOrdinal, "mineral_deposits");
+        requireNextOrdinal(stmt, 5, nextOrdinal, "mineral_deposits");
         state.mineralDeposits.push_back(MineralDeposit{
             .bodyId = BodyId{stmt.columnInt64(0)},
             .mineral = enumFromValue<Mineral>(stmt.columnInt64(1)),
             .remaining = stmt.columnDouble(2),
             .accessibility = stmt.columnDouble(3),
             .confidence = stmt.columnDouble(4)
-        });
-    }
-}
-
-void loadLegacyShipClasses(Database& db, GameState& state, const bool v11) {
-    struct LegacyClass {
-        ShipClassId id;
-        std::string name;
-        ShipRole role;
-        ProcessedMaterialSet cost;
-        double buildPoints;
-        double speed;
-        double fuelCapacity;
-    };
-    std::vector<LegacyClass> legacy;
-    Statement classes{db, v11 ? R"sql(
-        SELECT id, name, role, build_points, speed_km_per_day, fuel_capacity, ordinal
-        FROM ship_classes
-        ORDER BY ordinal;
-    )sql" : R"sql(
-        SELECT id, name, role, build_points, speed_km_per_day, fuel_capacity
-        FROM ship_classes
-        ORDER BY id;
-    )sql"};
-    std::int64_t nextOrdinal = 0;
-    while (classes.step()) {
-        if (v11) requireNextOrdinal(classes, 6, nextOrdinal, "ship_classes");
-        legacy.push_back(LegacyClass{
-            .id = ShipClassId{classes.columnInt64(0)},
-            .name = classes.columnText(1),
-            .role = enumFromValue<ShipRole>(classes.columnInt64(2)),
-            .cost = ProcessedMaterialSet{},
-            .buildPoints = classes.columnDouble(3),
-            .speed = classes.columnDouble(4),
-            .fuelCapacity = classes.columnDouble(5)
-        });
-    }
-
-    std::unordered_map<std::int64_t, std::size_t> costRows;
-    Statement costs{db, "SELECT ship_class_id, material, amount FROM ship_class_material_costs ORDER BY ship_class_id, material;"};
-    while (costs.step()) {
-        const ShipClassId shipClassId{costs.columnInt64(0)};
-        const auto row = std::find_if(legacy.begin(), legacy.end(), [shipClassId](const LegacyClass& item) {
-            return item.id == shipClassId;
-        });
-        if (row == legacy.end()) {
-            throw std::runtime_error{"ship_class_material_costs references a missing ship class"};
-        }
-        row->cost.set(enumFromValue<ProcessedMaterial>(costs.columnInt64(1)), costs.columnDouble(2));
-        ++costRows[shipClassId.value];
-    }
-    if (v11) {
-        for (const LegacyClass& row : legacy) {
-            if (costRows[row.id.value] != processedMaterialCount()) {
-                throw std::runtime_error{"v11 ship-class cost rows must be complete"};
-            }
-        }
-    }
-
-    state.shipComponents = standardShipComponentCatalog();
-    state.ids.nextShipComponentId = 6;
-    for (const LegacyClass& row : legacy) {
-        if (!std::isfinite(row.buildPoints) || row.buildPoints <= 0.0 ||
-            !std::isfinite(row.speed) || row.speed < 0.0 ||
-            !std::isfinite(row.fuelCapacity) || row.fuelCapacity < 0.0 ||
-            std::any_of(row.cost.amount.begin(), row.cost.amount.end(),
-                        [](double amount) { return !std::isfinite(amount) || amount < 0.0; })) {
-            throw std::runtime_error{"Legacy ship class contains invalid aggregate values"};
-        }
-        const bool reference = row.name == "Survey Cutter" && row.role == ShipRole::Survey &&
-            row.buildPoints == 500.0 && row.fuelCapacity == 1000.0 && row.speed == 50.0 &&
-            row.cost.get(ProcessedMaterial::StructuralAlloys) == 250.0 &&
-            row.cost.get(ProcessedMaterial::Electronics) == 80.0 &&
-            row.cost.get(ProcessedMaterial::Propellant) == 150.0 &&
-            row.cost.get(ProcessedMaterial::ReactorFuel) == 20.0 &&
-            row.cost.get(ProcessedMaterial::IndustrialComposites) == 50.0 &&
-            row.cost.get(ProcessedMaterial::OrdnanceMaterials) == 0.0;
-        std::vector<ShipComponentInstall> installs;
-        if (reference) {
-            installs = referenceSurveyCutterComponents();
-        } else {
-            // Legacy aggregate snapshots can contain custom classes. Give each
-            // one a private component composition retaining its work/material
-            // demand and tankage; propellant is removed from hull cost because
-            // commissioning now transfers it from real colony stock.
-            ShipComponentDefinition hull{
-                .id = ShipComponentId{state.ids.nextShipComponentId++},
-                .name = row.name + " Legacy Hull", .kind = ShipComponentKind::Hull,
-                .internalVolumeCapacity = 1.0,
-                .buildCost = row.cost, .buildPoints = row.buildPoints
-            };
-            hull.buildCost.set(ProcessedMaterial::Propellant, 0.0);
-            installs.push_back({hull.id, 1});
-            state.shipComponents.push_back(std::move(hull));
-            if (row.fuelCapacity > 0.0) {
-                ShipComponentDefinition tank{
-                    .id = ShipComponentId{state.ids.nextShipComponentId++},
-                    .name = row.name + " Legacy Tank", .kind = ShipComponentKind::PropellantTank,
-                    .propellantCapacity = row.fuelCapacity, .buildCost = ProcessedMaterialSet{}
-                };
-                installs.push_back({tank.id, 1});
-                state.shipComponents.push_back(std::move(tank));
-            }
-            if (row.role == ShipRole::Survey) {
-                ShipComponentDefinition sensor{
-                    .id = ShipComponentId{state.ids.nextShipComponentId++},
-                    .name = row.name + " Legacy Survey Sensor", .kind = ShipComponentKind::SurveySensor,
-                    .surveyCapability = 1.0, .buildCost = ProcessedMaterialSet{}
-                };
-                installs.push_back({sensor.id, 1});
-                state.shipComponents.push_back(std::move(sensor));
-            }
-        }
-        state.shipClasses.push_back(ShipClass{
-            .id = row.id, .name = row.name, .role = row.role,
-            .basedOnClassId = std::nullopt,
-            .components = std::move(installs), .speedKmPerDay = row.speed
         });
     }
 }
@@ -1102,21 +950,16 @@ void loadV12ShipComponentsAndClasses(Database& db, GameState& state) {
     }
 }
 
-void loadShipyardOrders(Database& db, GameState& state, const bool v11) {
-    Statement stmt{db, v11 ? R"sql(
+void loadShipyardOrders(Database& db, GameState& state) {
+    Statement stmt{db, R"sql(
         SELECT id, colony_id, ship_class_id, quantity_requested, quantity_completed,
                accumulated_build_points, status, ordinal
         FROM shipyard_orders
         ORDER BY ordinal;
-    )sql" : R"sql(
-        SELECT id, colony_id, ship_class_id, quantity_requested, quantity_completed,
-               accumulated_build_points, status
-        FROM shipyard_orders
-        ORDER BY id;
     )sql"};
     std::int64_t nextOrdinal = 0;
     while (stmt.step()) {
-        if (v11) requireNextOrdinal(stmt, 7, nextOrdinal, "shipyard_orders");
+        requireNextOrdinal(stmt, 7, nextOrdinal, "shipyard_orders");
         state.shipyardOrders.push_back(ShipyardOrder{
             .id = ShipyardOrderId{stmt.columnInt64(0)},
             .colonyId = ColonyId{stmt.columnInt64(1)},
@@ -1129,8 +972,8 @@ void loadShipyardOrders(Database& db, GameState& state, const bool v11) {
     }
 }
 
-void loadFleets(Database& db, GameState& state, const bool v11) {
-    Statement stmt{db, v11 ? R"sql(
+void loadFleets(Database& db, GameState& state) {
+    Statement stmt{db, R"sql(
         SELECT id, name, owner_institution_id, current_body_id, destination_body_id,
                order_type, order_target_body_id, order_days_remaining,
                order_departure_body_id, order_departure_day, order_arrival_day,
@@ -1140,19 +983,10 @@ void loadFleets(Database& db, GameState& state, const bool v11) {
                ordinal
         FROM fleets
         ORDER BY ordinal;
-    )sql" : R"sql(
-        SELECT id, name, owner_institution_id, current_body_id, destination_body_id,
-               order_type, order_target_body_id, order_days_remaining,
-               order_departure_body_id, order_departure_day, order_arrival_day,
-               order_departure_x, order_departure_y, order_projected_arrival_x,
-               order_projected_arrival_y, order_transit_distance_km,
-               order_burn_acceleration_g, order_curve_control_x, order_curve_control_y
-        FROM fleets
-        ORDER BY id;
     )sql"};
     std::int64_t nextOrdinal = 0;
     while (stmt.step()) {
-        if (v11) requireNextOrdinal(stmt, 19, nextOrdinal, "fleets");
+        requireNextOrdinal(stmt, 19, nextOrdinal, "fleets");
         state.fleets.push_back(Fleet{
             .id = FleetId{stmt.columnInt64(0)},
             .name = stmt.columnText(1),
@@ -1177,12 +1011,8 @@ void loadFleets(Database& db, GameState& state, const bool v11) {
         });
     }
 
-    Statement queue{db, v11 ? R"sql(
+    Statement queue{db, R"sql(
         SELECT fleet_id, order_type, target_body_id, ordinal
-        FROM fleet_order_queue
-        ORDER BY fleet_id, ordinal;
-    )sql" : R"sql(
-        SELECT fleet_id, order_type, target_body_id
         FROM fleet_order_queue
         ORDER BY fleet_id, ordinal;
     )sql"};
@@ -1190,13 +1020,11 @@ void loadFleets(Database& db, GameState& state, const bool v11) {
     std::int64_t nextQueueOrdinal = 0;
     while (queue.step()) {
         const FleetId fleetId{queue.columnInt64(0)};
-        if (v11) {
-            if (fleetId.value != queueParent) {
-                queueParent = fleetId.value;
-                nextQueueOrdinal = 0;
-            }
-            requireNextOrdinal(queue, 3, nextQueueOrdinal, "fleet_order_queue");
+        if (fleetId.value != queueParent) {
+            queueParent = fleetId.value;
+            nextQueueOrdinal = 0;
         }
+        requireNextOrdinal(queue, 3, nextQueueOrdinal, "fleet_order_queue");
         Fleet* fleet = findById(state.fleets, fleetId);
         if (fleet == nullptr) {
             throw std::runtime_error{"fleet_order_queue references a missing fleet"};
@@ -1208,13 +1036,11 @@ void loadFleets(Database& db, GameState& state, const bool v11) {
     }
 }
 
-void loadShips(Database& db, GameState& state, const bool v11) {
-    Statement stmt{db, v11
-        ? "SELECT id, ship_class_id, fleet_id, name, fuel, ordinal FROM ships ORDER BY ordinal;"
-        : "SELECT id, ship_class_id, fleet_id, name, fuel FROM ships ORDER BY id;"};
+void loadShips(Database& db, GameState& state) {
+    Statement stmt{db, "SELECT id, ship_class_id, fleet_id, name, fuel, ordinal FROM ships ORDER BY ordinal;"};
     std::int64_t nextOrdinal = 0;
     while (stmt.step()) {
-        if (v11) requireNextOrdinal(stmt, 5, nextOrdinal, "ships");
+        requireNextOrdinal(stmt, 5, nextOrdinal, "ships");
         Ship ship{
             .id = ShipId{stmt.columnInt64(0)},
             .shipClassId = ShipClassId{stmt.columnInt64(1)},
@@ -1227,30 +1053,27 @@ void loadShips(Database& db, GameState& state, const bool v11) {
         if (fleet == nullptr) {
             throw std::runtime_error{"ships references a missing fleet"};
         }
-        if (!v11) fleet->shipIds.push_back(ship.id);
         state.ships.push_back(std::move(ship));
     }
-    if (v11) {
-        // Ship order in GameState is independent from fleet roster order used
-        // for fuel payment. Reconstruct the latter from a second explicit sort.
-        Statement roster{db, R"sql(
+    // Ship order in GameState is independent from fleet roster order used
+    // for fuel payment. Reconstruct the latter from a second explicit sort.
+    Statement roster{db, R"sql(
             SELECT fleet_id, id, fleet_ordinal
             FROM ships
             ORDER BY fleet_id, fleet_ordinal;
-        )sql"};
-        std::int64_t rosterParent = 0;
-        std::int64_t nextRosterOrdinal = 0;
-        while (roster.step()) {
-            const FleetId fleetId{roster.columnInt64(0)};
-            if (fleetId.value != rosterParent) {
-                rosterParent = fleetId.value;
-                nextRosterOrdinal = 0;
-            }
-            requireNextOrdinal(roster, 2, nextRosterOrdinal, "ships.fleet_ordinal");
-            Fleet* fleet = findById(state.fleets, fleetId);
-            if (fleet == nullptr) throw std::runtime_error{"ships references a missing fleet"};
-            fleet->shipIds.push_back(ShipId{roster.columnInt64(1)});
+    )sql"};
+    std::int64_t rosterParent = 0;
+    std::int64_t nextRosterOrdinal = 0;
+    while (roster.step()) {
+        const FleetId fleetId{roster.columnInt64(0)};
+        if (fleetId.value != rosterParent) {
+            rosterParent = fleetId.value;
+            nextRosterOrdinal = 0;
         }
+        requireNextOrdinal(roster, 2, nextRosterOrdinal, "ships.fleet_ordinal");
+        Fleet* fleet = findById(state.fleets, fleetId);
+        if (fleet == nullptr) throw std::runtime_error{"ships references a missing fleet"};
+        fleet->shipIds.push_back(ShipId{roster.columnInt64(1)});
     }
 }
 
@@ -1268,27 +1091,25 @@ void loadEvents(Database& db, GameState& state) {
     }
 }
 
-[[nodiscard]] GameState readSnapshot(Database& db, const std::int64_t version) {
+[[nodiscard]] GameState readSnapshot(Database& db) {
     requireNoForeignKeyViolations(db);
     GameState state;
-    const bool ordered = version >= kPreviousSchemaVersion;
     state.date.day = loadMetaInt64(db, "current_day");
-    loadIdCounters(db, state.ids, version == kSchemaVersion);
-    loadStarSystems(db, state, ordered);
-    loadInstitutions(db, state, ordered);
-    loadPeople(db, state, ordered);
-    loadBodies(db, state, ordered);
-    loadColonies(db, state, ordered);
-    loadMineralDeposits(db, state, ordered);
-    if (version == kSchemaVersion) loadV12ShipComponentsAndClasses(db, state);
-    else loadLegacyShipClasses(db, state, ordered);
-    loadShipyardOrders(db, state, ordered);
-    loadFleets(db, state, ordered);
-    loadShips(db, state, ordered);
-    loadAppointments(db, state, ordered);
+    loadIdCounters(db, state.ids);
+    loadStarSystems(db, state);
+    loadInstitutions(db, state);
+    loadPeople(db, state);
+    loadBodies(db, state);
+    loadColonies(db, state);
+    loadMineralDeposits(db, state);
+    loadV12ShipComponentsAndClasses(db, state);
+    loadShipyardOrders(db, state);
+    loadFleets(db, state);
+    loadShips(db, state);
+    loadAppointments(db, state);
     loadEvents(db, state);
 
-    // Telemetry is session-only. Both readers reconstruct detached durable
+    // Telemetry is session-only. The reader reconstructs detached durable
     // state and pass through the same domain validator before publication.
     validateGameState(state);
     return state;
@@ -1311,19 +1132,9 @@ void SaveGameRepository::save(const std::filesystem::path& path, const GameState
     Transaction transaction{db, Transaction::Mode::Write};
     if (hasUserSchema(db)) {
         const std::int64_t version = readSchemaVersion(db);
-        if (version == kLegacySchemaVersion || version == kPreviousSchemaVersion) {
-            // The version marker alone does not establish that this is a valid
-            // legacy save. Give new-path guidance only after the v10 structure
-            // and its complete logical snapshot have passed read validation.
-            if (version == kLegacySchemaVersion) requireV10Structure(db);
-            else requireV11Structure(db);
-            (void)readSnapshot(db, version);
-            throw std::runtime_error{"Cannot overwrite a v" + std::to_string(version) +
-                                     " save; choose a new path for v12"};
-        }
         if (version != kSchemaVersion) throw std::runtime_error{"Unsupported save schema version"};
         requireV12Structure(db);
-        (void)readSnapshot(db, kSchemaVersion);
+        (void)readSnapshot(db);
     } else {
         // DDL and rows share this transaction. A failed new-path save may
         // leave an empty file, but not a partially initialized schema.
@@ -1355,7 +1166,7 @@ void SaveGameRepository::save(const std::filesystem::path& path, const GameState
     // Re-read on this connection before commit. This catches incomplete rows,
     // ordinal gaps, and foreign-key problems while rollback can still restore
     // the previous logical snapshot. Save rejects user triggers in preflight.
-    (void)readSnapshot(db, kSchemaVersion);
+    (void)readSnapshot(db);
     // dailyEconomySnapshots is runtime-only telemetry for the active session.
     // The schema deliberately omits it, so saves contain durable state and audit
     // events only; graphs can regenerate new samples after loading and advancing.
@@ -1371,11 +1182,9 @@ GameState SaveGameRepository::load(const std::filesystem::path& path) {
 
     Transaction transaction{db, Transaction::Mode::Read};
     const std::int64_t version = readSchemaVersion(db);
-    if (version == kSchemaVersion) requireV12Structure(db, true);
-    else if (version == kPreviousSchemaVersion) requireV11Structure(db, true);
-    else if (version == kLegacySchemaVersion) requireV10Structure(db);
-    else throw std::runtime_error{"Unsupported save schema version"};
-    GameState state = readSnapshot(db, version);
+    if (version != kSchemaVersion) throw std::runtime_error{"Unsupported save schema version"};
+    requireV12Structure(db, true);
+    GameState state = readSnapshot(db);
 
     transaction.commit();
     return state;
