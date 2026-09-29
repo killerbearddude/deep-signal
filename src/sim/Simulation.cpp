@@ -815,8 +815,12 @@ CommandResult Simulation::amendSurveyProgram(const AmendSurveyProgramCommand& co
     };
     SurveyProgram* program = findById(state_.surveyPrograms, command.programId);
     if (program == nullptr) return reject("Survey program does not exist");
+    const bool reopeningCompletion = program->lifecycle == SurveyProgramLifecycle::Closing &&
+        program->closure == SurveyProgramClosure::Completed;
     if (program->lifecycle == SurveyProgramLifecycle::Closed ||
-        program->lifecycle == SurveyProgramLifecycle::Closing) return reject("Survey program is closing or closed");
+        (program->lifecycle == SurveyProgramLifecycle::Closing && !reopeningCompletion)) {
+        return reject("Survey program is cancelled, closing, or closed");
+    }
     if (const auto reason = validateSurveyProgramCharter(state_, command.charter)) return reject(*reason);
     if (program->charterRevision == std::numeric_limits<int>::max()) return reject("Charter revision limit reached");
     SurveyProgramCharter prepared = command.charter;
@@ -831,6 +835,12 @@ CommandResult Simulation::amendSurveyProgram(const AmendSurveyProgramCommand& co
     }
     std::swap(program->charter, prepared);
     ++program->charterRevision;
+    if (reopeningCompletion) {
+        // Completion still had an unfulfilled physical return. The new charter
+        // reopens authority without changing the paid route, task, or lease.
+        program->lifecycle = SurveyProgramLifecycle::Authorized;
+        program->closure = SurveyProgramClosure::None;
+    }
     // A new charter is a new decision context. Existing physical route/task
     // stays committed; the runner reevaluates once that activity stops safely.
     acknowledgeKnownSurveyProgramLimitAtDecision(state_, *program);
@@ -845,11 +855,15 @@ CommandResult Simulation::amendSurveyProgram(const AmendSurveyProgramCommand& co
 
 CommandResult Simulation::suspendSurveyProgram(const SuspendSurveyProgramCommand& command) {
     SurveyProgram* program = findById(state_.surveyPrograms, command.programId);
-    if (program == nullptr || program->lifecycle != SurveyProgramLifecycle::Authorized) {
-        appendEvent(EventSeverity::Warning, CommandRejectedEvent{"Survey program is not authorized"});
-        return CommandResult::failure("Survey program is not authorized");
+    const bool completionReturn = program != nullptr &&
+        program->lifecycle == SurveyProgramLifecycle::Closing &&
+        program->closure == SurveyProgramClosure::Completed;
+    if (program == nullptr || (program->lifecycle != SurveyProgramLifecycle::Authorized && !completionReturn)) {
+        appendEvent(EventSeverity::Warning, CommandRejectedEvent{"Survey program is not authorized or returning from completion"});
+        return CommandResult::failure("Survey program is not authorized or returning from completion");
     }
     program->lifecycle = SurveyProgramLifecycle::Suspended;
+    program->closure = SurveyProgramClosure::None;
     program->issue.acknowledged = true;
     static_cast<void>(releaseSurveyProgramLease(state_, *program));
     appendEvent(EventSeverity::Info, SurveyProgramAuditEvent{

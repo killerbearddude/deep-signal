@@ -239,6 +239,10 @@ The fleet keeps its actual transit plan; suspending or cancelling a program
 never teleports it, refunds departure fuel, or moves an embarked team remotely.
 An amendment records a new charter revision. A home change during committed
 work remains pending until a safe boundary; prior receipts remain historical.
+`Closing / Completed` means the final visit is done while physical return is
+still pending. It remains an actionable decision point: an accepted amendment
+reopens `Authorized`, and suspension records `Suspended`, both without replacing
+the committed return task or route. `Closed / Completed` requires the home return.
 
 The first executor runs one target pass per home-supported sortie. Leader
 approach determines target order from public charter priorities and completed

@@ -348,15 +348,20 @@ void SurveyProgramsPanel::renderProgramDetail(const SurveyProgramSummary& progra
         }
     }
 
-    if (ImGui::Button("Edit charter")) editProgram(program);
-    if (program.lifecycle == SurveyProgramLifecycle::Authorized) {
+    const bool completionReturn = program.lifecycle == SurveyProgramLifecycle::Closing &&
+        program.closure == SurveyProgramClosure::Completed;
+    if (program.lifecycle == SurveyProgramLifecycle::Authorized ||
+        program.lifecycle == SurveyProgramLifecycle::Suspended || completionReturn) {
+        if (ImGui::Button("Edit charter")) editProgram(program);
+    }
+    if (program.lifecycle == SurveyProgramLifecycle::Authorized || completionReturn) {
         ImGui::SameLine();
         if (ImGui::Button("Suspend")) applyResult(service.execute(SuspendSurveyProgramCommand{program.id}));
     } else if (program.lifecycle == SurveyProgramLifecycle::Suspended) {
         ImGui::SameLine();
         if (ImGui::Button("Resume")) applyResult(service.execute(ResumeSurveyProgramCommand{program.id}));
     }
-    if (program.lifecycle != SurveyProgramLifecycle::Closed && program.lifecycle != SurveyProgramLifecycle::Closing) {
+    if (program.lifecycle != SurveyProgramLifecycle::Closed) {
         ImGui::SameLine();
         if (ImGui::Button("Cancel")) applyResult(service.execute(CancelSurveyProgramCommand{program.id}));
     }

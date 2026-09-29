@@ -6,12 +6,14 @@
 #include "sim/ScenarioFactory.h"
 #include "sim/ShipDesignRules.h"
 #include "sim/Simulation.h"
+#include "sim/TransitPlanning.h"
 
 // Regression tests for SQLite save/load round-tripping.
 // These tests verify that the current schema persists durable Prototype 0.1 state,
 // including ID counters, institutions, ownership, production, fleet orders, and events.
 // Runtime-only economy telemetry is tested separately as intentionally transient.
 
+#include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <exception>
@@ -25,6 +27,7 @@
 #include <utility>
 #include <variant>
 #include <vector>
+#include <unistd.h>
 
 namespace {
 
@@ -473,6 +476,31 @@ std::filesystem::path malformedSavePath(const std::string_view suffix) {
     return std::filesystem::temp_directory_path() / ("deep_signal_malformed_" + std::string{suffix} + ".sqlite");
 }
 
+class UniqueProgramSavePath final {
+public:
+    UniqueProgramSavePath() {
+        std::string pattern = (std::filesystem::temp_directory_path() /
+            "deep_signal_p3a_return_XXXXXX").string();
+        const int descriptor = mkstemp(pattern.data());
+        require(descriptor >= 0, "create unique P3A return-issue save path");
+        close(descriptor);
+        path_ = pattern;
+        std::filesystem::remove(path_);
+    }
+    ~UniqueProgramSavePath() {
+        std::error_code ignored;
+        std::filesystem::remove(path_, ignored);
+        std::filesystem::remove(path_.string() + "-wal", ignored);
+        std::filesystem::remove(path_.string() + "-shm", ignored);
+        std::filesystem::remove(path_.string() + "-journal", ignored);
+    }
+    UniqueProgramSavePath(const UniqueProgramSavePath&) = delete;
+    UniqueProgramSavePath& operator=(const UniqueProgramSavePath&) = delete;
+    [[nodiscard]] const std::filesystem::path& path() const noexcept { return path_; }
+private:
+    std::filesystem::path path_;
+};
+
 deep::GameState makeWaitingSurveyProgramState() {
     deep::GameState state = deep::createHomeSystemScenario();
     const deep::SurveyTeamId teamId{state.ids.nextSurveyTeamId++};
@@ -582,6 +610,135 @@ void test_active_survey_program_continues_after_save_load() {
             uninterrupted.state().surveyPrograms.front().reports.size() == 1,
             "resuming after report boundary does not duplicate visit or report");
     std::filesystem::remove(path);
+}
+
+void test_completion_return_issue_allows_amend_and_suspend_after_load() {
+    // This fixture removes onboard fuel only after a real final field pass. It
+    // models a changed physical return condition without adding remote refuel
+    // mechanics to P3A; both save branches later receive the same fixture input.
+    deep::GameState fixture = deep::createDelegatedSurveyScenario();
+    const deep::BodyId firstTarget = fixture.bodies.back().id;
+    fixture.bodies.back().x = 20.0; // Multi-day real transit, still within tankage.
+    deep::Simulation setup{std::move(fixture)};
+    auto charter = makeDelegatedSurveyCharter(setup.state());
+    charter.targets = {{firstTarget, 3, 1}};
+    require(setup.execute(deep::CreateSurveyProgramCommand{charter}).ok,
+            "final-pass return-issue fixture authorizes one target");
+    for (int day = 0; day < 80; ++day) {
+        const auto& program = setup.state().surveyPrograms.front();
+        if (program.lifecycle == deep::SurveyProgramLifecycle::Closing &&
+            program.closure == deep::SurveyProgramClosure::Completed &&
+            program.task == deep::SurveyProgramTask::Return) break;
+        const auto step = setup.advanceDaysDetailed(1);
+        require(step.advancedDays == 1 && !step.interrupted,
+                "final field pass reaches its physical return obligation");
+    }
+    const auto& beforeShortage = setup.state().surveyPrograms.front();
+    require(beforeShortage.lifecycle == deep::SurveyProgramLifecycle::Closing &&
+            beforeShortage.closure == deep::SurveyProgramClosure::Completed &&
+            beforeShortage.receipts.size() == 1 &&
+            setup.state().fleets.back().currentBodyId == firstTarget &&
+            setup.state().fleets.back().activeOrder.type == deep::FleetOrderType::None,
+            "completed final pass is stationary at target before return");
+
+    deep::GameState depleted = setup.state();
+    depleted.ships.back().fuel = 0.0;
+    deep::Simulation blocked{std::move(depleted)};
+    const auto stopped = blocked.advanceDaysDetailed(10);
+    const auto& issueProgram = blocked.state().surveyPrograms.front();
+    require(stopped.interrupted && stopped.advancedDays == 1 &&
+            issueProgram.lifecycle == deep::SurveyProgramLifecycle::Closing &&
+            issueProgram.closure == deep::SurveyProgramClosure::Completed &&
+            !issueProgram.issue.acknowledged &&
+            issueProgram.issue.signature.find("return:") == 0,
+            "unaffordable completion return raises a consequential issue after one full day");
+    UniqueProgramSavePath save;
+    deep::save::SaveGameRepository::save(save.path(), blocked.state());
+    deep::GameState loadedIssue = deep::save::SaveGameRepository::load(save.path());
+    requireSameState(blocked.state(), loadedIssue);
+
+    const auto replenishForNextReturn = [](deep::GameState state) {
+        const auto& program = state.surveyPrograms.front();
+        const auto& fleet = state.fleets.back();
+        const auto home = std::find_if(state.colonies.begin(), state.colonies.end(),
+            [&program](const deep::Colony& colony) { return colony.id == program.charter.homeColonyId; });
+        require(home != state.colonies.end(), "return home exists");
+        const double returnFuel = deep::adjustedFleetMoveFuelCost(
+            state, fleet, fleet.currentBodyId, home->bodyId, state.date.day + 1);
+        require(std::isfinite(returnFuel) && returnFuel + 5.0 < 1000.0,
+                "fixture return replenishment fits the built tank");
+        state.ships.back().fuel = returnFuel + 5.0;
+        return state;
+    };
+    const auto advanceEquivalentToClosure = [](deep::Simulation& left, deep::Simulation& right,
+                                                const int limit) {
+        for (int day = 0; day < limit; ++day) {
+            if (left.state().surveyPrograms.front().lifecycle == deep::SurveyProgramLifecycle::Closed) break;
+            const auto a = left.advanceDaysDetailed(1);
+            const auto b = right.advanceDaysDetailed(1);
+            require(a.advancedDays == 1 && b.advancedDays == 1 && !a.interrupted && !b.interrupted,
+                    "equivalent restored return branches advance without a new issue");
+            requireSameState(left.state(), right.state());
+        }
+        require(left.state().surveyPrograms.front().lifecycle == deep::SurveyProgramLifecycle::Closed &&
+                left.state().surveyPrograms.front().closure == deep::SurveyProgramClosure::Completed,
+                "restored physical return eventually closes the completed charter");
+    };
+
+    deep::Simulation amended{loadedIssue};
+    auto extended = amended.state().surveyPrograms.front().charter;
+    extended.targets.push_back(deep::SurveyProgramTarget{
+        .bodyId = amended.state().bodies.at(amended.state().bodies.size() - 2).id,
+        .priority = 1, .requestedPasses = 1
+    });
+    const auto amendment = amended.execute(deep::AmendSurveyProgramCommand{
+        .programId = amended.state().surveyPrograms.front().id, .charter = extended
+    });
+    const auto& reopened = amended.state().surveyPrograms.front();
+    require(amendment.ok && reopened.lifecycle == deep::SurveyProgramLifecycle::Authorized &&
+            reopened.closure == deep::SurveyProgramClosure::None &&
+            reopened.task == deep::SurveyProgramTask::Return &&
+            reopened.taskFleetId == issueProgram.taskFleetId &&
+            reopened.taskTeamId == issueProgram.taskTeamId &&
+            reopened.taskLeaderId == issueProgram.taskLeaderId &&
+            amended.state().fleets.back().currentBodyId == firstTarget &&
+            amended.state().fleets.back().activeOrder.type == deep::FleetOrderType::None &&
+            amended.state().ships.back().fuel == 0.0 &&
+            amended.state().surveyPrograms.front().fuelBurned == issueProgram.fuelBurned,
+            "amendment reopens authority without moving, refueling, or replacing committed task assets");
+    deep::save::SaveGameRepository::save(save.path(), amended.state());
+    deep::GameState loadedAmendment = deep::save::SaveGameRepository::load(save.path());
+    requireSameState(amended.state(), loadedAmendment);
+    deep::Simulation amendedLive{replenishForNextReturn(amended.state())};
+    deep::Simulation amendedLoaded{replenishForNextReturn(std::move(loadedAmendment))};
+    advanceEquivalentToClosure(amendedLive, amendedLoaded, 120);
+    require(amendedLive.state().surveyPrograms.front().receipts.size() == 2,
+            "added target executes only after committed return and next planning boundary");
+
+    deep::Simulation suspended{blocked.state()};
+    const auto pause = suspended.execute(deep::SuspendSurveyProgramCommand{
+        .programId = suspended.state().surveyPrograms.front().id
+    });
+    const auto& paused = suspended.state().surveyPrograms.front();
+    require(pause.ok && paused.lifecycle == deep::SurveyProgramLifecycle::Suspended &&
+            paused.closure == deep::SurveyProgramClosure::None &&
+            paused.task == deep::SurveyProgramTask::Return &&
+            paused.taskFleetId == issueProgram.taskFleetId &&
+            paused.taskTeamId == issueProgram.taskTeamId &&
+            suspended.state().fleets.back().currentBodyId == firstTarget &&
+            suspended.state().ships.back().fuel == 0.0,
+            "suspension pauses completion return without teleporting or canceling its task");
+    deep::save::SaveGameRepository::save(save.path(), suspended.state());
+    deep::GameState loadedSuspension = deep::save::SaveGameRepository::load(save.path());
+    requireSameState(suspended.state(), loadedSuspension);
+    deep::Simulation suspendedLive{replenishForNextReturn(suspended.state())};
+    deep::Simulation suspendedLoaded{replenishForNextReturn(std::move(loadedSuspension))};
+    const auto resume = deep::ResumeSurveyProgramCommand{suspendedLive.state().surveyPrograms.front().id};
+    require(suspendedLive.execute(resume).ok && suspendedLoaded.execute(resume).ok,
+            "both suspended branches resume the same unfinished return");
+    advanceEquivalentToClosure(suspendedLive, suspendedLoaded, 80);
+    require(suspendedLive.state().surveyPrograms.front().receipts.size() == 1,
+            "resume closes after original visit without duplicate fieldwork");
 }
 
 void test_pending_survey_home_amendment_round_trips() {
@@ -1369,6 +1526,7 @@ int main() {
     try {
         test_waiting_survey_program_round_trips();
         test_active_survey_program_continues_after_save_load();
+        test_completion_return_issue_allows_amend_and_suspend_after_load();
         test_pending_survey_home_amendment_round_trips();
         test_malformed_survey_history_rows_are_rejected();
         test_malformed_survey_partial_rows_are_rejected();

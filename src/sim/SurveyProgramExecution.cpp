@@ -625,6 +625,12 @@ void runAuthorizedProgram(GameState& state, SurveyProgram& program,
 }
 
 void updateIssue(GameState& state, SurveyProgram& program, const SurveyProgramExecutionHooks& hooks) {
+    if (program.lifecycle == SurveyProgramLifecycle::Suspended && program.issue.acknowledged) {
+        // Suspension itself is a player response to the known limitation. Keep
+        // its signature so an unchanged return constraint does not re-prompt
+        // immediately on resume; no physical work occurs while suspended.
+        return;
+    }
     const auto cause = consequentialIssue(state, program);
     if (!cause.has_value()) {
         // An accepted cap shortage may be latent during a committed transit.
