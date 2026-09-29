@@ -147,6 +147,29 @@ struct FreightProgramAuditEvent {
     std::string detail{};
 };
 
+// Actual per-installation operating deltas. A timed day records one duty;
+// immediate manual passes record five. Publication of survey results adds none.
+struct EquipmentDutyUsedEvent {
+    FleetId fleetId;
+    ShipId shipId;
+    ShipComponentId componentId;
+    std::optional<SurveyProgramId> surveyProgramId = std::nullopt;
+    double duty = 0.0;
+    double beforeUsedDuty = 0.0;
+    double afterUsedDuty = 0.0;
+};
+enum class MaintenanceAuditKind {
+    Authorized, Amended, Suspended, Resumed, Cancelled, LeaseAcquired,
+    JobStarted, WorkPerformed, JobCompleted, JobWithdrawn,
+    ReportPublished, IssueRaised, IssueAcknowledged
+};
+struct MaintenanceProgramAuditEvent {
+    MaintenanceProgramId programId;
+    MaintenanceAuditKind kind = MaintenanceAuditKind::Authorized;
+    int jobNumber = 0;
+    std::string detail;
+};
+
 // Emitted when validation rejects a command or a daily process detects invalid
 // state. The reason should be precise enough for UI display and test assertions.
 struct CommandRejectedEvent {
@@ -165,6 +188,8 @@ using SimEventPayload = std::variant<
     ResourceSurveyCompletedEvent,
     SurveyProgramAuditEvent,
     FreightProgramAuditEvent,
+    EquipmentDutyUsedEvent,
+    MaintenanceProgramAuditEvent,
     CommandRejectedEvent
 >;
 

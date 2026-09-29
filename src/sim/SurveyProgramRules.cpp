@@ -86,6 +86,12 @@ std::optional<std::string> validateSurveyProgramCharter(const GameState& state,
     if (!validRequested(charter.requestedLeaderId, state.people)) return "Requested leader does not exist";
     if (!validRequested(charter.requestedTeamId, state.surveyTeams)) return "Requested survey team does not exist";
     const SurveyProgramPolicy& policy = charter.policy;
+    if (!validRequested(policy.maintenanceProgramId, state.maintenancePrograms)) {
+        return "Selected maintenance provider does not exist";
+    }
+    if (!std::isfinite(policy.remainingDutyTrigger) || policy.remainingDutyTrigger < 0.0 || policy.remainingDutyTrigger > 1.0) {
+        return "Remaining survey duty trigger must be between zero and one";
+    }
     if ((policy.maxAdditionalPropellant.has_value() &&
          (!std::isfinite(*policy.maxAdditionalPropellant) || *policy.maxAdditionalPropellant < 0.0)) ||
         !std::isfinite(policy.homeStockFloor) || policy.homeStockFloor < 0.0 ||

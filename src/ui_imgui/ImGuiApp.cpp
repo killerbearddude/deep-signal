@@ -33,6 +33,7 @@ ImGuiApp::ImGuiApp()
         shipyardPanel_.resetWorldState();
         surveyProgramsPanel_.resetWorldState();
         freightProgramsPanel_.resetWorldState();
+        maintenanceProgramsPanel_.resetWorldState();
         timeControlPanel_.resetWorldState();
         mainMenuBar_.resetWorldState();
         pendingNavigationFocus_.reset();
@@ -191,6 +192,7 @@ void ImGuiApp::renderPanels() {
     fleetOrdersPanel_.render(queries, service_, interactions_.mainSelection(), visibility_.fleetOrders);
     surveyProgramsPanel_.render(queries, service_, visibility_.surveyPrograms);
     freightProgramsPanel_.render(queries, service_, visibility_.freightPrograms);
+    maintenanceProgramsPanel_.render(queries, service_, visibility_.maintenancePrograms);
     economyForecastPanel_.render(forecasts, visibility_.economyForecast);
     eventLogPanel_.render(queries, visibility_.eventLog);
     inspectorPanel_.render(queries, service_, interactions_.mainSelection(), visibility_.inspector);

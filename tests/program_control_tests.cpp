@@ -8,6 +8,7 @@
 #include "sim/Simulation.h"
 #include "sim/ShipDesignRules.h"
 #include "sim/SurveyProgramExecution.h"
+#include "sim/EquipmentServiceRules.h"
 
 #include <cmath>
 #include <iostream>
@@ -175,6 +176,8 @@ void test_survey_condition_and_report_name_freight_owner() {
         const auto fleetId = state.fleets.back().id;
         state.surveyTeams.front().colonyId = sourceId;
         state.shipClasses.back().components.push_back({ShipComponentId{4}, 1});
+        // This authored dual-capability hull now has a managed instrument row.
+        initializeShipEquipmentCondition(state, state.ships.back());
         state.ships.back().fuel = 1000.0;
         for (auto& body : state.bodies) {
             if (body.id == state.colonies.back().bodyId) body.x = 100.0;
@@ -348,6 +351,9 @@ void test_replacement_fleet_waits_for_committed_return() {
     const auto sourceBody=state.colonies.at(state.colonies.size()-2).bodyId;
     state.fleets.front().currentBodyId=sourceBody;
     state.ships.front().shipClassId=state.shipClasses.back().id;
+    // The detached replacement fixture is a newly authored sensorless hull.
+    state.ships.front().equipmentCondition.clear();
+    initializeShipEquipmentCondition(state, state.ships.front());
     state.ships.front().fuel=1000.0;
     Simulation sim(state);
     auto fc=freight(state); fc.totalQuantity=200.0;

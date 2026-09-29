@@ -58,6 +58,8 @@ template <typename EnumT>
         return value >= 0 && value <= static_cast<std::int64_t>(SurveyProgramAuditKind::IssueAcknowledged);
     } else if constexpr (std::is_same_v<EnumT, FreightProgramAuditKind>) {
         return value >= 0 && value <= static_cast<std::int64_t>(FreightProgramAuditKind::IssueRaised);
+    } else if constexpr (std::is_same_v<EnumT, MaintenanceAuditKind>) {
+        return value >= 0 && value <= static_cast<std::int64_t>(MaintenanceAuditKind::IssueAcknowledged);
     } else {
         static_assert(std::is_enum_v<EnumT>, "enumFromValue requires an enum type");
         return false;
@@ -286,6 +288,10 @@ void requireFlatJsonObjectShape(const std::string_view json) {
             return "survey_program_audit";
         } else if constexpr (std::is_same_v<Event, FreightProgramAuditEvent>) {
             return "freight_program_audit";
+        } else if constexpr (std::is_same_v<Event, EquipmentDutyUsedEvent>) {
+            return "equipment_duty_used";
+        } else if constexpr (std::is_same_v<Event, MaintenanceProgramAuditEvent>) {
+            return "maintenance_program_audit";
         } else if constexpr (std::is_same_v<Event, CommandRejectedEvent>) {
             return "command_rejected";
         }
@@ -356,6 +362,16 @@ void requireFlatJsonObjectShape(const std::string_view json) {
             object["shipment_number"] = event.shipmentNumber;
             object["amount"] = checkedFiniteDoubleFromPayload(event.amount, "event.amount");
             object["detail"] = event.detail;
+        } else if constexpr (std::is_same_v<Event, EquipmentDutyUsedEvent>) {
+            object["fleet_id"] = idValue(event.fleetId); object["ship_id"] = idValue(event.shipId);
+            object["component_id"] = idValue(event.componentId);
+            object["survey_program_id"] = event.surveyProgramId ? idValue(*event.surveyProgramId) : 0;
+            object["duty"] = checkedFiniteDoubleFromPayload(event.duty,"event.duty");
+            object["before_duty"] = checkedFiniteDoubleFromPayload(event.beforeUsedDuty,"event.before_duty");
+            object["after_duty"] = checkedFiniteDoubleFromPayload(event.afterUsedDuty,"event.after_duty");
+        } else if constexpr (std::is_same_v<Event, MaintenanceProgramAuditEvent>) {
+            object["program_id"] = idValue(event.programId); object["kind"] = enumValue(event.kind);
+            object["job_number"] = event.jobNumber; object["detail"] = event.detail;
         } else if constexpr (std::is_same_v<Event, CommandRejectedEvent>) {
             object["reason"] = event.reason;
         }
@@ -426,6 +442,16 @@ void requireFlatJsonObjectShape(const std::string_view json) {
                 << ",\"shipment_number\":" << event.shipmentNumber
                 << ",\"amount\":" << numberToJson(event.amount, "event.amount")
                 << ",\"detail\":" << quoteJson(event.detail);
+        } else if constexpr (std::is_same_v<Event, EquipmentDutyUsedEvent>) {
+            out << "\"fleet_id\":" << idValue(event.fleetId) << ",\"ship_id\":" << idValue(event.shipId)
+                << ",\"component_id\":" << idValue(event.componentId)
+                << ",\"survey_program_id\":" << (event.surveyProgramId ? idValue(*event.surveyProgramId) : 0)
+                << ",\"duty\":" << numberToJson(event.duty,"event.duty")
+                << ",\"before_duty\":" << numberToJson(event.beforeUsedDuty,"event.before_duty")
+                << ",\"after_duty\":" << numberToJson(event.afterUsedDuty,"event.after_duty");
+        } else if constexpr (std::is_same_v<Event, MaintenanceProgramAuditEvent>) {
+            out << "\"program_id\":" << idValue(event.programId) << ",\"kind\":" << enumValue(event.kind)
+                << ",\"job_number\":" << event.jobNumber << ",\"detail\":" << quoteJson(event.detail);
         } else if constexpr (std::is_same_v<Event, CommandRejectedEvent>) {
             out << "\"reason\":" << quoteJson(event.reason);
         }
@@ -576,6 +602,18 @@ void requireFlatJsonObjectShape(const std::string_view json) {
         };
     }
 
+    if (eventType == "equipment_duty_used") {
+        const auto id = requireInt64("survey_program_id");
+        if (id < 0) throw std::runtime_error("Invalid optional survey ID in duty event");
+        return EquipmentDutyUsedEvent{FleetId{requireInt64("fleet_id")},ShipId{requireInt64("ship_id")},
+            ShipComponentId{requireInt64("component_id")},id==0?std::nullopt:std::optional{SurveyProgramId{id}},
+            requireDouble("duty"),requireDouble("before_duty"),requireDouble("after_duty")};
+    }
+    if (eventType == "maintenance_program_audit") {
+        return MaintenanceProgramAuditEvent{MaintenanceProgramId{requireInt64("program_id")},
+            enumFromValue<MaintenanceAuditKind>(requireInt64("kind")),
+            checkedIntFromPayload(requireInt64("job_number"),"event.job_number"),requireString("detail")};
+    }
     if (eventType == "command_rejected") {
         return CommandRejectedEvent{.reason = requireString("reason")};
     }
@@ -688,6 +726,18 @@ void requireFlatJsonObjectShape(const std::string_view json) {
         };
     }
 
+    if (eventType == "equipment_duty_used") {
+        const auto id = jsonInt64(payloadJson,"survey_program_id");
+        if (id < 0) throw std::runtime_error("Invalid optional survey ID in duty event");
+        return EquipmentDutyUsedEvent{FleetId{jsonInt64(payloadJson,"fleet_id")},ShipId{jsonInt64(payloadJson,"ship_id")},
+            ShipComponentId{jsonInt64(payloadJson,"component_id")},id==0?std::nullopt:std::optional{SurveyProgramId{id}},
+            jsonDouble(payloadJson,"duty"),jsonDouble(payloadJson,"before_duty"),jsonDouble(payloadJson,"after_duty")};
+    }
+    if (eventType == "maintenance_program_audit") {
+        return MaintenanceProgramAuditEvent{MaintenanceProgramId{jsonInt64(payloadJson,"program_id")},
+            enumFromValue<MaintenanceAuditKind>(jsonInt64(payloadJson,"kind")),
+            checkedIntFromPayload(jsonInt64(payloadJson,"job_number"),"event.job_number"),jsonString(payloadJson,"detail")};
+    }
     if (eventType == "command_rejected") {
         return CommandRejectedEvent{.reason = jsonString(payloadJson, "reason")};
     }

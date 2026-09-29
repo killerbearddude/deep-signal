@@ -1,4 +1,5 @@
 #include "sim/ShipDesignRules.h"
+#include "sim/EquipmentServiceRules.h"
 
 #include <algorithm>
 #include <cmath>
@@ -17,12 +18,6 @@ namespace {
     return it == catalog.end() ? nullptr : &*it;
 }
 
-[[nodiscard]] const ShipClass* classById(const GameState& state, const ShipClassId id) {
-    const auto it = std::find_if(state.shipClasses.begin(), state.shipClasses.end(),
-                                 [id](const ShipClass& row) { return row.id == id; });
-    return it == state.shipClasses.end() ? nullptr : &*it;
-}
-
 [[nodiscard]] ProcessedMaterialSet cost(const double alloys, const double electronics,
                                         const double reactorFuel, const double composites) {
     ProcessedMaterialSet result;
@@ -37,7 +32,7 @@ namespace {
 
 bool validShipComponentDefinition(const ShipComponentDefinition& definition) noexcept {
     if (!definition.id || definition.name.empty() ||
-        definition.kind < ShipComponentKind::Hull || definition.kind > ShipComponentKind::CargoBay ||
+        definition.kind < ShipComponentKind::Hull || definition.kind > ShipComponentKind::Workshop ||
         !nonnegativeFinite(definition.mass) || !nonnegativeFinite(definition.volume) ||
         !nonnegativeFinite(definition.internalVolumeCapacity) ||
         !nonnegativeFinite(definition.powerGeneration) || !nonnegativeFinite(definition.powerDemand) ||
@@ -48,6 +43,13 @@ bool validShipComponentDefinition(const ShipComponentDefinition& definition) noe
     }
     for (const double amount : definition.buildCost.amount) {
         if (!nonnegativeFinite(amount)) return false;
+    }
+    if (definition.serviceProfile && (!validServiceProfile(*definition.serviceProfile) ||
+        definition.kind != ShipComponentKind::SurveySensor || definition.surveyCapability <= 0.0)) return false;
+    std::unordered_set<std::int64_t> families;
+    for (const auto& rate : definition.workshopRates) {
+        if (definition.kind != ShipComponentKind::Workshop || !rate.familyId ||
+            !nonnegativeFinite(rate.teamWorkdaysPerDay) || !families.insert(rate.familyId.value).second) return false;
     }
     return definition.kind == ShipComponentKind::Hull || definition.internalVolumeCapacity == 0.0;
 }
@@ -78,7 +80,21 @@ ShipDesignEvaluation evaluateShipDesign(const std::vector<ShipComponentDefinitio
         result.surveyCapability += definition->surveyCapability * count;
         result.cargoCapacity += definition->cargoCapacity * count;
         result.cargoHandlingPerDay += definition->cargoHandlingPerDay * count;
+        for (const auto& rate : definition->workshopRates) {
+            auto row = std::find_if(result.workshopRates.begin(), result.workshopRates.end(),
+                                   [&](const auto& r) { return r.familyId == rate.familyId; });
+            if (row == result.workshopRates.end()) result.workshopRates.push_back({rate.familyId, rate.teamWorkdaysPerDay * count});
+            else row->teamWorkdaysPerDay += rate.teamWorkdaysPerDay * count;
+        }
         result.buildPoints += definition->buildPoints * count;
+        if (definition->serviceProfile) {
+            const auto& profile=*definition->serviceProfile;
+            if (!std::isfinite(count*profile.dutyCapacity*profile.teamWorkdaysPerDuty) ||
+                std::any_of(profile.materialsPerDuty.amount.begin(),profile.materialsPerDuty.amount.end(),
+                    [&](double amount){return !std::isfinite(count*profile.dutyCapacity*amount);})) {
+                result.constraints.push_back("Derived service requirements exceed finite limits");
+            }
+        }
         for (std::size_t i = 0; i < processedMaterialCount(); ++i) {
             result.buildCost.amount[i] += definition->buildCost.amount[i] * count;
         }
@@ -92,6 +108,8 @@ ShipDesignEvaluation evaluateShipDesign(const std::vector<ShipComponentDefinitio
         !nonnegativeFinite(result.powerDemand) || !nonnegativeFinite(result.propellantCapacity) ||
         !nonnegativeFinite(result.surveyCapability) || !nonnegativeFinite(result.cargoCapacity) ||
         !nonnegativeFinite(result.cargoHandlingPerDay) || !nonnegativeFinite(result.buildPoints) ||
+        std::any_of(result.workshopRates.begin(), result.workshopRates.end(),
+                    [](const auto& r) { return !nonnegativeFinite(r.teamWorkdaysPerDay); }) ||
         std::any_of(result.buildCost.amount.begin(), result.buildCost.amount.end(),
                     [](double amount) { return !nonnegativeFinite(amount); })) {
         result.constraints.push_back("Derived design values exceed finite limits");
@@ -103,19 +121,9 @@ ShipDesignEvaluation evaluateShipDesign(const std::vector<ShipComponentDefinitio
     return result;
 }
 
-FleetSurveyEvaluation evaluateFleetSurvey(const GameState& state, const Fleet& fleet) {
-    FleetSurveyEvaluation result;
-    for (const ShipId shipId : fleet.shipIds) {
-        const auto ship = std::find_if(state.ships.begin(), state.ships.end(),
-                                       [shipId](const Ship& row) { return row.id == shipId; });
-        if (ship == state.ships.end()) continue;
-        const ShipClass* shipClass = classById(state, ship->shipClassId);
-        if (shipClass == nullptr) continue;
-        const ShipDesignEvaluation design = evaluateShipDesign(state.shipComponents, shipClass->components);
-        result.installedCapability += design.surveyCapability;
-        if (design.powerMargin >= 0.0) result.operationalCapability += design.surveyCapability;
-    }
-    return result;
+FleetSurveyEvaluation evaluateFleetSurvey(const GameState& state, const Fleet& fleet, double requiredDuty) {
+    const auto duty = prepareSurveyDuty(state, fleet, requiredDuty);
+    return {duty.nominalCapability, duty.poweredCapability, duty.usableCapability};
 }
 
 std::vector<ShipComponentDefinition> standardShipComponentCatalog() {
@@ -132,14 +140,28 @@ std::vector<ShipComponentDefinition> standardShipComponentCatalog() {
         ShipComponentDefinition{.id = ShipComponentId{4}, .name = "Wide-Area Survey Array",
             .kind = ShipComponentKind::SurveySensor, .mass = 30.0, .volume = 80.0,
             .powerDemand = 40.0, .surveyCapability = 1.0,
-            .buildCost = cost(0.0, 40.0, 0.0, 0.0), .buildPoints = 70.0},
+            .buildCost = cost(0.0, 40.0, 0.0, 0.0), .buildPoints = 70.0,
+            .serviceProfile = EquipmentServiceProfile{EquipmentFamilyId{1}, 120.0, 0.2, cost(0.0, 0.5, 0.0, 0.5)}},
         ShipComponentDefinition{.id = ShipComponentId{5}, .name = "General Ship Systems",
             .kind = ShipComponentKind::Utility, .mass = 40.0, .volume = 50.0,
             .powerDemand = 20.0, .buildCost = cost(20.0, 10.0, 0.0, 20.0), .buildPoints = 50.0},
         ShipComponentDefinition{.id = ShipComponentId{6}, .name = "Standard Cargo Bay",
             .kind = ShipComponentKind::CargoBay, .mass = 60.0, .volume = 200.0,
             .powerDemand = 20.0, .cargoCapacity = 100.0, .cargoHandlingPerDay = 25.0,
-            .buildCost = cost(40.0, 10.0, 0.0, 20.0), .buildPoints = 60.0}
+            .buildCost = cost(40.0, 10.0, 0.0, 20.0), .buildPoints = 60.0},
+        ShipComponentDefinition{.id = ShipComponentId{7}, .name = "Specialist Survey Array",
+            .kind = ShipComponentKind::SurveySensor, .mass = 30.0, .volume = 80.0,
+            .powerDemand = 40.0, .surveyCapability = 1.0,
+            .buildCost = cost(0.0, 40.0, 0.0, 0.0), .buildPoints = 70.0,
+            .serviceProfile = EquipmentServiceProfile{EquipmentFamilyId{2}, 120.0, 0.2, cost(0.0, 0.5, 0.0, 0.5)}},
+        ShipComponentDefinition{.id = ShipComponentId{8}, .name = "Standard Instrument Workshop",
+            .kind = ShipComponentKind::Workshop, .mass = 100.0, .volume = 200.0, .powerDemand = 30.0,
+            .buildCost = cost(40.0, 20.0, 0.0, 20.0), .buildPoints = 100.0,
+            .workshopRates = {{EquipmentFamilyId{1}, 1.0}}},
+        ShipComponentDefinition{.id = ShipComponentId{9}, .name = "Specialist Instrument Workshop",
+            .kind = ShipComponentKind::Workshop, .mass = 100.0, .volume = 200.0, .powerDemand = 30.0,
+            .buildCost = cost(40.0, 20.0, 0.0, 20.0), .buildPoints = 100.0,
+            .workshopRates = {{EquipmentFamilyId{2}, 1.0}}}
     };
 }
 
@@ -151,6 +173,11 @@ std::vector<ShipComponentInstall> referenceSurveyCutterComponents() {
 std::vector<ShipComponentInstall> referenceFreighterComponents() {
     return {{ShipComponentId{1}, 1}, {ShipComponentId{2}, 1}, {ShipComponentId{3}, 1},
             {ShipComponentId{5}, 1}, {ShipComponentId{6}, 2}};
+}
+
+std::vector<ShipComponentInstall> referenceTenderComponents() {
+    return {{ShipComponentId{1}, 1}, {ShipComponentId{2}, 1}, {ShipComponentId{3}, 1},
+            {ShipComponentId{5}, 1}, {ShipComponentId{8}, 1}};
 }
 
 } // namespace deep

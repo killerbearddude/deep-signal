@@ -1,3 +1,4 @@
+#include "sim/EquipmentServiceRules.h"
 #include "sim/Commands.h"
 #include "sim/GameStateValidation.h"
 #include "sim/ScenarioFactory.h"
@@ -242,6 +243,7 @@ void testSurveyUsesInstalledPoweredEquipment() {
         const deep::FleetId fleetId{state.ids.nextFleetId++};
         state.ships.push_back(deep::Ship{.id = shipId, .shipClassId = state.shipClasses.front().id,
             .name = "Survey proof", .fleetId = fleetId, .fuel = 0.0});
+        deep::initializeShipEquipmentCondition(state, state.ships.back());
         state.fleets.push_back(deep::Fleet{.id = fleetId, .name = "Survey proof fleet",
             .currentBodyId = target->bodyId, .destinationBodyId = std::nullopt,
             .shipIds = {shipId}, .activeOrder = {}, .queuedOrders = {},

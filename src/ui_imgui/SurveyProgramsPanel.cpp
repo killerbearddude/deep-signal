@@ -259,6 +259,23 @@ void SurveyProgramsPanel::renderEditor(const SimulationQueries& queries, Simulat
     }
     ImGui::InputDouble("Home stock floor", &draft_.policy.homeStockFloor, 1.0, 10.0, "%.2f");
     ImGui::InputDouble("Return contingency fraction", &draft_.policy.returnContingencyFraction, 0.05, 0.2, "%.2f");
+    const auto providers = queries.maintenancePrograms();
+    std::string providerLabel = "Operate without automatic service";
+    for (const auto& provider : providers) if (provider.program.id == draft_.policy.maintenanceProgramId) {
+        providerLabel = provider.program.charter.name + " (#" + std::to_string(provider.program.id.value) + ")";
+    }
+    if (ImGui::BeginCombo("Instrument service policy", providerLabel.c_str())) {
+        if (ImGui::Selectable("Operate without automatic service", !draft_.policy.maintenanceProgramId)) draft_.policy.maintenanceProgramId.reset();
+        for (const auto& provider : providers) {
+            const auto label = provider.program.charter.name + " (#" + std::to_string(provider.program.id.value) + ")";
+            if (ImGui::Selectable(label.c_str(), draft_.policy.maintenanceProgramId == provider.program.id)) draft_.policy.maintenanceProgramId = provider.program.id;
+        }
+        ImGui::EndCombo();
+    }
+    if (draft_.policy.maintenanceProgramId) {
+        ImGui::InputDouble("Remaining-duty preventive trigger (0-1)", &draft_.policy.remainingDutyTrigger, 0.05, 0.1, "%.2f");
+        ImGui::TextWrapped("Full base service holds the client until its selected worn groups are restored. A short duty envelope also requests service before a pass.");
+    }
 
     const SurveyProgramCharter charter = currentCharter();
     const SurveyProgramCharterPreview preview = queries.previewSurveyProgramCharter(charter, editingProgramId_);
@@ -296,6 +313,12 @@ void SurveyProgramsPanel::renderProgramDetail(const SurveyProgramSummary& progra
         static_cast<long long>(program.id.value), program.charterRevision);
     ImGui::Text("Lifecycle: %s", program.lifecycleName.c_str());
     ImGui::TextWrapped("Condition: %s", program.condition.c_str());
+    const auto physicalFleet = program.leasedFleetId ? program.leasedFleetId : program.charter.requestedFleetId;
+    if (physicalFleet) for (const auto& row : queries.equipmentConditions(*physicalFleet)) {
+        ImGui::Text("%s / %s: nominal %.2f, powered %.2f", row.shipName.c_str(), row.componentName.c_str(), row.nominalCapability, row.poweredCapability);
+        if (row.managed) ImGui::Text("Usable survey duty remaining: %.3f / %.3f per unit (%s)", row.remainingDuty, row.dutyCapacity, row.familyName.c_str());
+        ImGui::Text("Usable capability: one workday %.2f | complete immediate pass %.2f",row.workdayCapability,row.manualPassCapability);
+    }
     if (program.lifecycle == SurveyProgramLifecycle::Authorized && !program.leasedFleetId) {
         const SurveyProgramCharterPreview preview = queries.previewSurveyProgramCharter(program.charter, program.id);
         for (const std::string& reason : preview.waitingReasons) {

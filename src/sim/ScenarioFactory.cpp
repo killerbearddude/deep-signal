@@ -1,5 +1,6 @@
 #include "sim/ScenarioFactory.h"
 #include "sim/ShipDesignRules.h"
+#include "sim/EquipmentServiceRules.h"
 
 // Builds the deterministic mature home-system scenario used by new games and
 // tests. The scenario is hand-authored so geography, ownership, and deposits
@@ -521,7 +522,15 @@ GameState createHomeSystemScenario() {
     addDeposit(state, frontierObjectId, Mineral::Volatiles, 600'000.0, 0.3, 0.20);
 
     state.shipComponents = standardShipComponentCatalog();
-    state.ids.nextShipComponentId = 7;
+    state.ids.nextShipComponentId = 10;
+    state.equipmentFamilies = {{EquipmentFamilyId{1}, "Standard Survey Instruments"},
+                              {EquipmentFamilyId{2}, "Specialist Survey Instruments"}};
+    state.ids.nextEquipmentFamilyId = 3;
+    state.maintenanceTeams.push_back(MaintenanceTeam{
+        .id = MaintenanceTeamId{state.ids.nextMaintenanceTeamId++}, .name = "Standard Engineering Team",
+        .qualifiedFamilies = {EquipmentFamilyId{1}}, .workdaysPerDay = 1.0,
+        .location = MaintenanceTeamLocation::Colony, .colonyId = terraColonyId, .fleetId = std::nullopt
+    });
     state.shipClasses.push_back(ShipClass{
         .id = surveyCutterId,
         .name = "Survey Cutter",
@@ -608,6 +617,7 @@ GameState createDelegatedSurveyScenario() {
         .shipIds = {shipId}, .activeOrder = {}, .queuedOrders = {},
         .ownerInstitutionId = state.institutions.front().id
     });
+    initializeShipEquipmentCondition(state, state.ships.back());
     return state;
 }
 
@@ -642,6 +652,54 @@ GameState createDelegatedFreightScenario() {
         .activeOrder = {}, .queuedOrders = {},
         .ownerInstitutionId = state.institutions.front().id
     });
+    initializeShipEquipmentCondition(state, state.ships.back());
+    return state;
+}
+
+GameState createTenderMaintenanceScenario() {
+    GameState state = createDelegatedSurveyScenario();
+    for (auto& component : state.shipComponents) if (component.serviceProfile) component.serviceProfile->dutyCapacity = 10.0;
+    auto& home = state.colonies.back();
+    home.processedStockpile.set(ProcessedMaterial::Electronics, 100.0);
+    home.processedStockpile.set(ProcessedMaterial::IndustrialComposites, 100.0);
+    state.ships.back().fuel = 1000.0;
+    state.maintenanceTeams.front().colonyId = home.id;
+    const ShipClassId cls{state.ids.nextShipClassId++};
+    state.shipClasses.push_back(ShipClass{.id=cls,.name="Reference Instrument Tender",.role=ShipRole::Freighter,
+        .basedOnClassId=std::nullopt,.components=referenceTenderComponents(),.speedKmPerDay=50.0});
+    const FleetId fleetId{state.ids.nextFleetId++};
+    const ShipId shipId{state.ids.nextShipId++};
+    state.ships.push_back(Ship{.id=shipId,.shipClassId=cls,.name="Colony Instrument Tender",.fleetId=fleetId,.fuel=1000.0});
+    initializeShipEquipmentCondition(state,state.ships.back());
+    state.fleets.push_back(Fleet{.id=fleetId,.name="Tender Support Fleet",.currentBodyId=home.bodyId,
+        .destinationBodyId=std::nullopt,.shipIds={shipId},.activeOrder={},.queuedOrders={},
+        .ownerInstitutionId=state.institutions.front().id});
+    return state;
+}
+
+GameState createMaintenanceSupplyScenario() {
+    GameState state=createTenderMaintenanceScenario();
+    const BodyId sourceBody=state.bodies.at(state.bodies.size()-2).id;
+    state.colonies.back().processedStockpile.set(ProcessedMaterial::Electronics,0.0);
+    state.colonies.back().processedStockpile.set(ProcessedMaterial::IndustrialComposites,0.0);
+    state.ships.front().equipmentCondition.front().usedDuty=10.0;
+    Colony source=state.colonies.back(); source.id=ColonyId{state.ids.nextColonyId++};
+    source.bodyId=sourceBody; source.name="Maintenance Parts Source"; source.processedStockpile={};
+    source.processedStockpile.set(ProcessedMaterial::Electronics,20.0);
+    source.processedStockpile.set(ProcessedMaterial::IndustrialComposites,20.0);
+    source.processedStockpile.set(ProcessedMaterial::Propellant,1000.0);
+    state.colonies.push_back(source);
+    for(int i=0;i<2;++i) {
+        const FleetId fleetId{state.ids.nextFleetId++}; const ShipId shipId{state.ids.nextShipId++};
+        state.ships.push_back(Ship{.id=shipId,.shipClassId=state.shipClasses.at(1).id,
+            .name=i==0?"Electronics Freighter":"Composites Freighter",.fleetId=fleetId,.fuel=1000.0});
+        initializeShipEquipmentCondition(state,state.ships.back());
+        state.fleets.push_back(Fleet{.id=fleetId,.name=i==0?"Electronics Delivery Fleet":"Composites Delivery Fleet",
+            .currentBodyId=sourceBody,.destinationBodyId=std::nullopt,.shipIds={shipId},.activeOrder={},.queuedOrders={},
+            .ownerInstitutionId=state.institutions.front().id});
+    }
+    // Keep home identity explicit: colony order is meaningful, so callers use
+    // this fixture's second-last home and last source without sorting either.
     return state;
 }
 

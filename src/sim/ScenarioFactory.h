@@ -23,4 +23,11 @@ namespace deep {
 // source stock and a separate receiving survey fleet/team waiting for supply.
 [[nodiscard]] GameState createDelegatedFreightScenario();
 
+// Isolated ten-duty instrument, existing-colony tender and finite engineer.
+// No programs are pre-authorized; source stock supports independent arithmetic.
+[[nodiscard]] GameState createTenderMaintenanceScenario();
+// Same service colony with empty parts bins and two real remote freighters,
+// each able to deliver one recipe ingredient after explicit authorization.
+[[nodiscard]] GameState createMaintenanceSupplyScenario();
+
 } // namespace deep

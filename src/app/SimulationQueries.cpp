@@ -13,6 +13,7 @@
 #include "sim/SurveyProgramRules.h"
 #include "sim/SurveyProgramExecution.h"
 #include "sim/FreightProgramRules.h"
+#include "sim/EquipmentServiceRules.h"
 #include "sim/TransitPlanning.h"
 
 #include <algorithm>
@@ -918,6 +919,10 @@ void addProcessingWeight(ProcessingShares& weights, const ProcessedMaterial mate
             return "survey_program";
         } else if constexpr (std::is_same_v<Event, FreightProgramAuditEvent>) {
             return "freight_program";
+        } else if constexpr (std::is_same_v<Event, EquipmentDutyUsedEvent>) {
+            return "equipment_duty";
+        } else if constexpr (std::is_same_v<Event, MaintenanceProgramAuditEvent>) {
+            return "maintenance_program";
         } else if constexpr (std::is_same_v<Event, CommandRejectedEvent>) {
             return "command_rejected";
         }
@@ -962,6 +967,10 @@ void addProcessingWeight(ProcessingShares& weights, const ProcessedMaterial mate
             out << "Survey program " << idText(event.programId.value) << ": " << event.detail;
         } else if constexpr (std::is_same_v<Event, FreightProgramAuditEvent>) {
             out << "Freight program " << idText(event.programId.value) << ": " << event.detail;
+        } else if constexpr (std::is_same_v<Event, EquipmentDutyUsedEvent>) {
+            out << "Ship " << event.shipId.value << " instrument " << event.componentId.value << " used " << event.duty << " survey duty";
+        } else if constexpr (std::is_same_v<Event, MaintenanceProgramAuditEvent>) {
+            out << "Maintenance program " << event.programId.value << ": " << event.detail;
         } else if constexpr (std::is_same_v<Event, CommandRejectedEvent>) {
             out << event.reason;
         }
@@ -1171,7 +1180,8 @@ std::vector<ShipComponentSummary> SimulationQueries::shipComponents() const {
             .surveyCapability = component.surveyCapability,
             .cargoCapacity = component.cargoCapacity,
             .cargoHandlingPerDay = component.cargoHandlingPerDay,
-            .buildCost = component.buildCost, .buildPoints = component.buildPoints
+            .buildCost = component.buildCost, .buildPoints = component.buildPoints,
+            .serviceProfile = component.serviceProfile, .workshopRates = component.workshopRates
         });
     }
     return rows;
@@ -1545,11 +1555,9 @@ std::optional<ResourceSurveyPreview> SimulationQueries::resourceSurveyPreview(co
         preview.warningText = "Fleet must be stationary to survey.";
     } else if (fleet->currentBodyId != bodyId) {
         preview.warningText = "Fleet must be at the selected body.";
-    } else if (const FleetSurveyEvaluation capability = evaluateFleetSurvey(state, *fleet);
-               capability.operationalCapability <= 0.0) {
-        preview.warningText = capability.installedCapability > 0.0
-            ? "Survey equipment is unavailable due to power deficit."
-            : "Fleet has no installed survey capability.";
+    } else if (const auto capability = prepareSurveyDuty(state, *fleet, 5.0);
+               capability.usableCapability <= 0.0) {
+        preview.warningText = capability.condition + ".";
     } else {
         preview.canSurvey = true;
         if (preview.surveyableDepositCount == 0U) {

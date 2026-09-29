@@ -1,3 +1,4 @@
+#include "sim/EquipmentServiceRules.h"
 #include "sim/Commands.h"
 #include "sim/Events.h"
 #include "sim/Minerals.h"
@@ -90,6 +91,7 @@ deep::FleetId addTestFleetAt(deep::GameState& state, const deep::BodyId bodyId) 
         .fleetId = fleetId,
         .fuel = deep::evaluateShipDesign(state.shipComponents, shipClass.components).propellantCapacity
     });
+    deep::initializeShipEquipmentCondition(state, state.ships.back());
 
     return fleetId;
 }

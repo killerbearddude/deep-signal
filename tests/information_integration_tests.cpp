@@ -1,3 +1,4 @@
+#include "sim/EquipmentServiceRules.h"
 #include "app/InformationInteractionAdapter.h"
 #include "app/SimulationQueries.h"
 #include "sim/ScenarioFactory.h"
@@ -129,6 +130,7 @@ GameState makeWorld(std::string_view label) {
         .id = ship, .shipClassId = shipClass.id, .name = std::string{label} + " ship",
         .fleetId = fleet, .fuel = deep::evaluateShipDesign(state.shipComponents, shipClass.components).propellantCapacity
     });
+    deep::initializeShipEquipmentCondition(state, state.ships.back());
     state.colonies.front().name = std::string{label} + " colony";
     return state;
 }

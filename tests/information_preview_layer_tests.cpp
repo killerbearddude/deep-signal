@@ -1,3 +1,4 @@
+#include "sim/EquipmentServiceRules.h"
 #include "app/InformationInteractionAdapter.h"
 #include "app/SimulationQueries.h"
 #include "sim/ScenarioFactory.h"
@@ -71,6 +72,7 @@ void contains(const std::string& text, const std::string_view expected) {
         .id = ship, .shipClassId = shipClass.id, .name = "Preview test ship",
         .fleetId = fleet, .fuel = deep::evaluateShipDesign(state.shipComponents, shipClass.components).propellantCapacity
     });
+    deep::initializeShipEquipmentCondition(state, state.ships.back());
     return state;
 }
 

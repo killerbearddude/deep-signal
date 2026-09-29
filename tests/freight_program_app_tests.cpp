@@ -35,7 +35,7 @@ void ownedPreviewsAndUnreadyAuthoring() {
     deep::SimulationService service{deep::createDelegatedFreightScenario()};
     deep::SimulationQueries queries{service};
     const auto catalog = queries.shipComponents();
-    require(catalog.back().cargoCapacity == 100.0 && catalog.back().cargoHandlingPerDay == 25.0,
+    require(catalog.at(5).cargoCapacity == 100.0 && catalog.at(5).cargoHandlingPerDay == 25.0,
             "catalog DTO exposes authoritative cargo bay units and rate");
     const auto classes = queries.shipClasses();
     require(classes.front().design.cargoCapacity == 0.0 && classes.front().design.buildPoints == 500.0,

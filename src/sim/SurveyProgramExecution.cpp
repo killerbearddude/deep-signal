@@ -6,6 +6,8 @@
 // physically completed visit.
 
 #include "sim/ShipDesignRules.h"
+#include "sim/EquipmentServiceRules.h"
+#include "sim/MaintenanceProgramRules.h"
 #include "sim/Simulation.h"
 #include "sim/SurveyProgramRules.h"
 #include "sim/TransitPlanning.h"
@@ -271,6 +273,7 @@ void clearTask(SurveyProgram& program) noexcept {
     program.taskPassNumber = 0;
     program.workDaysCompleted = 0;
     program.firstWorkDay = 0;
+    program.maintenanceReturn = false;
 }
 
 // An amended home takes effect only after the old committed task has reached a
@@ -375,6 +378,14 @@ void performSurveyWork(GameState& state, SurveyProgram& program, const Fleet& fl
         team.locationKind != SurveyTeamLocationKind::Fleet || team.fleetId != fleet.id ||
         evaluateFleetSurvey(state, fleet).operationalCapability <= 0.0) return;
 
+    const auto duty = prepareSurveyDuty(state, fleet, 1.0);
+    if (duty.usableCapability <= 0.0) return;
+    applySurveyDuty(state, duty);
+    for (const auto& change : duty.changes) {
+        hooks.emit(EventSeverity::Info, EquipmentDutyUsedEvent{
+            fleet.id, change.shipId, change.componentId, program.id, 1.0,
+            change.beforeUsedDuty, change.afterUsedDuty});
+    }
     if (program.workDaysCompleted == 0) program.firstWorkDay = state.date.day;
     ++program.workDaysCompleted;
     ++program.totalWorkDays;
@@ -483,6 +494,15 @@ void runAuthorizedProgram(GameState& state, SurveyProgram& program,
     if (fleet == nullptr || team == nullptr || !stationary(*fleet) || !fleet->queuedOrders.empty()) return;
     embarkAtHome(*team, *fleet, *home);
 
+    // A service return is a real paid leg while the original partial visit
+    // remains intact. Reaching home does not turn it into a completed pass.
+    if (program.maintenanceReturn) {
+        if (fleet->currentBodyId != home->bodyId) {
+            static_cast<void>(startLeg(program, *fleet, home->bodyId, hooks));
+            return;
+        }
+        program.maintenanceReturn = false;
+    }
     if (program.task == SurveyProgramTask::None && requestedAssetsDifferFromLease(program)) {
         // A quiescent amendment takes effect before selecting another sortie.
         // The old assets stay unavailable to other programs until tomorrow's
@@ -520,10 +540,19 @@ void runAuthorizedProgram(GameState& state, SurveyProgram& program,
         return;
     }
 
+    if (hooks.opening && hooks.opening->serviceHolds.contains(fleet->id.value)) return;
+    if (fleet->currentBodyId == home->bodyId && surveyServiceRequest(state, program).requested) return;
+
     if (program.task == SurveyProgramTask::Survey || program.task == SurveyProgramTask::Outbound) {
         if (!program.taskBodyId.has_value()) return;
         if (fleet->currentBodyId == *program.taskBodyId) {
             program.task = SurveyProgramTask::Survey;
+            if (prepareSurveyDuty(state, *fleet, 1.0).usableCapability <= 0.0 &&
+                program.charter.policy.maintenanceProgramId && fleet->currentBodyId != home->bodyId) {
+                program.maintenanceReturn = true;
+                static_cast<void>(startLeg(program, *fleet, home->bodyId, hooks));
+                return;
+            }
             performSurveyWork(state, program, *fleet, *team, hooks);
         } else if (fleet->currentBodyId == home->bodyId) {
             const SurveyTargetChoice preserved{
@@ -601,7 +630,7 @@ void runAuthorizedProgram(GameState& state, SurveyProgram& program,
     const Colony* home = byId(state.colonies, program.charter.homeColonyId);
     if (fleet == nullptr || home == nullptr || !stationary(*fleet)) return std::nullopt;
     if (fleet->currentBodyId != home->bodyId &&
-        (program.task == SurveyProgramTask::Return || program.task == SurveyProgramTask::None ||
+        (program.maintenanceReturn || program.task == SurveyProgramTask::Return || program.task == SurveyProgramTask::None ||
          (program.taskBodyId.has_value() && fleet->currentBodyId != *program.taskBodyId))) {
         const double back = adjustedFleetMoveFuelCost(state, *fleet, fleet->currentBodyId,
                                                       home->bodyId, state.date.day);
@@ -612,6 +641,11 @@ void runAuthorizedProgram(GameState& state, SurveyProgram& program,
                 "Return leg is blocked by the fleet's actual fuel or route conditions"
             };
         }
+    }
+    if (!surveyCharterFinished(program) && program.totalWorkDays > 0 &&
+        !program.charter.policy.maintenanceProgramId && prepareSurveyDuty(state,*fleet,1.0).usableCapability <= 0.0) {
+        return std::pair{"survey-duty:"+std::to_string(program.id.value),
+                         "Survey instrument duty exhausted; select base support or revise the operating plan"};
     }
     if (fleet->currentBodyId != home->bodyId || program.task != SurveyProgramTask::None ||
         !program.charter.policy.maxAdditionalPropellant.has_value() || surveyCharterFinished(program)) {
@@ -774,12 +808,22 @@ std::string surveyProgramExecutionCondition(const GameState& state, const Survey
         }
     }
     if (!stationary(*fleet)) return "Traveling on committed transit";
+    if (program.maintenanceReturn) {
+        const double cost = adjustedFleetMoveFuelCost(state,*fleet,fleet->currentBodyId,home->bodyId,state.date.day);
+        return !std::isfinite(cost) || fleetFuel(state,*fleet) + kFuelEpsilon < cost
+            ? "Waiting: maintenance return lacks real onboard propellant"
+            : "Returning for maintenance with partial survey work retained";
+    }
+    if (fleet->currentBodyId == home->bodyId) {
+        const auto support = surveySupportCondition(state, program);
+        if (!support.empty()) return support;
+    }
     if (program.task == SurveyProgramTask::Survey && program.taskBodyId == fleet->currentBodyId) {
         if (team->locationKind != SurveyTeamLocationKind::Fleet || team->fleetId != fleet->id) {
             return "Waiting: survey team is not aboard the fleet";
         }
         if (evaluateFleetSurvey(state, *fleet).operationalCapability <= 0.0) {
-            return "Waiting: no operational powered survey equipment";
+            return "Waiting: " + prepareSurveyDuty(state,*fleet,1.0).condition;
         }
         return "Surveying timed visit";
     }
@@ -797,7 +841,7 @@ std::string surveyProgramExecutionCondition(const GameState& state, const Survey
     if (program.lifecycle == SurveyProgramLifecycle::Closing &&
         program.closure == SurveyProgramClosure::Completed) return "Completion return reached home";
     if (evaluateFleetSurvey(state, *fleet).operationalCapability <= 0.0) {
-        return "Waiting: no operational powered survey equipment";
+        return "Waiting: " + prepareSurveyDuty(state,*fleet,1.0).condition;
     }
     if (program.task == SurveyProgramTask::None && surveyCharterFinished(program)) {
         return "Completing charter at home";
@@ -882,6 +926,9 @@ void finishSurveyProgramsDay(GameState& state, const SurveyProgramExecutionHooks
             const Fleet* fleet = byId(state.fleets, *program.leasedFleetId);
             const Colony* home = byId(state.colonies, program.charter.homeColonyId);
             if (fleet != nullptr && stationary(*fleet)) {
+                if (program.maintenanceReturn && home != nullptr && fleet->currentBodyId == home->bodyId) {
+                    program.maintenanceReturn = false;
+                }
                 if (program.lifecycle == SurveyProgramLifecycle::Suspended ||
                     (program.lifecycle == SurveyProgramLifecycle::Closing &&
                      program.closure == SurveyProgramClosure::Cancelled)) {
