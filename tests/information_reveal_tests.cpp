@@ -1,3 +1,4 @@
+#include "sim/EquipmentServiceRules.h"
 #include "app/InformationInteractionAdapter.h"
 #include "app/SimulationQueries.h"
 #include "sim/ScenarioFactory.h"
@@ -72,6 +73,7 @@ void requireCenter(const ui_imgui::StrategicMapPanel& panel, const double x, con
         .id = ship, .shipClassId = shipClass.id, .name = "Reveal ship",
         .fleetId = fleet, .fuel = deep::evaluateShipDesign(state.shipComponents, shipClass.components).propellantCapacity
     });
+    deep::initializeShipEquipmentCondition(state, state.ships.back());
     return state;
 }
 

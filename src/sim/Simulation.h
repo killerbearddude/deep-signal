@@ -30,7 +30,8 @@ struct AdvanceResult {
 
 // Applies one physically authorized resource survey to the target's still
 // uncertain deposits and returns its compact result payload. The caller must
-// validate fleet location and powered equipment, then emit the returned event
+// validate fleet location and debit the prepared operating duty separately,
+// then emit the returned event
 // once; this helper does not dispatch commands or append audit history. A body
 // with no improvable deposits yields a valid zero-information result.
 [[nodiscard]] ResourceSurveyCompletedEvent applyResourceSurveyResult(GameState& state,
@@ -95,6 +96,10 @@ private:
     CommandResult resumeFreightProgram(const ResumeFreightProgramCommand& command);
     CommandResult cancelFreightProgram(const CancelFreightProgramCommand& command);
     CommandResult acknowledgeFreightProgramIssue(const AcknowledgeFreightProgramIssueCommand& command);
+    CommandResult createMaintenanceProgram(const CreateMaintenanceProgramCommand& command);
+    CommandResult amendMaintenanceProgram(const AmendMaintenanceProgramCommand& command);
+    CommandResult setMaintenanceLifecycle(MaintenanceProgramId id, MaintenanceProgramLifecycle target);
+    CommandResult acknowledgeMaintenanceIssue(const AcknowledgeMaintenanceIssueCommand& command);
     CommandResult assignAppointment(const AssignAppointmentCommand& command);
     CommandResult setColonyProcessingPolicy(const SetColonyProcessingPolicyCommand& command);
 

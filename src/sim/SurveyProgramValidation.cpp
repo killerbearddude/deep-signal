@@ -101,12 +101,15 @@ void validateSurveyProgramState(const GameState& state) {
               program.taskPassNumber >= 0,
               "survey program task or partial work is invalid");
         if (program.task == SurveyProgramTask::None) {
+            check(!program.maintenanceReturn,"Idle survey cannot retain a maintenance detour");
             check(!program.taskBodyId.has_value() && !program.taskFleetId.has_value() &&
                   !program.taskTeamId.has_value() && !program.taskLeaderId.has_value() &&
                   program.taskPassNumber == 0 && program.workDaysCompleted == 0 &&
                   program.firstWorkDay == 0,
                   "idle survey program cannot retain active task state");
         } else {
+            if(program.maintenanceReturn) check(program.task==SurveyProgramTask::Survey || program.task==SurveyProgramTask::Outbound,
+                                               "Maintenance detour must preserve an incomplete survey visit");
             check(program.taskBodyId.has_value() && find(state.bodies, *program.taskBodyId) != nullptr &&
                   program.taskFleetId.has_value() && find(state.fleets, *program.taskFleetId) != nullptr &&
                   program.taskTeamId.has_value() && find(state.surveyTeams, *program.taskTeamId) != nullptr &&

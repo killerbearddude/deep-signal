@@ -37,6 +37,8 @@ struct SurveyProgramPolicy {
     std::optional<double> maxAdditionalPropellant = std::nullopt;
     double homeStockFloor = 0.0;
     double returnContingencyFraction = 0.0;
+    std::optional<MaintenanceProgramId> maintenanceProgramId = std::nullopt;
+    double remainingDutyTrigger = 0.25;
 };
 
 struct SurveyProgramCharter {
@@ -121,6 +123,9 @@ struct SurveyProgram {
     int workDaysCompleted = 0;
     std::int64_t firstWorkDay = 0;
     std::string lastSelectionReason{};
+    // A maintenance return preserves the original partial visit and participants.
+    // It is cleared only when home is reached, not by finishing transit elsewhere.
+    bool maintenanceReturn = false;
     std::vector<SurveyVisitReceipt> receipts{};
 
     double fuelLoaded = 0.0;

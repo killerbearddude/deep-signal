@@ -34,6 +34,9 @@ struct FleetTag;
 struct ShipyardOrderTag;
 struct SurveyProgramTag;
 struct FreightProgramTag;
+struct EquipmentFamilyTag;
+struct MaintenanceTeamTag;
+struct MaintenanceProgramTag;
 struct SurveyTeamTag;
 struct EventTag;
 
@@ -49,6 +52,9 @@ using FleetId = Id<FleetTag>;
 using ShipyardOrderId = Id<ShipyardOrderTag>;
 using SurveyProgramId = Id<SurveyProgramTag>;
 using FreightProgramId = Id<FreightProgramTag>;
+using EquipmentFamilyId = Id<EquipmentFamilyTag>;
+using MaintenanceTeamId = Id<MaintenanceTeamTag>;
+using MaintenanceProgramId = Id<MaintenanceProgramTag>;
 using SurveyTeamId = Id<SurveyTeamTag>;
 using EventId = Id<EventTag>;
 

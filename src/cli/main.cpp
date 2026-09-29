@@ -72,6 +72,12 @@ struct EventPrinter {
                   << " audit=" << static_cast<int>(event.kind)
                   << " amount=" << event.amount << ": " << event.detail << '\n';
     }
+    void operator()(const deep::EquipmentDutyUsedEvent& event) const {
+        std::cout << "  Survey duty: ship=" << event.shipId.value << " component=" << event.componentId.value << " duty=" << event.duty << '\n';
+    }
+    void operator()(const deep::MaintenanceProgramAuditEvent& event) const {
+        std::cout << "  Maintenance program " << event.programId.value << " job=" << event.jobNumber << ": " << event.detail << '\n';
+    }
 
     void operator()(const deep::CommandRejectedEvent& event) const {
         std::cout << "  Command rejected: " << event.reason << '\n';
@@ -104,6 +110,35 @@ void printAdvance(const deep::Simulation& sim, const deep::AdvanceResult& result
 // fleet return non-zero; the final location is printed but not asserted. Use the
 // regression tests for arrival correctness; exit zero alone does not prove arrival.
 int main(int argc, char** argv) {
+    if (argc == 3 && std::string_view{argv[1]} == "--write-maintenance-fixture") {
+        try {
+            deep::Simulation fixture{deep::createMaintenanceSupplyScenario()};
+            const auto& s=fixture.state();
+            const auto home=s.colonies.at(s.colonies.size()-2).id;
+            deep::MaintenanceProgramCharter support;
+            support.name="Colony instrument servicing"; support.serviceColonyId=home;
+            support.requestedTenderId=s.fleets.at(1).id; support.requestedTeamId=s.maintenanceTeams.front().id;
+            support.requestedLeaderId=s.people.front().id; support.clients={s.fleets.front().id};
+            if(!fixture.execute(deep::CreateMaintenanceProgramCommand{support}).ok) throw std::runtime_error("Provider authorization failed");
+            deep::SurveyProgramCharter survey;
+            survey.name="Survey awaiting freight-supplied service"; survey.homeColonyId=home;
+            survey.requestedFleetId=s.fleets.front().id; survey.requestedTeamId=s.surveyTeams.front().id;
+            survey.requestedLeaderId=s.people.front().id; survey.targets={{s.bodies.back().id,0,6}};
+            survey.policy.maintenanceProgramId=s.maintenancePrograms.front().id;
+            if(!fixture.execute(deep::CreateSurveyProgramCommand{survey}).ok) throw std::runtime_error("Survey authorization failed");
+            for(int i=0;i<2;++i) {
+                deep::FreightProgramCharter freight;
+                freight.name=i==0?"Supply Electronics":"Supply Composites";
+                freight.sourceColonyId=s.colonies.back().id; freight.destinationColonyId=home;
+                freight.material=i==0?deep::ProcessedMaterial::Electronics:deep::ProcessedMaterial::IndustrialComposites;
+                freight.totalQuantity=20.0; freight.requestedFleetId=s.fleets.at(static_cast<std::size_t>(i)+2).id;
+                freight.requestedLeaderId=s.people.front().id;
+                if(!fixture.execute(deep::CreateFreightProgramCommand{freight}).ok) throw std::runtime_error("Parts freight authorization failed");
+            }
+            deep::save::SaveGameRepository::save(argv[2],fixture.state());
+            std::cout<<"Wrote current-schema maintenance supply fixture: "<<argv[2]<<'\n'; return 0;
+        } catch(const std::exception& error) { std::cerr<<"Fixture export failed: "<<error.what()<<'\n'; return 1; }
+    }
     if (argc == 3 && std::string_view{argv[1]} == "--write-freight-fixture") {
         try {
             deep::Simulation fixture{deep::createDelegatedFreightScenario()};
@@ -135,7 +170,7 @@ int main(int argc, char** argv) {
         }
     }
     if (argc != 1) {
-        std::cerr << "Usage: deep_signal_cli [--write-freight-fixture PATH]\n";
+        std::cerr << "Usage: deep_signal_cli [--write-freight-fixture PATH | --write-maintenance-fixture PATH]\n";
         return 1;
     }
     deep::Simulation sim{deep::createHomeSystemScenario()};

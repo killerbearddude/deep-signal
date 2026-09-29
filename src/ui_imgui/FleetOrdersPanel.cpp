@@ -175,6 +175,12 @@ void FleetOrdersPanel::render(const SimulationQueries& queries,
 
     if (fleet.has_value()) {
         drawFleetSummary(*fleet);
+        for (const auto& equipment : queries.equipmentConditions(fleet->id)) {
+            ImGui::Text("%s / %s: nominal %.2f, powered %.2f", equipment.shipName.c_str(),equipment.componentName.c_str(),
+                        equipment.nominalCapability,equipment.poweredCapability);
+            if(equipment.managed) ImGui::Text("Usable survey duty remaining: %.3f / %.3f per unit",equipment.remainingDuty,equipment.dutyCapacity);
+            ImGui::Text("Usable capability: timed workday %.2f | immediate five-duty pass %.2f",equipment.workdayCapability,equipment.manualPassCapability);
+        }
         drawCurrentOrder(*fleet);
         drawTimelinePreview(*fleet);
         if (fleet->controllingProgram) {
@@ -182,8 +188,10 @@ void FleetOrdersPanel::render(const SimulationQueries& queries,
                 const CommandResult result = std::visit([&service](const auto id) {
                     if constexpr (std::is_same_v<decltype(id), const SurveyProgramId>) {
                         return service.execute(SuspendSurveyProgramCommand{id});
-                    } else {
+                    } else if constexpr (std::is_same_v<decltype(id), const FreightProgramId>) {
                         return service.execute(SuspendFreightProgramCommand{id});
+                    } else {
+                        return service.execute(SuspendMaintenanceProgramCommand{id});
                     }
                 }, *fleet->controllingProgram);
                 commandSucceeded_ = result.ok;
@@ -195,8 +203,10 @@ void FleetOrdersPanel::render(const SimulationQueries& queries,
                 const CommandResult result = std::visit([&service](const auto id) {
                     if constexpr (std::is_same_v<decltype(id), const SurveyProgramId>) {
                         return service.execute(CancelSurveyProgramCommand{id});
-                    } else {
+                    } else if constexpr (std::is_same_v<decltype(id), const FreightProgramId>) {
                         return service.execute(CancelFreightProgramCommand{id});
+                    } else {
+                        return service.execute(CancelMaintenanceProgramCommand{id});
                     }
                 }, *fleet->controllingProgram);
                 commandSucceeded_ = result.ok;

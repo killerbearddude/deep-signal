@@ -102,6 +102,14 @@ bool samePayload(const deep::SimEventPayload& lhs, const deep::SimEventPayload& 
                    left.leaderId == right.leaderId && left.charterRevision == right.charterRevision &&
                    left.shipmentNumber == right.shipmentNumber &&
                    almostEqual(left.amount, right.amount) && left.detail == right.detail;
+        } else if constexpr (std::is_same_v<Left, deep::EquipmentDutyUsedEvent>) {
+            return left.fleetId == right.fleetId && left.shipId == right.shipId &&
+                   left.componentId == right.componentId && left.surveyProgramId == right.surveyProgramId &&
+                   almostEqual(left.duty, right.duty) && almostEqual(left.beforeUsedDuty, right.beforeUsedDuty) &&
+                   almostEqual(left.afterUsedDuty, right.afterUsedDuty);
+        } else if constexpr (std::is_same_v<Left, deep::MaintenanceProgramAuditEvent>) {
+            return left.programId == right.programId && left.kind == right.kind &&
+                   left.jobNumber == right.jobNumber && left.detail == right.detail;
         } else if constexpr (std::is_same_v<Left, deep::CommandRejectedEvent>) {
             return left.reason == right.reason;
         }
@@ -391,6 +399,13 @@ void test_event_type_names_are_stable_schema_v1_strings() {
 }
 
 void runAllTests() {
+    // P3C operating work and service history use distinct typed envelopes.
+    requireRoundTrip(deep::EquipmentDutyUsedEvent{deep::FleetId{1},deep::ShipId{2},deep::ShipComponentId{4},
+        deep::SurveyProgramId{1},1.0,8.0,9.0}, "actual timed duty event round-trips");
+    requireRoundTrip(deep::EquipmentDutyUsedEvent{deep::FleetId{1},deep::ShipId{2},deep::ShipComponentId{4},
+        std::nullopt,5.0,0.0,5.0}, "manual duty event retains absent program identity");
+    requireRoundTrip(deep::MaintenanceProgramAuditEvent{deep::MaintenanceProgramId{1},deep::MaintenanceAuditKind::WorkPerformed,2,
+        "Engineering work at an actual colony"}, "maintenance audit and job identity round-trip");
     test_mineral_extracted_round_trips();
     test_shipyard_order_created_round_trips();
     test_ship_class_revision_created_round_trips();

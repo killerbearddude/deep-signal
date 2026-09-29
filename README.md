@@ -16,9 +16,11 @@ First buildable headless simulation slice for **Deep Signal Prototype 0.1 - Home
   timed visits, reports, and interruption-aware time advancement
 - Delegated two-colony freight programs with per-hull cargo, powered handling,
   source-only operating refueling, repeated shipments and safe cargo settlement
+- Survey-instrument duty and colony-supported tender maintenance with compatible
+  powered workshops, finite engineering teams, actual parts and daily work
 - Ship and fleet creation
 - Prototype sustained-burn fleet movement; loaded cargo does not change its fuel/time model
-- SQLite schema v14 save/load layer; older development saves are unsupported
+- SQLite schema v15 save/load layer; older development saves are unsupported
 - Full-save/full-load transactions
 - Prepared statements for value-bearing SQL
 - CLI smoke runner
@@ -29,6 +31,20 @@ First buildable headless simulation slice for **Deep Signal Prototype 0.1 - Home
 - Malformed-save rejection tests for schema singleton, enum, range, stale counter, metadata, event chronology, shipyard lifecycle, fleet-order, foreign-key, and event-payload failures
 
 ## Architecture status
+
+For the P3C inspection fixture, which starts with worn instruments and empty
+service parts bins supplied by two real single-material freight programs:
+
+```sh
+./build-p3c/deep_signal_cli --write-maintenance-fixture /tmp/deep-signal-p3c.sqlite
+```
+
+Load it and open **Maintenance / Support Programs**, **Survey Programs** and
+**Freight / Supply Programs**. Selected support holds the client while a full
+service job is active. Removing support preserves actual remaining duty; it
+does not heal the instruments. Immediate manual survey requires five duty units.
+The [P3C report](docs/architecture/p3c-implementation-report.md) maps acceptance
+requirements to implementation and test evidence.
 
 For a current-format UI inspection save of the P3B proof loop, run:
 
@@ -46,7 +62,7 @@ The project has three active CMake libraries by default:
 
 ```text
 deep_signal_sim   # pure deterministic simulation; no SQLite/UI/platform deps
-deep_signal_save  # SQLite C API repository and schema v14 mapping
+deep_signal_save  # SQLite C API repository and schema v15 mapping
 deep_signal_app   # application service wrapping simulation plus save/load
 ```
 
@@ -59,7 +75,7 @@ The simulation library now owns domain validation through `src/sim/GameStateVali
 The persistence layer is intentionally isolated under `src/save`:
 
 - `Database.*` owns the SQLite connection, prepared statements, and transactions.
-- `Schema.*` creates and validates only the active schema v14 structure.
+- `Schema.*` creates and validates only the active schema v15 structure.
 - `SaveGameRepository.*` maps `GameState` to/from SQLite rows.
 - `EventJson.*` owns event payload JSON serialization/parsing so the repository does not contain event-specific JSON grammar.
 
@@ -91,7 +107,7 @@ The source also follows the current project C++ direction:
 - no raw owning pointers,
 - warning-clean CMake targets with `-Wall -Wextra -Wpedantic -Wconversion` on GCC/Clang.
 
-## SQLite schema v14 coverage
+## SQLite schema v15 coverage
 
 The save file persists:
 
@@ -113,7 +129,7 @@ The save file persists:
 - ships,
 - typed event log rows with JSON payload text.
 
-The current writer uses a replace-all save strategy inside one write transaction. Loading uses one read transaction, runs `PRAGMA foreign_key_check`, parses integer metadata strictly as canonical text, validates enum ordinals, validates the fully assembled `GameState`, and rejects missing, duplicate, or unsupported schema metadata. Schema v14 includes `CHECK` constraints for core non-negative quantities, enum ranges, ID counters, production-order invariants, fleet-order consistency, and program references.
+The current writer uses a replace-all save strategy inside one write transaction. Loading uses one read transaction, runs `PRAGMA foreign_key_check`, parses integer metadata strictly as canonical text, validates enum ordinals, validates the fully assembled `GameState`, and rejects missing, duplicate, or unsupported schema metadata. Schema v15 includes `CHECK` constraints for core non-negative quantities, enum ranges, ID counters, production-order invariants, fleet-order consistency, and program references.
 
 ## Zero-trust hardening status
 

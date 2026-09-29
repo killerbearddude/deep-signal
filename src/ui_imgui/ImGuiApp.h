@@ -26,6 +26,7 @@
 #include "ui_imgui/StrategicMapPanel.h"
 #include "ui_imgui/SurveyProgramsPanel.h"
 #include "ui_imgui/FreightProgramsPanel.h"
+#include "ui_imgui/MaintenanceProgramsPanel.h"
 #include "ui_imgui/TimeControlPanel.h"
 
 #include <optional>
@@ -90,6 +91,7 @@ private:
     FleetOrdersPanel fleetOrdersPanel_;
     SurveyProgramsPanel surveyProgramsPanel_;
     FreightProgramsPanel freightProgramsPanel_;
+    MaintenanceProgramsPanel maintenanceProgramsPanel_;
     EventLogPanel eventLogPanel_;
     InspectorPanel inspectorPanel_;
     InformationPanel informationPanel_;

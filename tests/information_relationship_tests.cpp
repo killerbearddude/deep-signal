@@ -1,3 +1,4 @@
+#include "sim/EquipmentServiceRules.h"
 #include "app/InformationInteractionAdapter.h"
 #include "app/SimulationQueries.h"
 #include "sim/Commands.h"
@@ -71,6 +72,7 @@ void requireTarget(const InformationRelationship& row, const WorldGeneration wor
             .id = ship, .shipClassId = shipClass.id, .name = "Relationship test ship",
             .fleetId = fleet, .fuel = deep::evaluateShipDesign(state.shipComponents, shipClass.components).propellantCapacity
         });
+        deep::initializeShipEquipmentCondition(state, state.ships.back());
     }
     return state;
 }

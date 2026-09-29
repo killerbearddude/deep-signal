@@ -8,6 +8,7 @@
 #include "sim/IdTypes.h"
 #include "sim/SurveyProgram.h"
 #include "sim/FreightProgram.h"
+#include "sim/MaintenanceProgram.h"
 
 #include <cstdint>
 #include <optional>
@@ -72,9 +73,9 @@ struct CancelFleetOrderCommand {
     FleetId fleetId;
 };
 
-// Requests an immediate resource survey at the fleet's current body. P2 has no
-// survey duration; installed powered survey equipment is required. Accepted
-// commands synchronously improve deposit confidence and emit an audit event.
+// Requests an immediate resource survey at the fleet's current body. Powered
+// instruments must support five usable duty units for this complete action.
+// Accepted commands debit contributing rows once, then publish the result.
 struct ResourceSurveyCommand {
     FleetId fleetId;
     BodyId bodyId;
@@ -113,6 +114,15 @@ struct ResumeFreightProgramCommand { FreightProgramId programId; };
 // Cancels future pickups while authorizing only the declared cargo settlement.
 struct CancelFreightProgramCommand { FreightProgramId programId; };
 struct AcknowledgeFreightProgramIssueCommand { FreightProgramId programId; std::string signature; };
+
+// Standing colony-supported service intent. These commands never perform a
+// repair; stops withdraw claims while preserving already completed daily work.
+struct CreateMaintenanceProgramCommand { MaintenanceProgramCharter charter; };
+struct AmendMaintenanceProgramCommand { MaintenanceProgramId programId; MaintenanceProgramAmendment amendment; };
+struct SuspendMaintenanceProgramCommand { MaintenanceProgramId programId; };
+struct ResumeMaintenanceProgramCommand { MaintenanceProgramId programId; };
+struct CancelMaintenanceProgramCommand { MaintenanceProgramId programId; };
+struct AcknowledgeMaintenanceIssueCommand { MaintenanceProgramId programId; std::string signature; };
 
 
 // Assigns or replaces the current person responsible for one appointment slot.
@@ -158,6 +168,12 @@ using SimCommand = std::variant<
     ResumeFreightProgramCommand,
     CancelFreightProgramCommand,
     AcknowledgeFreightProgramIssueCommand,
+    CreateMaintenanceProgramCommand,
+    AmendMaintenanceProgramCommand,
+    SuspendMaintenanceProgramCommand,
+    ResumeMaintenanceProgramCommand,
+    CancelMaintenanceProgramCommand,
+    AcknowledgeMaintenanceIssueCommand,
     AssignAppointmentCommand,
     SetColonyProcessingPolicyCommand
 >;

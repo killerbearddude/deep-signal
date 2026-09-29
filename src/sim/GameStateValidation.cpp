@@ -2,6 +2,8 @@
 #include "sim/ShipDesignRules.h"
 #include "sim/SurveyProgramValidation.h"
 #include "sim/FreightProgramValidation.h"
+#include "sim/EquipmentServiceRules.h"
+#include "sim/MaintenanceProgramValidation.h"
 #include "sim/ProcessingAllocationRules.h"
 
 // Implements zero-trust validation for fully assembled simulation snapshots.
@@ -446,6 +448,22 @@ void validateEventPayload(const GameState& state, const SimEventPayload& payload
             if (event.leaderId) requireValidReference(containsId(state.people, *event.leaderId), *event.leaderId, "event freight leader");
             requireState(event.charterRevision > 0 && event.shipmentNumber >= 0 && isFinite(event.amount) && event.amount >= 0.0,
                          "freight audit numbers must be valid");
+        } else if constexpr (std::is_same_v<Event, EquipmentDutyUsedEvent>) {
+            requireValidReference(containsId(state.fleets,event.fleetId),event.fleetId,"duty event fleet");
+            requireValidReference(containsId(state.ships,event.shipId),event.shipId,"duty event ship");
+            requireValidReference(containsId(state.shipComponents,event.componentId),event.componentId,"duty event component");
+            if(event.surveyProgramId) requireValidReference(containsId(state.surveyPrograms,*event.surveyProgramId),*event.surveyProgramId,"duty event survey");
+            const auto component=std::find_if(state.shipComponents.begin(),state.shipComponents.end(),[&](const auto& r){return r.id==event.componentId;});
+            const auto ship=std::find_if(state.ships.begin(),state.ships.end(),[&](const auto& r){return r.id==event.shipId;});
+            requireState(component->serviceProfile.has_value()&&ship->fleetId==event.fleetId&&
+                         event.afterUsedDuty<=component->serviceProfile->dutyCapacity,"Duty audit must reference a managed physical hull installation within its envelope");
+            requireState(event.duty==(event.surveyProgramId?1.0:5.0)&&isFinite(event.beforeUsedDuty)&&event.beforeUsedDuty>=0.0&&
+                         isFinite(event.afterUsedDuty)&&equipmentNearlyEqual(event.afterUsedDuty-event.beforeUsedDuty,event.duty),
+                         "Operating duty audit must record the complete actual action once");
+        } else if constexpr (std::is_same_v<Event, MaintenanceProgramAuditEvent>) {
+            requireValidReference(containsId(state.maintenancePrograms,event.programId),event.programId,"maintenance audit program");
+            requireState(event.kind>=MaintenanceAuditKind::Authorized&&event.kind<=MaintenanceAuditKind::IssueAcknowledged&&
+                         event.jobNumber>=0&&!event.detail.empty(),"Maintenance audit kind/job/detail invalid");
         } else if constexpr (std::is_same_v<Event, CommandRejectedEvent>) {
             requireState(!event.reason.empty(), "command-rejected event reason must be non-empty");
         }
@@ -672,6 +690,8 @@ void validateGameState(const GameState& state) {
 
     validateSurveyProgramState(state);
     validateFreightProgramState(state);
+    validateEquipmentState(state);
+    validateMaintenanceState(state);
 
     std::int64_t previousEventId = 0;
     std::int64_t previousEventDay = 0;

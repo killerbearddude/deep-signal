@@ -37,6 +37,7 @@ struct PanelVisibility {
     bool fleetOrders = false;
     bool surveyPrograms = false;
     bool freightPrograms = false;
+    bool maintenancePrograms = false;
     bool shipyard = false;
     bool economyForecast = false;
     bool eventLog = false;

@@ -1,3 +1,4 @@
+#include "sim/EquipmentServiceRules.h"
 #include "app/SimulationQueries.h"
 #include "app/SimulationService.h"
 #include "sim/Commands.h"
@@ -111,6 +112,7 @@ deep::FleetId addTestFleetAt(deep::GameState& state, const deep::BodyId bodyId) 
         .fleetId = fleetId,
         .fuel = deep::evaluateShipDesign(state.shipComponents, shipClass.components).propellantCapacity
     });
+    deep::initializeShipEquipmentCondition(state, state.ships.back());
 
     return fleetId;
 }
@@ -1185,7 +1187,7 @@ void test_ship_design_queries_and_survey_preview_agree_with_commands() {
     deep::SimulationQueries queries{service};
     const auto catalog = queries.shipComponents();
     const auto classes = queries.shipClasses();
-    require(catalog.size() == 6 && classes.size() == 2,
+    require(catalog.size() == 9 && classes.size() == 2,
             "UI queries expose the authoritative starting catalog and revision");
     require(catalog.front().internalVolumeCapacity == 1000.0 &&
             catalog.front().buildCost.get(deep::ProcessedMaterial::StructuralAlloys) == 200.0,

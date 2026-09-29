@@ -13,7 +13,7 @@ has a ten-point daily pool. `validateGameState()` accepts the state. Schema v10
 has no order ordinal for `shipyard_orders`, so its loader's `ORDER BY id`
 reconstructs **[ID 1, ID 2]**. The original order cannot be recovered from this
 file. Historical H1B tests verified truthful reconstruction at that baseline;
-the current v14 loader rejects this development save without modifying it.
+the current v15 loader rejects this development save without modifying it.
 
 ## Provenance and reproduction
 

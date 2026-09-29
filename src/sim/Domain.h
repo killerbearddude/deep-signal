@@ -427,7 +427,35 @@ enum class ShipComponentKind {
     PropellantTank,
     SurveySensor,
     Utility,
-    CargoBay
+    CargoBay,
+    Workshop
+};
+
+// Campaign-authored compatibility identities. These do not grant technology or
+// capability; installed workshops and qualified physical teams use the IDs.
+struct EquipmentFamily {
+    EquipmentFamilyId id;
+    std::string name;
+};
+
+struct EquipmentServiceProfile {
+    EquipmentFamilyId familyId;
+    // Per installed unit: one duty is one full qualifying survey workday.
+    double dutyCapacity = 120.0;
+    double teamWorkdaysPerDuty = 0.2;
+    ProcessedMaterialSet materialsPerDuty;
+};
+
+struct WorkshopFamilyRate {
+    EquipmentFamilyId familyId;
+    double teamWorkdaysPerDay = 0.0;
+};
+
+// Exact class-installation key; repeated identical installed units share a
+// per-unit condition. The installation quantity scales repair cost and labor.
+struct EquipmentCondition {
+    ShipComponentId componentId;
+    double usedDuty = 0.0;
 };
 
 // Catalog data is authoritative. Designs install typed IDs rather than copying
@@ -448,6 +476,8 @@ struct ShipComponentDefinition {
     double cargoHandlingPerDay = 0.0;
     ProcessedMaterialSet buildCost;
     double buildPoints = 0.0;
+    std::optional<EquipmentServiceProfile> serviceProfile = std::nullopt;
+    std::vector<WorkshopFamilyRate> workshopRates{};
 };
 
 struct ShipComponentInstall {
@@ -512,6 +542,7 @@ struct Ship {
     // movement starts and must not exceed derived class tank capacity.
     double fuel = 0.0;
     std::optional<ShipCargo> cargo = std::nullopt;
+    std::vector<EquipmentCondition> equipmentCondition{};
 };
 
 // Fleet order type. Only body-to-body movement exists in Prototype 0.1.

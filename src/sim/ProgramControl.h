@@ -11,7 +11,7 @@
 
 namespace deep {
 
-using ProgramController = std::variant<SurveyProgramId, FreightProgramId>;
+using ProgramController = std::variant<SurveyProgramId, FreightProgramId, MaintenanceProgramId>;
 
 // Derives the unique controller from canonical leases. Kind is part of identity.
 [[nodiscard]] std::optional<ProgramController> controllingProgram(const GameState& state, FleetId fleetId);
@@ -37,6 +37,10 @@ struct ColonyOpeningBudget {
 struct OpeningProgramContext {
     std::unordered_set<std::int64_t> occupiedFleets;
     std::unordered_set<std::int64_t> occupiedTeams;
+    std::unordered_set<std::int64_t> occupiedMaintenanceTeams;
+    // Holds are phase-local exclusions, not additional movement ownership.
+    std::unordered_set<std::int64_t> serviceHolds;
+    std::unordered_set<std::int64_t> eligibleServiceClients;
     std::vector<ColonyOpeningBudget> stock;
 
     // Snapshots real stock and all existing leases once per opening phase.

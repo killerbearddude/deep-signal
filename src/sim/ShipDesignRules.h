@@ -24,6 +24,7 @@ struct ShipDesignEvaluation {
     double cargoCapacity = 0.0;
     // Installed rate; operational handling is zero when powerMargin < 0.
     double cargoHandlingPerDay = 0.0;
+    std::vector<WorkshopFamilyRate> workshopRates{};
     ProcessedMaterialSet buildCost;
     double buildPoints = 0.0;
     bool constructible = false;
@@ -32,6 +33,7 @@ struct ShipDesignEvaluation {
 
 struct FleetSurveyEvaluation {
     double installedCapability = 0.0;
+    double poweredCapability = 0.0;
     double operationalCapability = 0.0;
 };
 
@@ -39,12 +41,15 @@ struct FleetSurveyEvaluation {
 [[nodiscard]] ShipDesignEvaluation evaluateShipDesign(
     const std::vector<ShipComponentDefinition>& catalog,
     const std::vector<ShipComponentInstall>& components);
-[[nodiscard]] FleetSurveyEvaluation evaluateFleetSurvey(const GameState& state, const Fleet& fleet);
+// Required duty distinguishes a timed workday from an immediate complete pass.
+[[nodiscard]] FleetSurveyEvaluation evaluateFleetSurvey(const GameState& state, const Fleet& fleet,
+                                                       double requiredDuty = 1.0);
 
 // Authoritative starting catalog and immutable reference compositions. Current
 // development saves have no legacy aggregate conversion path.
 [[nodiscard]] std::vector<ShipComponentDefinition> standardShipComponentCatalog();
 [[nodiscard]] std::vector<ShipComponentInstall> referenceSurveyCutterComponents();
 [[nodiscard]] std::vector<ShipComponentInstall> referenceFreighterComponents();
+[[nodiscard]] std::vector<ShipComponentInstall> referenceTenderComponents();
 
 } // namespace deep

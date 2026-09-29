@@ -146,6 +146,14 @@ bool samePayload(const deep::SimEventPayload& lhs, const deep::SimEventPayload& 
                    left.leaderId == right.leaderId && left.charterRevision == right.charterRevision &&
                    left.shipmentNumber == right.shipmentNumber &&
                    almostEqual(left.amount, right.amount) && left.detail == right.detail;
+        } else if constexpr (std::is_same_v<Left, deep::EquipmentDutyUsedEvent>) {
+            return left.fleetId == right.fleetId && left.shipId == right.shipId &&
+                   left.componentId == right.componentId && left.surveyProgramId == right.surveyProgramId &&
+                   almostEqual(left.duty, right.duty) && almostEqual(left.beforeUsedDuty, right.beforeUsedDuty) &&
+                   almostEqual(left.afterUsedDuty, right.afterUsedDuty);
+        } else if constexpr (std::is_same_v<Left, deep::MaintenanceProgramAuditEvent>) {
+            return left.programId == right.programId && left.kind == right.kind &&
+                   left.jobNumber == right.jobNumber && left.detail == right.detail;
         } else if constexpr (std::is_same_v<Left, deep::CommandRejectedEvent>) {
             return left.reason == right.reason;
         }
@@ -164,6 +172,10 @@ void requireSameState(const deep::GameState& expected, const deep::GameState& ac
     require(expected.ids.nextInstitutionId == actual.ids.nextInstitutionId, "institution counter round-trips");
     require(expected.ids.nextPersonId == actual.ids.nextPersonId, "person counter round-trips");
     require(expected.ids.nextFreightProgramId == actual.ids.nextFreightProgramId, "freight program counter round-trips");
+    require(expected.ids.nextEquipmentFamilyId == actual.ids.nextEquipmentFamilyId &&
+            expected.ids.nextMaintenanceTeamId == actual.ids.nextMaintenanceTeamId &&
+            expected.ids.nextMaintenanceProgramId == actual.ids.nextMaintenanceProgramId,
+            "equipment and maintenance counters round-trip");
     require(expected.ids.nextShipClassId == actual.ids.nextShipClassId, "ship-class counter round-trips");
     require(expected.ids.nextShipComponentId == actual.ids.nextShipComponentId, "component counter round-trips");
     require(expected.ids.nextShipyardOrderId == actual.ids.nextShipyardOrderId, "shipyard-order counter round-trips");
@@ -375,6 +387,11 @@ void requireSameState(const deep::GameState& expected, const deep::GameState& ac
         require(left.name == right.name, "ship name round-trips");
         require(left.fleetId == right.fleetId, "ship fleet reference round-trips");
         require(almostEqual(left.fuel, right.fuel), "ship fuel round-trips");
+        require(left.equipmentCondition.size() == right.equipmentCondition.size(), "physical condition row count round-trips");
+        for(std::size_t c=0;c<left.equipmentCondition.size();++c) require(
+            left.equipmentCondition[c].componentId==right.equipmentCondition[c].componentId &&
+            almostEqual(left.equipmentCondition[c].usedDuty,right.equipmentCondition[c].usedDuty),
+            "physical equipment keys/order/duty round-trip");
         require(left.cargo.has_value() == right.cargo.has_value(), "ship cargo presence round-trips");
         if (left.cargo) require(left.cargo->programId == right.cargo->programId &&
             left.cargo->shipmentNumber == right.cargo->shipmentNumber &&
@@ -1018,7 +1035,7 @@ void test_design_revision_round_trip() {
     require(service.execute(deep::AssignShipyardBuildCommand{colonyId, original.id, 1}).ok,
             "later order binds original revision before save");
     const deep::GameState expected = service.state();
-    require(service.saveGame(path).ok, "v14 component revision snapshot saves");
+    require(service.saveGame(path).ok, "v15 component revision snapshot saves");
     const deep::GameState loaded = deep::save::SaveGameRepository::load(path);
     requireSameState(expected, loaded);
     require(loaded.shipClasses.back().components == draft &&

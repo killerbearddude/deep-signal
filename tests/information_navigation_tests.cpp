@@ -1,3 +1,4 @@
+#include "sim/EquipmentServiceRules.h"
 #include "app/InformationInteractionAdapter.h"
 #include "app/SimulationQueries.h"
 #include "sim/ScenarioFactory.h"
@@ -66,13 +67,14 @@ void require(const bool condition, const std::string_view message) {
         .id = ship, .shipClassId = shipClass.id, .name = "Navigation test ship",
         .fleetId = fleet, .fuel = deep::evaluateShipDesign(world.shipComponents, shipClass.components).propellantCapacity
     });
+    deep::initializeShipEquipmentCondition(world, world.ships.back());
     return world;
 }
 
-[[nodiscard]] std::array<bool, 13> visibility(const PanelVisibility& value) {
+[[nodiscard]] std::array<bool, 14> visibility(const PanelVisibility& value) {
     return {value.saveLoad, value.timeControl, value.strategicMap, value.bodies,
         value.inspector, value.colonies, value.fleets, value.fleetOrders,
-        value.surveyPrograms, value.freightPrograms, value.shipyard, value.economyForecast, value.eventLog};
+        value.surveyPrograms, value.freightPrograms, value.shipyard, value.economyForecast, value.eventLog, value.maintenancePrograms};
 }
 
 struct Fixture {

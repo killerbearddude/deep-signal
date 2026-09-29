@@ -235,6 +235,15 @@ void ShipyardPanel::renderDesignEditor(const SimulationQueries& queries, Simulat
             catalog[i].propellantCapacity, catalog[i].surveyCapability, catalog[i].buildPoints);
         ImGui::TextDisabled("Cargo %.1f normalized units | Handling %.1f units/day when powered",
             catalog[i].cargoCapacity, catalog[i].cargoHandlingPerDay);
+        if (catalog[i].serviceProfile) {
+            const auto& profile = *catalog[i].serviceProfile;
+            ImGui::TextDisabled("Survey duty capacity %.1f/unit | family #%lld | %.3f team-workdays/restored duty/unit",
+                profile.dutyCapacity, static_cast<long long>(profile.familyId.value), profile.teamWorkdaysPerDuty);
+        }
+        for (const auto& rate : catalog[i].workshopRates) {
+            ImGui::TextDisabled("Workshop family #%lld: %.3f team-workdays/day when powered",
+                static_cast<long long>(rate.familyId.value), rate.teamWorkdaysPerDay);
+        }
         std::ostringstream componentCost;
         for (std::size_t material = 0; material < processedMaterialCount(); ++material) {
             if (catalog[i].buildCost.amount[material] > 0.0) {
@@ -262,6 +271,10 @@ void ShipyardPanel::renderDesignEditor(const SimulationQueries& queries, Simulat
     ImGui::Text("Cargo %.1f normalized units | Installed handling %.1f units/day",
                 design.cargoCapacity, design.cargoHandlingPerDay);
     ImGui::TextWrapped("Each hull requires enough total power to operate its handling equipment. Cargo remains separate from engine tanks; payload does not yet change prototype transit time or fuel cost.");
+    for (const auto& rate : design.workshopRates) {
+        ImGui::Text("Installed workshop family #%lld: %.3f team-workdays/day; qualified team and colony supplies required",
+            static_cast<long long>(rate.familyId.value), rate.teamWorkdaysPerDay);
+    }
     ImGui::Text("Constructible: %s", design.constructible ? "Yes" : "No");
     for (std::size_t i = 0; i < processedMaterialCount(); ++i) {
         if (design.buildCost.amount[i] > 0.0) {

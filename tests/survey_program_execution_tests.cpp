@@ -1,3 +1,4 @@
+#include "sim/EquipmentServiceRules.h"
 #include "sim/Commands.h"
 #include "sim/ScenarioFactory.h"
 #include "sim/Simulation.h"
@@ -232,6 +233,7 @@ deep::GameState twoHullLongSortieFixture() {
         .fleetId = state.fleets.back().id,
         .fuel = 0.0
     });
+    deep::initializeShipEquipmentCondition(state, state.ships.back());
     state.fleets.back().shipIds.push_back(secondId);
     return state;
 }
@@ -397,6 +399,7 @@ void test_mid_visit_asset_amendment_switches_after_old_return() {
         .id = secondShipId, .shipClassId = state.shipClasses.front().id,
         .name = "Replacement survey cutter", .fleetId = secondFleetId, .fuel = 0.0
     });
+    deep::initializeShipEquipmentCondition(state, state.ships.back());
     state.fleets.push_back(deep::Fleet{
         .id = secondFleetId, .name = "Replacement survey fleet",
         .currentBodyId = homeBodyId, .destinationBodyId = std::nullopt,

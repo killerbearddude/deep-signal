@@ -1,3 +1,4 @@
+#include "sim/EquipmentServiceRules.h"
 #include "save/SaveGameRepository.h"
 #include "sim/Commands.h"
 #include "sim/GameStateValidation.h"
@@ -632,6 +633,7 @@ deep::FleetId addSingleShipFleet(deep::GameState& state, const deep::BodyId body
         .id = shipId, .shipClassId = shipClass.id,
         .name = label + " Hull", .fleetId = fleetId, .fuel = deep::evaluateShipDesign(state.shipComponents, shipClass.components).propellantCapacity
     });
+    deep::initializeShipEquipmentCondition(state, state.ships.back());
     state.fleets.push_back(deep::Fleet{
         .id = fleetId, .name = label, .currentBodyId = bodyId,
         .destinationBodyId = std::nullopt, .shipIds = {shipId},
@@ -659,10 +661,12 @@ deep::GameState perHullFuelFixture() {
         .id = lowId, .shipClassId = classId, .name = "Later payer, lower ID",
         .fleetId = fleetId, .fuel = 1'000.0
     });
+    deep::initializeShipEquipmentCondition(state, state.ships.back());
     state.ships.push_back(deep::Ship{
         .id = highId, .shipClassId = classId, .name = "First payer, higher ID",
         .fleetId = fleetId, .fuel = 25.0
     });
+    deep::initializeShipEquipmentCondition(state, state.ships.back());
     state.fleets.push_back(deep::Fleet{
         .id = fleetId, .name = "Roster fuel ordering fleet", .currentBodyId = terraId,
         .destinationBodyId = std::nullopt, .shipIds = {highId, lowId},

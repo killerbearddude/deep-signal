@@ -15,6 +15,7 @@
 #include "sim/SurveyProgram.h"
 #include "sim/ProgramControl.h"
 #include "sim/FreightProgram.h"
+#include "sim/MaintenanceProgramRules.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -167,6 +168,8 @@ struct ShipComponentSummary {
     double cargoHandlingPerDay = 0.0;
     ProcessedMaterialSet buildCost;
     double buildPoints = 0.0;
+    std::optional<EquipmentServiceProfile> serviceProfile;
+    std::vector<WorkshopFamilyRate> workshopRates;
 };
 
 struct ShipDesignDraftPreview {
@@ -497,6 +500,47 @@ struct FreightProgramCharterPreview {
     std::vector<FreightHullSummary> hulls;
 };
 
+// Owned physical equipment and support projections. No UI holds GameState rows.
+struct EquipmentConditionSummary {
+    ShipId shipId;
+    ShipComponentId componentId;
+    std::string shipName, componentName, familyName;
+    int quantity = 0;
+    bool managed = false;
+    double nominalCapability = 0.0;
+    double poweredCapability = 0.0;
+    double workdayCapability = 0.0;
+    double manualPassCapability = 0.0;
+    double usedDuty = 0.0;
+    double dutyCapacity = 0.0;
+    double remainingDuty = 0.0;
+    EquipmentServicePlan fullServiceNeed;
+};
+struct MaintenanceTeamSummary {
+    MaintenanceTeam team;
+    std::string locationName;
+    std::vector<std::string> qualifiedFamilyNames;
+    std::optional<MaintenanceProgramId> controllingProgramId;
+};
+struct MaintenanceClientSummary {
+    SurveyProgramId surveyProgramId;
+    FleetId fleetId;
+    std::string name, condition;
+    bool eligible = false;
+};
+struct MaintenanceProgramSummary {
+    MaintenanceProgram program;
+    std::string colonyName, tenderName, teamName, leaderName, condition;
+    std::vector<MaintenanceClientSummary> pendingClients;
+    std::vector<EquipmentConditionSummary> clientEquipment;
+    std::vector<WorkshopFamilyRate> installedWorkshops, operationalWorkshops;
+    MaintenanceWorkPlan nextWork;
+};
+struct MaintenanceCharterPreview {
+    bool structurallyValid = false;
+    std::string validationMessage, condition;
+};
+
 struct SurveyTimeSummary {
     std::int64_t day = 0;
     std::optional<std::int64_t> nextThirtyDay;
@@ -742,6 +786,13 @@ public:
     // Freight projections preserve stored program/roster/receipt order and use
     // the authoritative pure planner for draft readiness and handling totals.
     [[nodiscard]] std::vector<FreightProgramSummary> freightPrograms() const;
+    // Snapshot catalogs, instance condition, service history and pure advice.
+    [[nodiscard]] std::vector<EquipmentFamily> equipmentFamilies() const;
+    [[nodiscard]] std::vector<EquipmentConditionSummary> equipmentConditions(FleetId fleetId) const;
+    [[nodiscard]] std::vector<MaintenanceTeamSummary> maintenanceTeams() const;
+    [[nodiscard]] std::vector<MaintenanceProgramSummary> maintenancePrograms() const;
+    [[nodiscard]] MaintenanceCharterPreview previewMaintenanceCharter(const MaintenanceProgramCharter&,
+        std::optional<MaintenanceProgramId> amendingId = std::nullopt) const;
     [[nodiscard]] FreightProgramCharterPreview previewFreightProgramCharter(
         const FreightProgramCharter& charter,
         std::optional<FreightProgramId> amendingProgramId = std::nullopt) const;

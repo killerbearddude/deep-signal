@@ -29,6 +29,11 @@ add_library(deep_signal_sim
     src/sim/GameStateValidation.cpp
     src/sim/ProcessingAllocationRules.cpp
     src/sim/ProgramControl.cpp
+    src/sim/EquipmentServiceRules.cpp
+    src/sim/MaintenanceProgramRules.cpp
+    src/sim/MaintenanceProgramExecution.cpp
+    src/sim/MaintenanceProgramValidation.cpp
+    src/sim/SimulationMaintenance.cpp
     src/sim/FreightProgramRules.cpp
     src/sim/FreightProgramExecution.cpp
     src/sim/FreightProgramValidation.cpp
@@ -63,6 +68,8 @@ if(DEEP_SIGNAL_BUILD_SAVE)
         src/save/Database.cpp
         src/save/EventJson.cpp
         src/save/FreightPersistence.cpp
+        src/save/MaintenancePersistence.cpp
+        src/save/MaintenanceSchema.cpp
         src/save/Schema.cpp
         src/save/SaveGameRepository.cpp
     )
@@ -85,6 +92,7 @@ if(DEEP_SIGNAL_BUILD_APP)
         src/app/InformationInteractionState.cpp
         src/app/SelectionState.cpp
         src/app/SimulationQueries.cpp
+        src/app/MaintenanceQueries.cpp
         src/app/SimulationService.cpp
     )
 
@@ -120,6 +128,7 @@ if(DEEP_SIGNAL_BUILD_UI)
         src/ui_imgui/FleetPanel.cpp
         src/ui_imgui/FleetOrdersPanel.cpp
         src/ui_imgui/FreightProgramsPanel.cpp
+        src/ui_imgui/MaintenanceProgramsPanel.cpp
         src/ui_imgui/ImGuiApp.cpp
         src/ui_imgui/InformationPanel.cpp
         src/ui_imgui/InformationNavigation.cpp
@@ -248,6 +257,11 @@ if(DEEP_SIGNAL_BUILD_TESTS)
         target_link_libraries(deep_signal_freight_program_ui_tests PRIVATE deep_signal_app ${DEEP_SIGNAL_UI_DEPENDENCY_TARGET})
         target_compile_options(deep_signal_freight_program_ui_tests PRIVATE ${DEEP_SIGNAL_WARNINGS})
         add_test(NAME deep_signal_freight_program_ui_tests COMMAND deep_signal_freight_program_ui_tests)
+        add_executable(deep_signal_maintenance_ui_tests tests/maintenance_ui_tests.cpp
+            src/ui_imgui/MaintenanceProgramsPanel.cpp src/ui_imgui/OperationalWindow.cpp src/ui_imgui/ShellLayout.cpp)
+        target_link_libraries(deep_signal_maintenance_ui_tests PRIVATE deep_signal_app ${DEEP_SIGNAL_UI_DEPENDENCY_TARGET})
+        target_compile_options(deep_signal_maintenance_ui_tests PRIVATE ${DEEP_SIGNAL_WARNINGS})
+        add_test(NAME deep_signal_maintenance_ui_tests COMMAND deep_signal_maintenance_ui_tests)
     endif()
 
     # Compile the identity-only model directly so its boundary tests also run
@@ -272,6 +286,18 @@ if(DEEP_SIGNAL_BUILD_TESTS)
 
     add_executable(deep_signal_survey_program_execution_tests tests/survey_program_execution_tests.cpp)
     add_executable(deep_signal_program_control_tests tests/program_control_tests.cpp)
+    add_executable(deep_signal_maintenance_execution_tests tests/maintenance_execution_tests.cpp)
+    target_link_libraries(deep_signal_maintenance_execution_tests PRIVATE deep_signal_sim)
+    target_compile_options(deep_signal_maintenance_execution_tests PRIVATE ${DEEP_SIGNAL_WARNINGS})
+    add_test(NAME deep_signal_maintenance_execution_tests COMMAND deep_signal_maintenance_execution_tests)
+    add_executable(deep_signal_maintenance_rules_tests tests/maintenance_rules_tests.cpp)
+    target_link_libraries(deep_signal_maintenance_rules_tests PRIVATE deep_signal_sim)
+    target_compile_options(deep_signal_maintenance_rules_tests PRIVATE ${DEEP_SIGNAL_WARNINGS})
+    add_test(NAME deep_signal_maintenance_rules_tests COMMAND deep_signal_maintenance_rules_tests)
+    add_executable(deep_signal_maintenance_integration_tests tests/maintenance_integration_tests.cpp)
+    target_link_libraries(deep_signal_maintenance_integration_tests PRIVATE deep_signal_sim)
+    target_compile_options(deep_signal_maintenance_integration_tests PRIVATE ${DEEP_SIGNAL_WARNINGS})
+    add_test(NAME deep_signal_maintenance_integration_tests COMMAND deep_signal_maintenance_integration_tests)
     target_link_libraries(deep_signal_program_control_tests PRIVATE deep_signal_sim)
     target_compile_options(deep_signal_program_control_tests PRIVATE ${DEEP_SIGNAL_WARNINGS})
     add_test(NAME deep_signal_program_control_tests COMMAND deep_signal_program_control_tests)
@@ -368,6 +394,14 @@ if(DEEP_SIGNAL_BUILD_TESTS)
         target_link_libraries(deep_signal_freight_save_tests PRIVATE deep_signal_app)
         target_compile_options(deep_signal_freight_save_tests PRIVATE ${DEEP_SIGNAL_WARNINGS})
         add_test(NAME deep_signal_freight_save_tests COMMAND deep_signal_freight_save_tests)
+        add_executable(deep_signal_maintenance_save_tests tests/maintenance_save_tests.cpp)
+        target_link_libraries(deep_signal_maintenance_save_tests PRIVATE deep_signal_app)
+        target_compile_options(deep_signal_maintenance_save_tests PRIVATE ${DEEP_SIGNAL_WARNINGS})
+        add_test(NAME deep_signal_maintenance_save_tests COMMAND deep_signal_maintenance_save_tests)
+        add_executable(deep_signal_maintenance_app_tests tests/maintenance_app_tests.cpp)
+        target_link_libraries(deep_signal_maintenance_app_tests PRIVATE deep_signal_app)
+        target_compile_options(deep_signal_maintenance_app_tests PRIVATE ${DEEP_SIGNAL_WARNINGS})
+        add_test(NAME deep_signal_maintenance_app_tests COMMAND deep_signal_maintenance_app_tests)
 
         add_executable(deep_signal_forecast_tests
             tests/forecast_tests.cpp
@@ -401,6 +435,8 @@ if(DEEP_SIGNAL_BUILD_TESTS)
             src/save/SaveGameRepository.cpp
             src/save/EventJson.cpp
             src/save/FreightPersistence.cpp
+            src/save/MaintenancePersistence.cpp
+            src/save/MaintenanceSchema.cpp
         )
         target_link_libraries(deep_signal_save_contract_tests PRIVATE deep_signal_sim SQLite::SQLite3)
         target_compile_options(deep_signal_save_contract_tests PRIVATE ${DEEP_SIGNAL_WARNINGS})

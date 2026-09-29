@@ -1,7 +1,7 @@
 # Simulation state contract
 
 This document records the H1A processing-configuration, H1B save-continuity,
-P1 shipyard-intent, P2 vessel-design, P3A delegated-survey and P3B freight contracts.
+P1 shipyard-intent, P2 vessel-design, P3A delegated-survey, P3B freight and P3C service contracts.
 The in-memory `GameState` remains the authority for
 gameplay; SQLite stores explicit snapshots, not a second live world or a replay
 stream.
@@ -117,6 +117,9 @@ vectors:
 | `surveyTeams` (v13) | `survey_teams` |
 | `surveyPrograms` (v13) | `survey_programs` |
 | `freightPrograms` (v14) | `freight_programs` |
+| `equipmentFamilies` (v15) | `equipment_families` |
+| `maintenanceTeams` (v15) | `maintenance_teams` |
+| `maintenancePrograms` (v15) | `maintenance_programs` |
 | `shipClasses` | `ship_classes` |
 | `shipyardOrders` | `shipyard_orders` |
 | `ships` | `ships` |
@@ -138,44 +141,44 @@ by mineral/material enum index, while metadata and ID counters remain keyed by
 name. `event_log` remains ordered by Event ID, with strictly increasing IDs and
 nondecreasing event days validated; it has no second ordinal.
 
-The current v14 writer assigns contiguous ordinals beginning at zero. Schema
+The current v15 writer assigns contiguous ordinals beginning at zero. Schema
 constraints require non-null integer, nonnegative, unique values in each scope;
 the reader also checks storage type and contiguity before accepting a sequence.
 Every ordered read uses explicit `ORDER BY`. Missing, duplicate, fractional,
-negative, or gapped v14 order data is rejected rather than reconstructed in
+negative, or gapped v15 order data is rejected rather than reconstructed in
 legacy ID order. Empty collections are valid.
 
 ## Schema versions and destination policy
 
-H1A wrote schema v10, H1B wrote v11, P2 wrote v12, and P3A wrote v13. P3B writes and reads
-**v14 only**. Deep Signal is in active pre-release development: development
+H1A wrote schema v10, H1B wrote v11, P2 wrote v12, P3A wrote v13 and P3B wrote v14. P3C writes and reads
+**v15 only**. Deep Signal is in active pre-release development: development
 save files are disposable, and compatibility across schema versions is not
 guaranteed unless a future milestone explicitly establishes it. This is the
 current development policy, not a permanent release policy. An older file,
-including v13, fails with an unsupported-schema error before gameplay
+including v14, fails with an unsupported-schema error before gameplay
 reconstruction. Load opens it read-only and does not modify it. Save refuses to
 overwrite older or unknown schemas. No automatic migration or in-place repair
 is performed.
 
-The v14 reader requires the current table, column, key, and foreign-key shape,
+The v15 reader requires the current table, column, key, and foreign-key shape,
 complete component and material-cost rows, class revision identity, ordered
 installations, program/team references, scoped target/receipt/report ordinals,
 freight commitment/custody/history references, and all H1B ordering checks. New
 freight numeric values and enums use strict SQLite storage-type readers. A
 version marker alone does not make a file valid.
 Destination recognition compares the user schema object set and each table's
-`table_xinfo`, `foreign_key_list`, and index shape with a freshly built v14
+`table_xinfo`, `foreign_key_list`, and index shape with a freshly built v15
 reference. Save rejects user triggers even on known tables because their write
 effects are not trusted. Read-only Load may tolerate triggers on known tables.
 The check does not require byte-identical `CREATE TABLE` text or silently add
 missing columns.
 
 Save accepts a new path, a schema-empty database, or an existing compatible,
-valid v14 save. It validates its input state before opening the destination.
+valid v15 save. It validates its input state before opening the destination.
 The connection enables foreign keys before an immediate write transaction.
-Inside that transaction it verifies an existing v14 snapshot before replacement,
-creates v14 schema only if empty, replaces rows, rereads the new snapshot, and
-commits only after validation. Load opens read-only, checks v14 structure and
+Inside that transaction it verifies an existing v15 snapshot before replacement,
+creates v15 schema only if empty, replaces rows, rereads the new snapshot, and
+commits only after validation. Load opens read-only, checks v15 structure and
 foreign keys, and validates a detached snapshot within one read transaction.
 A failed replacement rolls back the previous valid save's **logical** contents
 and schema. A failed first save may leave an empty new file; neither path
@@ -193,16 +196,16 @@ references, processing-editor drafts, and window geometry are also outside the
 game snapshot. Successful Load replaces the world and clears old-world
 interaction and editor state through the existing lifecycle.
 
-The H1B ordering contract, retained in v14, supports comparisons of durable state, ordered
+The H1B ordering contract, retained in v15, supports comparisons of durable state, ordered
 children, counters, and meaningful event order when an unsaved and reloaded
 simulation continue under the **same build and same inputs**. It does not
 promise bitwise identical floating-point results across compilers, platforms,
-or build flags, or unchanged outcomes after gameplay rules change. The H1A processing checks remain in force for current v14 snapshots.
+or build flags, or unchanged outcomes after gameplay rules change. The H1A processing checks remain in force for current v15 snapshots.
 
 ## Review evidence
 
 H1A processing-allocation and H1B durable-ordering tests remain part of the
-current suite. Current persistence evidence covers v14 round trips,
+current suite. Current persistence evidence covers v15 round trips,
 same-build continuation, malformed-state rejection, transactional rollback,
 and explicit rejection of older development schemas without changing their
 source files. Historical v10/v11 fixtures remain documented as evidence of
@@ -232,8 +235,8 @@ survey equipment is required for a fleet to survey; survey role alone is not
 sufficient. P2 does not change sustained-burn transit physics.
 
 P2's v12 schema replaced class aggregate cost/BP/tank columns with component
-tables, ordered installations, and revision lineage. P3A retains those records
-in v14 alongside survey and freight program state. Old v10/v11/v12 fixtures remain useful for
+tables, ordered installations, and revision lineage. P3C retains those records
+in v15 alongside program state and physical instrument condition. Old v10/v11/v12 fixtures remain useful for
 proving current rejection is clean and leaves source files unchanged.
 
 ## P3A: delegated home-supported survey programs
@@ -381,3 +384,132 @@ P3A's existing post-closure report policy is retained separately.
 Freight does not lease a survey team. An already embarked unleased team follows
 its physical fleet. No remote support/rescue, cargo market, crew system, density
 model, final propulsion, tender maintenance, P4 or P5 mechanics are introduced.
+
+## P3C: colony-supported survey-instrument maintenance
+
+Only survey instruments have managed condition in this slice. The authoritative
+equipment-family catalog identifies Standard and Specialist Survey Instruments.
+A component service profile names its family, per-unit duty capacity, engineering
+work per restored duty, and processed-material recipe. A `Ship` stores exactly
+one condition row per managed class installation, in installation order. Its
+`usedDuty` is per unit; installation quantity multiplies restoration work and
+materials. Conditions never reside on a shared class revision. New hulls use
+the shared healthy initializer; Load reads exact current rows and rejects missing,
+duplicate, extra or mismatched conditions.
+
+One duty unit is one qualifying instrument survey workday. The nominal design
+evaluator remains independent from wear. The action-specific evaluator reports
+nominal, powered and usable capability. Each timed day debits one duty from each
+contributing managed row. The result helper debits none, so the final pass day
+is charged once. A valid zero-information pass still consumes duty. Unpowered,
+exhausted, idle, waiting, suspended and transiting equipment earns no survey work
+and consumes no duty. The retained immediate manual survey requires five duty
+units for the whole action; its preview and command use that same rule.
+
+Profiles default to 120 duty, 0.2 maintenance-team workdays and 0.5 Electronics
+plus 0.5 Industrial Composites per restored duty per installed unit. The dedicated
+proof scenario uses ten-duty profiles. Its six five-day passes consume 30 duty,
+restore 20 in four service workdays, consume ten units of each recipe material,
+and finish with ten used duty. It does not request a final unsolicited overhaul.
+
+### Workshops, teams and service authority
+
+Workshop family entries are unique within a definition. Compatible rates add
+within a powered hull; reactors cannot lend power between hulls. A program picks
+the first eligible hull in the tender's persisted roster for an unstarted group
+and pins that workshop during the group's actual work. Losing readiness pauses
+that group. Completing it can select another group/hull only on a later day.
+
+A finite maintenance team has explicit family qualifications, a nonnegative
+workdays/day rate and one physical location: colony or fleet. A standing
+maintenance charter fixes its service colony and requests an existing tender,
+team, leader, ordered clients and material policy. Missing readiness is accepted
+intent. Non-null references and policy values must be valid. Tender/team leases
+are acquired together at the actual service colony. No team is created by ship
+design, borrowed from surveying, or teleported between locations.
+
+The provider leases only its tender. Its service job records the requesting
+survey, original client/tender/team/leader, charter revisions, ordered worn
+ShipId/component targets, and the current pinned workshop. The client retains
+its survey movement lease. Targets are full-service requests, not a second
+condition inventory. Daily receipts record actual before/after duty, quantity,
+restoration, work, materials, workshop and applicable revisions. Job history
+distinguishes completed full service from explicit withdrawal.
+
+`ProgramController` now distinguishes Survey, Freight and Maintenance. The
+stable head-only merge compares creation day with that tie order, preserving all
+within-kind vector order and prior Survey/Freight behavior. Maintenance-team
+occupancy is separate from survey-team occupancy. Actual ownership is used by
+manual guards, checked movement, diagnostic labels and typed interruptions.
+
+### Client requests, detours and daily accounting
+
+Survey support is optional. At a stationary home boundary, selected support is
+requested when a worn nominally contributing row reaches the remaining-duty
+trigger, or no powered row can sustain the next complete pass or retained
+partial pass. The default trigger is 0.25. A fresh design with too short an
+envelope produces an explanation rather than zero-work jobs. Removing the
+policy permits actual remaining duty to be used and restores nothing.
+
+Actual service requires survey client control and its team, a provider that
+authorizes that fleet, and stationary client/tender/team at the service colony.
+Its body must match the client's home body. Distinct same-body colonies retain
+separate stockpiles: repair uses the service colony and refueling uses home.
+An exhausted partial field visit can make a real funded maintenance return,
+retain its target/participants/workdates, receive service, and resume through
+real outbound movement. Insufficient return fuel remains a physical wait.
+
+The opening context captures active jobs and eligible pending requests as
+transient client holds. A newly acquired client requests support before any fuel
+or dispatch action; provider work waits for the next opening snapshot. Holds
+last for the full phase, including when an older provider finishes before its
+client's dispatch turn. No repair occurs on arrival day, and no repaired client
+refuels, departs or surveys later in that same opening.
+
+For one installation group with quantity N, used duty U, labor coefficient L,
+recipe M, powered compatible workshop W, qualified team T and authorized real
+supply S, restoration is bounded by `min(U, min(W,T)/(N*L), S[j]/(N*M[j]))` for
+positive recipe entries. One provider repairs one group per opening, without
+spending leftover capacity on another group/client. Every withdrawal uses the
+common opening stock budget. Freight cargo is unavailable until actually
+unloaded, and incoming/industry-produced stock becomes program-spendable only
+next opening. There is no onboard repair inventory or additional cargo charge.
+
+Comparison tolerance is absolute `1e-9` plus relative `1e-10` for finite history
+reconciliation. Execution's final-step normalization uses relative scale only,
+so tiny genuine shortages cannot be mistaken for complete repairs. Relatively
+equivalent recipe/throughput rounding is capped at actual available resources.
+Unrepresentable positive debits or condition changes remain named execution
+limits. Materials, condition and receipt storage are prepared before mutation;
+the engine's existing exception guarantees remain in force.
+
+### Stops, reports and current snapshots
+
+Provider suspension/cancellation withdraws its active job before safe tender/team
+release; actual partial restoration and spent parts remain. Resume makes a new
+job from current wear when the client policy requests it. Client stops or support
+changes withdraw service before client lease release. Resource replacement or
+removing the active client ends the old job; later work has new provenance.
+Limits-only amendments preserve the job and historical spending. Lower caps
+never undo expenditure or prohibit Amend/Suspend/Cancel.
+
+Ordinary missing supply and periodic service are waits, not daily interruption
+spam. Changed consequential causes after work use stable typed issues through
+the common advance runner. Acknowledgment does not relax any physical limit.
+Standing providers report on global 30-day boundaries and mark 90-day reviews;
+reports snapshot policy and actual work. An audit watermark preserves the
+publication boundary: commands later on the same integer date are counted in
+the next report rather than rewriting the prior one. Closure records its final
+history, publishes a due report once and stops future provider reports. P3A's
+pre-existing closed-survey report behavior is unchanged.
+
+Schema v15 stores families/profiles/recipes/workshops, physical condition, finite
+teams/qualifications, provider/client policies, leases, ordered jobs/targets,
+receipts/materials, reports/policy snapshots/audit boundaries, issues and detours.
+Opening budgets, pending request lists, service holds and nominal totals are not
+saved. Strict readers and graph/accounting validation preserve ordering and
+same-build continuation. No v14 reader or migration is provided.
+
+This adds no engine/reactor/hull/cargo wear, random failures, remote tender
+deployment/rendezvous, rescue, shipboard supplies, cargo-to-tank conversion,
+refitting, recruitment, crew economy, final propulsion, P4 or P5 systems.

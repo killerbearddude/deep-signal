@@ -2,6 +2,7 @@
 // It has no transfer executor and creates no additional inventory authority.
 #include "sim/ProgramControl.h"
 #include "sim/FreightProgramRules.h"
+#include "sim/MaintenanceProgramRules.h"
 
 #include <algorithm>
 #include <cmath>
@@ -17,6 +18,9 @@ std::optional<ProgramController> controllingProgram(const GameState& state, cons
     for (const auto& program : state.freightPrograms) {
         if (program.leasedFleetId == fleetId) return program.id;
     }
+    for (const auto& program : state.maintenancePrograms) {
+        if (program.leasedTenderId == fleetId) return program.id;
+    }
     return std::nullopt;
 }
 
@@ -26,24 +30,33 @@ std::string programControllerLabel(const GameState& state, const ProgramControll
         if constexpr (std::is_same_v<IdType, SurveyProgramId>) {
             for (const auto& p : state.surveyPrograms) if (p.id == id) return "survey program " + p.charter.name + " (#" + std::to_string(id.value) + ")";
             return std::string("survey program ") + std::to_string(id.value);
-        } else {
+        } else if constexpr (std::is_same_v<IdType, FreightProgramId>) {
             for (const auto& p : state.freightPrograms) if (p.id == id) return "freight program " + p.charter.name + " (#" + std::to_string(id.value) + ")";
             return std::string("freight program ") + std::to_string(id.value);
+        } else {
+            for (const auto& p : state.maintenancePrograms) if (p.id == id) return "maintenance program " + p.charter.name + " (#" + std::to_string(id.value) + ")";
+            return std::string("maintenance program ") + std::to_string(id.value);
         }
     }, owner);
 }
 
 std::vector<ProgramController> programOpeningOrder(const GameState& state) {
     std::vector<ProgramController> result;
-    result.reserve(state.surveyPrograms.size() + state.freightPrograms.size());
-    std::size_t s = 0, f = 0;
-    while (s < state.surveyPrograms.size() || f < state.freightPrograms.size()) {
-        if (f == state.freightPrograms.size() ||
-            (s < state.surveyPrograms.size() && state.surveyPrograms[s].createdDay <= state.freightPrograms[f].createdDay)) {
-            result.emplace_back(state.surveyPrograms[s++].id);
-        } else {
-            result.emplace_back(state.freightPrograms[f++].id);
-        }
+    result.reserve(state.surveyPrograms.size() + state.freightPrograms.size() + state.maintenancePrograms.size());
+    std::size_t s = 0, f = 0, m = 0;
+    while (s < state.surveyPrograms.size() || f < state.freightPrograms.size() || m < state.maintenancePrograms.size()) {
+        int selected = -1;
+        std::int64_t day = 0;
+        const auto consider = [&](int kind, std::int64_t createdDay) {
+            // Strict comparison keeps Survey/Freight/Maintenance tie order.
+            if (selected == -1 || createdDay < day) { selected = kind; day = createdDay; }
+        };
+        if (s < state.surveyPrograms.size()) consider(0,state.surveyPrograms[s].createdDay);
+        if (f < state.freightPrograms.size()) consider(1,state.freightPrograms[f].createdDay);
+        if (m < state.maintenancePrograms.size()) consider(2,state.maintenancePrograms[m].createdDay);
+        if (selected == 0) result.emplace_back(state.surveyPrograms[s++].id);
+        else if (selected == 1) result.emplace_back(state.freightPrograms[f++].id);
+        else result.emplace_back(state.maintenancePrograms[m++].id);
     }
     return result;
 }
@@ -60,7 +73,8 @@ std::optional<ProgramPendingIssue> pendingProgramIssue(const GameState& state) {
                 return std::nullopt;
             };
             if constexpr (std::is_same_v<std::decay_t<decltype(id)>, SurveyProgramId>) return inspect(state.surveyPrograms);
-            else return inspect(state.freightPrograms);
+            else if constexpr (std::is_same_v<std::decay_t<decltype(id)>, FreightProgramId>) return inspect(state.freightPrograms);
+            else return inspect(state.maintenancePrograms);
         }, owner);
         if (issue) return issue;
     }
@@ -75,6 +89,17 @@ OpeningProgramContext::OpeningProgramContext(const GameState& state) {
         if (p.leasedTeamId) occupiedTeams.insert(p.leasedTeamId->value);
     }
     for (const auto& p : state.freightPrograms) if (p.leasedFleetId) occupiedFleets.insert(p.leasedFleetId->value);
+    for (const auto& p : state.maintenancePrograms) {
+        if (p.leasedTenderId) occupiedFleets.insert(p.leasedTenderId->value);
+        if (p.leasedTeamId) occupiedMaintenanceTeams.insert(p.leasedTeamId->value);
+        if (const auto* job = activeServiceJob(p)) serviceHolds.insert(job->clientFleetId.value);
+    }
+    for (const auto& p : state.surveyPrograms) {
+        if (eligibleServiceClient(state,p) && surveyServiceRequest(state,p).requested) {
+            eligibleServiceClients.insert(p.id.value);
+            serviceHolds.insert(p.leasedFleetId->value);
+        }
+    }
 }
 
 double OpeningProgramContext::available(const GameState& state, const ColonyId colonyId,

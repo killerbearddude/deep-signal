@@ -1,6 +1,6 @@
 #pragma once
 
-// Responsibility: write and read ordered snapshots in the active v14 schema.
+// Responsibility: write and read ordered snapshots in the active v15 schema.
 // This boundary knows both simulation records and SQLite; sim/ remains database
 // independent. App callers translate exceptions into user-facing results.
 
@@ -18,14 +18,14 @@ class SaveGameRepository {
 public:
     // Borrows state, which the caller must keep unchanged for the entire call.
     // Validates it before opening path. One write transaction classifies the
-    // destination, creates v14 schema only when empty, then replaces durable
-    // rows. Existing valid v14 may be replaced; older and unrecognized databases
+    // destination, creates v15 schema only when empty, then replaces durable
+    // rows. Existing valid v15 may be replaced; older and unrecognized databases
     // are rejected without replacement. A failed new-path save may leave an
     // empty file, while a failed replacement rolls back its previous contents.
     static void save(const std::filesystem::path& path, const GameState& state);
 
     // Reconstructs and returns an owned snapshot from one read transaction after
-    // checking v14 structure and foreign keys. Validates the graph
+    // checking v15 structure and foreign keys. Validates the graph
     // before returning; failure throws without exposing a partial GameState.
     // No application state is replaced here. Runtime economy telemetry starts
     // empty. Older development schema versions are rejected without modifying
@@ -36,7 +36,7 @@ public:
 #ifdef DEEP_SIGNAL_TESTING
 // Linked only into the test-specific save library. Production builds have no
 // failure switch. The next Save throws after deleting old rows and inserting
-// the v14 version marker, so tests can prove transaction rollback.
+// the v15 version marker, so tests can prove transaction rollback.
 void setSaveFailureInjectionForTest(bool enabled) noexcept;
 #endif
 

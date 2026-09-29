@@ -1,6 +1,7 @@
 #include "save/Schema.h"
+#include "save/MaintenancePersistence.h"
 
-// Responsibility: define the active v14 schema and inspect its structure.
+// Responsibility: define the active v15 schema and inspect its structure.
 // Tables mirror durable GameState records; event payloads remain inspectable JSON
 // text. Foreign keys and CHECK constraints provide a first line of validation,
 // not complete type/graph validation. Repository reconstruction and the domain
@@ -124,11 +125,11 @@ struct IndexShape {
 
 } // namespace
 
-void createSchemaV14(Database& db) {
+void createSchemaV15(Database& db) {
     db.execute(R"sql(
         CREATE TABLE schema_version (
             id INTEGER PRIMARY KEY CHECK(id = 1),
-            version INTEGER NOT NULL CHECK(version = 14)
+            version INTEGER NOT NULL CHECK(version = 15)
         );
 
         CREATE TABLE game_meta (
@@ -259,7 +260,7 @@ void createSchemaV14(Database& db) {
             id INTEGER PRIMARY KEY NOT NULL CHECK(id > 0),
             ordinal INTEGER NOT NULL UNIQUE CHECK(typeof(ordinal) = 'integer' AND ordinal >= 0),
             name TEXT NOT NULL CHECK(length(name) > 0),
-            kind INTEGER NOT NULL CHECK(kind BETWEEN 0 AND 5),
+            kind INTEGER NOT NULL CHECK(kind BETWEEN 0 AND 6),
             mass REAL NOT NULL CHECK(mass >= 0.0),
             volume REAL NOT NULL CHECK(volume >= 0.0),
             internal_volume_capacity REAL NOT NULL CHECK(internal_volume_capacity >= 0.0),
@@ -269,7 +270,8 @@ void createSchemaV14(Database& db) {
             survey_capability REAL NOT NULL CHECK(survey_capability >= 0.0),
             cargo_capacity REAL NOT NULL CHECK(cargo_capacity >= 0.0),
             cargo_handling_per_day REAL NOT NULL CHECK(cargo_handling_per_day >= 0.0),
-            build_points REAL NOT NULL CHECK(build_points >= 0.0)
+            build_points REAL NOT NULL CHECK(build_points >= 0.0),
+            service_managed INTEGER NOT NULL CHECK(service_managed IN(0,1))
         );
 
         CREATE TABLE ship_component_material_costs (
@@ -686,6 +688,7 @@ void createSchemaV14(Database& db) {
         CREATE INDEX idx_survey_program_reports_end_day ON survey_program_reports(end_day);
         CREATE INDEX idx_events_day ON event_log(day);
     )sql");
+    createMaintenanceSchema(db);
 }
 
 
@@ -715,10 +718,10 @@ std::int64_t readSchemaVersion(Database& db) {
 namespace {
 
 void requireStructure(Database& db, const bool allowKnownTableTriggers) {
-    // Compare against a fresh v14 declaration. Load permits known-table
+    // Compare against a fresh v15 declaration. Load permits known-table
     // triggers only because it is read-only; Save rejects their write effects.
     Database reference{std::filesystem::path{":memory:"}};
-    createSchemaV14(reference);
+    createSchemaV15(reference);
     const auto expectedObjects = readUserObjects(reference);
     std::vector<std::string> tables;
     for (const auto& object : expectedObjects) {
@@ -741,7 +744,7 @@ void requireStructure(Database& db, const bool allowKnownTableTriggers) {
 
 } // namespace
 
-void requireV14Structure(Database& db, const bool allowKnownTableTriggers) {
+void requireV15Structure(Database& db, const bool allowKnownTableTriggers) {
     requireStructure(db, allowKnownTableTriggers);
 }
 

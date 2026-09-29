@@ -6,6 +6,9 @@
 #include "sim/SurveyProgramExecution.h"
 #include "sim/FreightProgramExecution.h"
 #include "sim/FreightProgramRules.h"
+#include "sim/EquipmentServiceRules.h"
+#include "sim/MaintenanceProgramRules.h"
+#include "sim/MaintenanceProgramExecution.h"
 #include "sim/TransitPlanning.h"
 
 // Implements deterministic daily simulation rules and command validation.
@@ -464,6 +467,18 @@ CommandResult Simulation::execute(const SimCommand& command) {
             return cancelFreightProgram(concreteCommand);
         } else if constexpr (std::is_same_v<Command, AcknowledgeFreightProgramIssueCommand>) {
             return acknowledgeFreightProgramIssue(concreteCommand);
+        } else if constexpr (std::is_same_v<Command, CreateMaintenanceProgramCommand>) {
+            return createMaintenanceProgram(concreteCommand);
+        } else if constexpr (std::is_same_v<Command, AmendMaintenanceProgramCommand>) {
+            return amendMaintenanceProgram(concreteCommand);
+        } else if constexpr (std::is_same_v<Command, SuspendMaintenanceProgramCommand>) {
+            return setMaintenanceLifecycle(concreteCommand.programId,MaintenanceProgramLifecycle::Suspended);
+        } else if constexpr (std::is_same_v<Command, ResumeMaintenanceProgramCommand>) {
+            return setMaintenanceLifecycle(concreteCommand.programId,MaintenanceProgramLifecycle::Authorized);
+        } else if constexpr (std::is_same_v<Command, CancelMaintenanceProgramCommand>) {
+            return setMaintenanceLifecycle(concreteCommand.programId,MaintenanceProgramLifecycle::Closed);
+        } else if constexpr (std::is_same_v<Command, AcknowledgeMaintenanceIssueCommand>) {
+            return acknowledgeMaintenanceIssue(concreteCommand);
         } else if constexpr (std::is_same_v<Command, AssignAppointmentCommand>) {
             return assignAppointment(concreteCommand);
         } else if constexpr (std::is_same_v<Command, SetColonyProcessingPolicyCommand>) {
@@ -505,7 +520,9 @@ AdvanceResult Simulation::advanceDaysDetailed(const int days) {
             (std::any_of(state_.surveyPrograms.begin(), state_.surveyPrograms.end(),
                 [=](const auto& p) { return p.nextReportDay == nextDay; }) ||
              std::any_of(state_.freightPrograms.begin(), state_.freightPrograms.end(),
-                [=](const auto& p) { return p.lifecycle != FreightProgramLifecycle::Closed && p.nextReportDay == nextDay; }))) {
+                [=](const auto& p) { return p.lifecycle != FreightProgramLifecycle::Closed && p.nextReportDay == nextDay; }) ||
+             std::any_of(state_.maintenancePrograms.begin(), state_.maintenancePrograms.end(),
+                [=](const auto& p) { return p.lifecycle != MaintenanceProgramLifecycle::Closed && p.nextReportDay == nextDay; }))) {
             result.interrupted = true;
             result.stopReason = "Program reporting date limit reached";
             break;
@@ -777,15 +794,19 @@ CommandResult Simulation::resourceSurvey(const ResourceSurveyCommand& command) {
         return CommandResult::failure("Fleet must be at survey target body");
     }
 
-    const FleetSurveyEvaluation survey = evaluateFleetSurvey(state_, *fleet);
-    if (survey.operationalCapability <= 0.0) {
-        const std::string reason = survey.installedCapability > 0.0
-            ? "Survey equipment is unavailable due to power deficit"
-            : "Fleet has no installed survey capability";
+    const auto survey = prepareSurveyDuty(state_, *fleet, 5.0);
+    if (survey.usableCapability <= 0.0) {
+        const std::string reason = survey.condition;
         appendEvent(EventSeverity::Warning, CommandRejectedEvent{reason});
         return CommandResult::failure(reason);
     }
 
+    applySurveyDuty(state_, survey);
+    for (const auto& change : survey.changes) {
+        appendEvent(EventSeverity::Info, EquipmentDutyUsedEvent{
+            fleet->id, change.shipId, change.componentId, std::nullopt, 5.0,
+            change.beforeUsedDuty, change.afterUsedDuty});
+    }
     const ResourceSurveyCompletedEvent result = applyResourceSurveyResult(state_, fleet->id, command.bodyId);
     appendEvent(EventSeverity::Info, result);
     return CommandResult::success(result.depositsImproved == 0
@@ -840,6 +861,12 @@ CommandResult Simulation::amendSurveyProgram(const AmendSurveyProgramCommand& co
     if (const auto reason = validateSurveyProgramCharter(state_, command.charter)) return reject(*reason);
     if (program->charterRevision == std::numeric_limits<int>::max()) return reject("Charter revision limit reached");
     SurveyProgramCharter prepared = command.charter;
+    if (prepared.policy.maintenanceProgramId != program->charter.policy.maintenanceProgramId ||
+        prepared.requestedFleetId != program->charter.requestedFleetId ||
+        prepared.requestedTeamId != program->charter.requestedTeamId || prepared.homeColonyId != program->charter.homeColonyId) {
+        withdrawClientService(state_,program->id,"Client support or physical assignment amended",
+            MaintenanceExecutionHooks{[this](EventSeverity severity,SimEventPayload event){appendEvent(severity,std::move(event));}});
+    }
     const Fleet* leased = program->leasedFleetId ? findFleet(*program->leasedFleetId) : nullptr;
     const bool committed = program->task != SurveyProgramTask::None ||
         (leased != nullptr && leased->activeOrder.type == FleetOrderType::MoveToBody);
@@ -879,6 +906,8 @@ CommandResult Simulation::suspendSurveyProgram(const SuspendSurveyProgramCommand
         return CommandResult::failure("Survey program is not authorized or returning from completion");
     }
     program->lifecycle = SurveyProgramLifecycle::Suspended;
+    withdrawClientService(state_,program->id,"Client survey suspended",
+        MaintenanceExecutionHooks{[this](EventSeverity severity,SimEventPayload event){appendEvent(severity,std::move(event));}});
     program->closure = SurveyProgramClosure::None;
     program->issue.acknowledged = true;
     static_cast<void>(releaseSurveyProgramLease(state_, *program));
@@ -914,6 +943,8 @@ CommandResult Simulation::cancelSurveyProgram(const CancelSurveyProgramCommand& 
     }
     const Fleet* fleet = program->leasedFleetId ? findFleet(*program->leasedFleetId) : nullptr;
     const bool moving = fleet != nullptr && fleet->activeOrder.type == FleetOrderType::MoveToBody;
+    withdrawClientService(state_,program->id,"Client survey cancelled",
+        MaintenanceExecutionHooks{[this](EventSeverity severity,SimEventPayload event){appendEvent(severity,std::move(event));}});
     program->closure = SurveyProgramClosure::Cancelled;
     program->lifecycle = moving ? SurveyProgramLifecycle::Closing : SurveyProgramLifecycle::Closed;
     program->pendingHomeColonyId.reset();
@@ -1270,14 +1301,17 @@ void Simulation::simulateOneDay(std::vector<SimEvent>& emitted) {
         },
         .emit = programHooks.emit
     };
+    const MaintenanceExecutionHooks maintenanceHooks{programHooks.emit};
     // Compare only unvisited vector heads. Released assets and inbound stock
     // stay unavailable to later programs until the next opening boundary.
     for (const auto& owner : programOpeningOrder(state_)) {
         std::visit([&](auto id) {
             if constexpr (std::is_same_v<decltype(id), SurveyProgramId>) {
                 runSurveyProgramOpeningDay(state_, *findById(state_.surveyPrograms, id), opening, programHooks);
-            } else {
+            } else if constexpr (std::is_same_v<decltype(id), FreightProgramId>) {
                 runFreightProgramOpeningDay(state_, *findById(state_.freightPrograms, id), opening, freightHooks);
+            } else {
+                runMaintenanceProgramOpeningDay(state_, *findById(state_.maintenancePrograms, id), opening, maintenanceHooks);
             }
         }, owner);
     }
@@ -1292,6 +1326,7 @@ void Simulation::simulateOneDay(std::vector<SimEvent>& emitted) {
     simulateFleetMovement(emitted);
     finishSurveyProgramsDay(state_, programHooks);
     finishFreightProgramsDay(state_, freightHooks);
+    finishMaintenanceProgramsDay(state_, maintenanceHooks);
 }
 
 void Simulation::simulateMining(std::vector<SimEvent>&) {
@@ -1471,6 +1506,7 @@ void Simulation::simulateShipyards(std::vector<SimEvent>& emitted) {
                 .fleetId = fleetId,
                 .fuel = transferredPropellant
             };
+            initializeShipEquipmentCondition(state_, ship);
 
             state_.fleets.push_back(std::move(fleet));
             state_.ships.push_back(std::move(ship));
