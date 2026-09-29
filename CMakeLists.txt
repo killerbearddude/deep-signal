@@ -30,6 +30,7 @@ add_library(deep_signal_sim
     src/sim/ProcessingAllocationRules.cpp
     src/sim/Simulation.cpp
     src/sim/ScenarioFactory.cpp
+    src/sim/ShipDesignRules.cpp
     src/sim/TransitPlanning.cpp
 )
 
@@ -239,6 +240,11 @@ if(DEEP_SIGNAL_BUILD_TESTS)
     target_compile_options(deep_signal_sim_tests PRIVATE ${DEEP_SIGNAL_WARNINGS})
 
     add_test(NAME deep_signal_sim_tests COMMAND deep_signal_sim_tests)
+
+    add_executable(deep_signal_ship_design_tests tests/ship_design_tests.cpp)
+    target_link_libraries(deep_signal_ship_design_tests PRIVATE deep_signal_sim)
+    target_compile_options(deep_signal_ship_design_tests PRIVATE ${DEEP_SIGNAL_WARNINGS})
+    add_test(NAME deep_signal_ship_design_tests COMMAND deep_signal_ship_design_tests)
 
     add_executable(deep_signal_processing_allocation_rules_tests
         tests/processing_allocation_rules_tests.cpp

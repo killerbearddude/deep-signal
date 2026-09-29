@@ -130,7 +130,8 @@ struct ShipyardOrderEtaForecast {
 };
 
 // Production backlog row for one shipyard order. The forecast models colony
-// capacity as a single FIFO pool, but does not simulate material delays. The
+// capacity as a single FIFO pool and exposes an immutable design blocker, but
+// does not simulate material delays. The
 // shortage flag compares this order's entire remaining cost with current stock;
 // it neither reserves stock for predecessors nor describes a next-ship blocker.
 // queuePosition is one-based for active orders and zero for completed orders.

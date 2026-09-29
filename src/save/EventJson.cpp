@@ -1,6 +1,6 @@
 #include "save/EventJson.h"
 
-// Responsibility: encode/decode persisted event payload shapes for schema v10.
+// Responsibility: encode/decode persisted event payload shapes in the active schema.
 // This module does not own tables, transactions, or GameState reference checks.
 // Header availability selects the JSON implementation at compilation time; the
 // fallback implements only the compact flat format used by its writer and has
@@ -266,6 +266,8 @@ void requireFlatJsonObjectShape(const std::string_view json) {
             return "mineral_extracted";
         } else if constexpr (std::is_same_v<Event, ShipyardOrderCreatedEvent>) {
             return "shipyard_order_created";
+        } else if constexpr (std::is_same_v<Event, ShipClassRevisionCreatedEvent>) {
+            return "ship_class_revision_created";
         } else if constexpr (std::is_same_v<Event, ShipCompletedEvent>) {
             return "ship_completed";
         } else if constexpr (std::is_same_v<Event, FleetOrderAssignedEvent>) {
@@ -297,6 +299,10 @@ void requireFlatJsonObjectShape(const std::string_view json) {
             object["colony_id"] = idValue(event.colonyId);
             object["ship_class_id"] = idValue(event.shipClassId);
             object["quantity"] = event.quantity;
+        } else if constexpr (std::is_same_v<Event, ShipClassRevisionCreatedEvent>) {
+            object["ship_class_id"] = idValue(event.shipClassId);
+            object["base_class_id"] = event.basedOnClassId.has_value() ? idValue(*event.basedOnClassId) : 0;
+            object["revision"] = event.revision;
         } else if constexpr (std::is_same_v<Event, ShipCompletedEvent>) {
             object["order_id"] = idValue(event.orderId);
             object["colony_id"] = idValue(event.colonyId);
@@ -342,6 +348,10 @@ void requireFlatJsonObjectShape(const std::string_view json) {
                 << ",\"colony_id\":" << idValue(event.colonyId)
                 << ",\"ship_class_id\":" << idValue(event.shipClassId)
                 << ",\"quantity\":" << event.quantity;
+        } else if constexpr (std::is_same_v<Event, ShipClassRevisionCreatedEvent>) {
+            out << "\"ship_class_id\":" << idValue(event.shipClassId)
+                << ",\"base_class_id\":" << (event.basedOnClassId.has_value() ? idValue(*event.basedOnClassId) : 0)
+                << ",\"revision\":" << event.revision;
         } else if constexpr (std::is_same_v<Event, ShipCompletedEvent>) {
             out << "\"order_id\":" << idValue(event.orderId)
                 << ",\"colony_id\":" << idValue(event.colonyId)
@@ -428,6 +438,15 @@ void requireFlatJsonObjectShape(const std::string_view json) {
         };
     }
 
+    if (eventType == "ship_class_revision_created") {
+        const std::int64_t base = requireInt64("base_class_id");
+        return ShipClassRevisionCreatedEvent{
+            .shipClassId = ShipClassId{requireInt64("ship_class_id")},
+            .basedOnClassId = base == 0 ? std::nullopt : std::optional{ShipClassId{base}},
+            .revision = checkedIntFromPayload(requireInt64("revision"), "event.revision")
+        };
+    }
+
     if (eventType == "ship_completed") {
         return ShipCompletedEvent{
             .orderId = ShipyardOrderId{requireInt64("order_id")},
@@ -487,6 +506,15 @@ void requireFlatJsonObjectShape(const std::string_view json) {
             .colonyId = ColonyId{jsonInt64(payloadJson, "colony_id")},
             .shipClassId = ShipClassId{jsonInt64(payloadJson, "ship_class_id")},
             .quantity = checkedIntFromPayload(jsonInt64(payloadJson, "quantity"), "event.quantity")
+        };
+    }
+
+    if (eventType == "ship_class_revision_created") {
+        const std::int64_t base = jsonInt64(payloadJson, "base_class_id");
+        return ShipClassRevisionCreatedEvent{
+            .shipClassId = ShipClassId{jsonInt64(payloadJson, "ship_class_id")},
+            .basedOnClassId = base == 0 ? std::nullopt : std::optional{ShipClassId{base}},
+            .revision = checkedIntFromPayload(jsonInt64(payloadJson, "revision"), "event.revision")
         };
     }
 

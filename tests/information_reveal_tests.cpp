@@ -1,6 +1,7 @@
 #include "app/InformationInteractionAdapter.h"
 #include "app/SimulationQueries.h"
 #include "sim/ScenarioFactory.h"
+#include "sim/ShipDesignRules.h"
 #include "ui_imgui/ColonyPanel.h"
 #include "ui_imgui/FleetPanel.h"
 #include "ui_imgui/OperationalWindow.h"
@@ -69,7 +70,7 @@ void requireCenter(const ui_imgui::StrategicMapPanel& panel, const double x, con
     });
     state.ships.push_back(Ship{
         .id = ship, .shipClassId = shipClass.id, .name = "Reveal ship",
-        .fleetId = fleet, .fuel = shipClass.fuelCapacity
+        .fleetId = fleet, .fuel = deep::evaluateShipDesign(state.shipComponents, shipClass.components).propellantCapacity
     });
     return state;
 }

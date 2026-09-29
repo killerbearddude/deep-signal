@@ -2,6 +2,7 @@
 #include "app/SimulationService.h"
 #include "sim/Commands.h"
 #include "sim/ScenarioFactory.h"
+#include "sim/ShipDesignRules.h"
 #include "sim/TransitPlanning.h"
 
 // Self-contained regression tests for app-layer read-only query DTOs.
@@ -108,7 +109,7 @@ deep::FleetId addTestFleetAt(deep::GameState& state, const deep::BodyId bodyId) 
         .shipClassId = shipClass.id,
         .name = "Query Survey Cutter",
         .fleetId = fleetId,
-        .fuel = shipClass.fuelCapacity
+        .fuel = deep::evaluateShipDesign(state.shipComponents, shipClass.components).propellantCapacity
     });
 
     return fleetId;
@@ -1151,6 +1152,69 @@ void test_resource_survey_preview_and_queries_update_after_survey() {
             "recent survey result reports changed deposit count");
 }
 
+void test_ship_design_queries_and_survey_preview_agree_with_commands() {
+    deep::SimulationService service;
+    deep::SimulationQueries queries{service};
+    const auto catalog = queries.shipComponents();
+    const auto classes = queries.shipClasses();
+    require(catalog.size() == 5 && classes.size() == 1,
+            "UI queries expose the authoritative starting catalog and revision");
+    require(catalog.front().internalVolumeCapacity == 1000.0 &&
+            catalog.front().buildCost.get(deep::ProcessedMaterial::StructuralAlloys) == 200.0,
+            "catalog DTO exposes inspectable component capacity and cost");
+    const auto original = classes.front().components;
+    auto draft = original;
+    draft.at(2).quantity = 2;
+    const auto preview = queries.previewShipDesign(draft);
+    requireNear(preview.design.propellantCapacity, 2000.0, "draft preview derives extra tankage");
+    requireNear(preview.design.buildPoints, 580.0, "draft preview derives extra BP");
+    require(service.state().shipClasses.size() == 1 &&
+            service.state().shipClasses.front().components == original,
+            "preview does not mutate or reserve authoritative state");
+    auto warningDraft = original;
+    warningDraft.at(2).quantity = 8;
+    require(!queries.previewShipDesign(warningDraft).design.constructible &&
+            !queries.previewShipDesign(warningDraft).warnings.empty(),
+            "draft preview exposes volume overflow without disabling save intent");
+    warningDraft = original;
+    warningDraft.erase(warningDraft.begin() + 1);
+    require(queries.previewShipDesign(warningDraft).warnings.front().find("Power deficit") != std::string::npos,
+            "draft preview names power deficit");
+    warningDraft = original;
+    warningDraft.erase(warningDraft.begin() + 3);
+    require(queries.previewShipDesign(warningDraft).warnings.front().find("No survey") != std::string::npos,
+            "draft preview names missing survey capability");
+    warningDraft = original;
+    warningDraft.erase(warningDraft.begin() + 2);
+    require(queries.previewShipDesign(warningDraft).warnings.front().find("Zero propellant") != std::string::npos,
+            "draft preview names zero tankage");
+    require(service.execute(deep::CreateShipClassRevisionCommand{
+        .name = "Double Tank", .role = deep::ShipRole::Escort,
+        .basedOnClassId = classes.front().id, .components = draft
+    }).ok, "app service commits complete draft through command boundary");
+    const auto updated = queries.shipClasses();
+    require(updated.size() == 2 && updated.back().id == service.state().shipClasses.back().id &&
+            updated.back().revision == 2 && updated.back().components == draft,
+            "saved revision appears in typed UI class list");
+
+    for (int mode = 0; mode < 2; ++mode) {
+        deep::GameState state = deep::createHomeSystemScenario();
+        if (mode == 0) state.shipClasses.front().components.erase(state.shipClasses.front().components.begin() + 3);
+        else state.shipClasses.front().components.erase(state.shipClasses.front().components.begin() + 1);
+        const deep::BodyId target = bodyIdByName(state, "Helios Far Survey Object");
+        const deep::FleetId fleet = addTestFleetAt(state, target);
+        deep::SimulationService surveyService{std::move(state)};
+        const auto advice = deep::SimulationQueries{surveyService}.resourceSurveyPreview(fleet, target);
+        const auto action = surveyService.execute(deep::ResourceSurveyCommand{fleet, target});
+        require(advice.has_value() && !advice->canSurvey && !action.ok,
+                "preview and command both deny unavailable survey equipment");
+        const std::string cause = mode == 0 ? "no installed" : "power deficit";
+        require(advice->warningText.find(cause) != std::string::npos &&
+                action.message.find(cause) != std::string::npos,
+                "preview and command report the same physical survey blocker");
+    }
+}
+
 void test_sustained_burn_route_visualization_is_shallow_projected_intercept() {
     // Verifies the strategic map receives a direct sustained-burn route preview:
     // it targets the destination's projected arrival position, keeps the curve
@@ -1283,6 +1347,7 @@ int main() {
         test_body_deposit_queries_expose_confidence_status();
         test_exploration_intelligence_lists_survey_targets();
         test_resource_survey_preview_and_queries_update_after_survey();
+        test_ship_design_queries_and_survey_preview_agree_with_commands();
         test_recent_events_returns_limited_chronological_tail();
     } catch (const std::exception& ex) {
         std::cerr << "Test failure: " << ex.what() << '\n';

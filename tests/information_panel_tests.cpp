@@ -1,6 +1,7 @@
 #include "app/InformationInteractionAdapter.h"
 #include "app/SimulationQueries.h"
 #include "sim/ScenarioFactory.h"
+#include "sim/ShipDesignRules.h"
 #include "ui_imgui/InformationPanel.h"
 #include "ui_imgui/MainMenuBar.h"
 #include "ui_imgui/ShellLayout.h"
@@ -113,7 +114,7 @@ struct ImGuiFixture {
     });
     state.ships.push_back(Ship{
         .id = ship, .shipClassId = shipClass.id, .name = "Overview test ship",
-        .fleetId = fleet, .fuel = shipClass.fuelCapacity
+        .fleetId = fleet, .fuel = deep::evaluateShipDesign(state.shipComponents, shipClass.components).propellantCapacity
     });
     return state;
 }

@@ -1,6 +1,7 @@
 #include "app/InformationInteractionAdapter.h"
 #include "app/SimulationQueries.h"
 #include "sim/ScenarioFactory.h"
+#include "sim/ShipDesignRules.h"
 #include "ui_imgui/ColonyPanel.h"
 #include "ui_imgui/FleetPanel.h"
 #include "ui_imgui/InformationNavigation.h"
@@ -63,7 +64,7 @@ void require(const bool condition, const std::string_view message) {
     });
     world.ships.push_back(Ship{
         .id = ship, .shipClassId = shipClass.id, .name = "Navigation test ship",
-        .fleetId = fleet, .fuel = shipClass.fuelCapacity
+        .fleetId = fleet, .fuel = deep::evaluateShipDesign(world.shipComponents, shipClass.components).propellantCapacity
     });
     return world;
 }

@@ -2,6 +2,7 @@
 #include "sim/GameStateValidation.h"
 #include "sim/Minerals.h"
 #include "sim/ScenarioFactory.h"
+#include "sim/ShipDesignRules.h"
 #include "sim/Simulation.h"
 
 // Direct regression tests for GameStateValidation.
@@ -410,7 +411,7 @@ void test_ship_fuel_above_class_capacity_is_rejected() {
             return shipClass.id == shipClassId;
         });
         require(classIt != state.shipClasses.end(), "completed fixture ship class exists");
-        state.ships.front().fuel = classIt->fuelCapacity + 1.0;
+        state.ships.front().fuel = deep::evaluateShipDesign(state.shipComponents, classIt->components).propellantCapacity + 1.0;
     });
 }
 

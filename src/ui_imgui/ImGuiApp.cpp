@@ -30,6 +30,7 @@ ImGuiApp::ImGuiApp()
         fleetOrdersPanel_.resetWorldState();
         colonyPanel_.resetWorldState();
         processingEditor_.resetWorldState();
+        shipyardPanel_.resetWorldState();
     }} {
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();

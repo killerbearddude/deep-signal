@@ -1,4 +1,5 @@
 #include "sim/GameStateValidation.h"
+#include "sim/ShipDesignRules.h"
 #include "sim/ProcessingAllocationRules.h"
 
 // Implements zero-trust validation for fully assembled simulation snapshots.
@@ -377,6 +378,12 @@ void validateEventPayload(const GameState& state, const SimEventPayload& payload
             requireValidReference(containsId(state.colonies, event.colonyId), event.colonyId, "event colony");
             requireValidReference(containsId(state.shipClasses, event.shipClassId), event.shipClassId, "event ship class");
             requireState(event.quantity > 0, "event quantity must be positive");
+        } else if constexpr (std::is_same_v<Event, ShipClassRevisionCreatedEvent>) {
+            const ShipClass* shipClass = findById(state.shipClasses, event.shipClassId);
+            requireValidReference(shipClass != nullptr, event.shipClassId, "event ship class revision");
+            requireState(event.revision > 0 && shipClass->revision == event.revision &&
+                         shipClass->basedOnClassId == event.basedOnClassId,
+                         "ship class revision event identity must match class");
         } else if constexpr (std::is_same_v<Event, ShipCompletedEvent>) {
             requireValidReference(containsId(state.shipyardOrders, event.orderId), event.orderId, "event shipyard order");
             requireValidReference(containsId(state.colonies, event.colonyId), event.colonyId, "event colony");
@@ -424,6 +431,8 @@ void validateGameState(const GameState& state) {
     validateIdsAndCounter<Institution, InstitutionId>(state.institutions, state.ids.nextInstitutionId, "institution");
     validateIdsAndCounter<Person, PersonId>(state.people, state.ids.nextPersonId, "person");
     validateIdsAndCounter<ShipClass, ShipClassId>(state.shipClasses, state.ids.nextShipClassId, "ship class");
+    validateIdsAndCounter<ShipComponentDefinition, ShipComponentId>(
+        state.shipComponents, state.ids.nextShipComponentId, "ship component");
     validateIdsAndCounter<ShipyardOrder, ShipyardOrderId>(state.shipyardOrders,
                                                             state.ids.nextShipyardOrderId,
                                                             "shipyard order");
@@ -504,16 +513,29 @@ void validateGameState(const GameState& state) {
         requireState(depositKeys.insert(key).second, "duplicate mineral deposit rows are invalid");
     }
 
+    for (const ShipComponentDefinition& component : state.shipComponents) {
+        requireState(validShipComponentDefinition(component), "ship component definition must be valid");
+    }
+
     for (const ShipClass& shipClass : state.shipClasses) {
         requireState(!shipClass.name.empty(), "ship class name must be non-empty");
         requireState(isValidShipRole(shipClass.role), "ship role must be valid");
-        validateProcessedMaterialSet(shipClass.buildCost, "ship class build cost");
-        requireState(isFinite(shipClass.buildPoints) && shipClass.buildPoints > 0.0,
-                     "ship class build points must be positive and finite");
+        requireState(shipClass.revision > 0, "ship class revision must be positive");
+        if (shipClass.basedOnClassId.has_value()) {
+            const ShipClass* base = findById(state.shipClasses, *shipClass.basedOnClassId);
+            requireValidReference(base != nullptr, *shipClass.basedOnClassId, "base ship class");
+            requireState(base->id.value < shipClass.id.value && base->revision + 1 == shipClass.revision,
+                         "ship class revision lineage must increase deterministically");
+        } else {
+            requireState(shipClass.revision == 1, "root ship class revision must be one");
+        }
+        const ShipDesignEvaluation design = evaluateShipDesign(state.shipComponents, shipClass.components);
+        for (const std::string& constraint : design.constraints) {
+            requireState(constraint == "Internal volume exceeds hull capacity",
+                         "ship class composition must be valid");
+        }
         requireState(isFinite(shipClass.speedKmPerDay) && shipClass.speedKmPerDay >= 0.0,
                      "ship class speed must be finite and non-negative");
-        requireState(isFinite(shipClass.fuelCapacity) && shipClass.fuelCapacity >= 0.0,
-                     "ship class fuel capacity must be finite and non-negative");
     }
 
     for (const ShipyardOrder& order : state.shipyardOrders) {
@@ -534,6 +556,11 @@ void validateGameState(const GameState& state) {
         if (order.status == ShipyardOrderStatus::Active) {
             requireState(order.quantityCompleted < order.quantityRequested,
                          "active shipyard order must not already be complete");
+            const ShipClass* shipClass = findById(state.shipClasses, order.shipClassId);
+            if (shipClass != nullptr && !evaluateShipDesign(state.shipComponents, shipClass->components).constructible) {
+                requireState(order.accumulatedBuildPoints == 0.0,
+                             "non-constructible shipyard order cannot retain physical progress");
+            }
         } else if (order.status == ShipyardOrderStatus::Completed) {
             requireState(order.quantityCompleted == order.quantityRequested,
                          "completed shipyard order must have completed all requested ships");
@@ -571,7 +598,8 @@ void validateGameState(const GameState& state) {
         requireValidReference(containsId(state.fleets, ship.fleetId), ship.fleetId, "ship fleet");
         requireState(!ship.name.empty(), "ship name must be non-empty");
         requireState(isFinite(ship.fuel) && ship.fuel >= 0.0, "ship fuel must be finite and non-negative");
-        requireState(shipClass == nullptr || ship.fuel <= shipClass->fuelCapacity + kFuelComparisonEpsilon,
+        requireState(shipClass == nullptr || ship.fuel <=
+                     evaluateShipDesign(state.shipComponents, shipClass->components).propellantCapacity + kFuelComparisonEpsilon,
                      "ship fuel must not exceed class fuel capacity");
 
         const auto listedFleetIt = listedShipFleetIds.find(ship.id.value);

@@ -1,6 +1,7 @@
 #include "app/InformationInteractionAdapter.h"
 #include "app/SimulationQueries.h"
 #include "sim/ScenarioFactory.h"
+#include "sim/ShipDesignRules.h"
 #include "ui_imgui/InformationPreviewLayer.h"
 
 // Public ImGui text logging exercises the production preview renderer with
@@ -68,7 +69,7 @@ void contains(const std::string& text, const std::string_view expected) {
     });
     state.ships.push_back(Ship{
         .id = ship, .shipClassId = shipClass.id, .name = "Preview test ship",
-        .fleetId = fleet, .fuel = shipClass.fuelCapacity
+        .fleetId = fleet, .fuel = deep::evaluateShipDesign(state.shipComponents, shipClass.components).propellantCapacity
     });
     return state;
 }

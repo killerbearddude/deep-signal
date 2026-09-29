@@ -11,6 +11,7 @@
 #include <exception>
 #include <iostream>
 #include <limits>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -63,6 +64,10 @@ bool samePayload(const deep::SimEventPayload& lhs, const deep::SimEventPayload& 
                    left.colonyId == right.colonyId &&
                    left.shipClassId == right.shipClassId &&
                    left.quantity == right.quantity;
+        } else if constexpr (std::is_same_v<Left, deep::ShipClassRevisionCreatedEvent>) {
+            return left.shipClassId == right.shipClassId &&
+                   left.basedOnClassId == right.basedOnClassId &&
+                   left.revision == right.revision;
         } else if constexpr (std::is_same_v<Left, deep::ShipCompletedEvent>) {
             return left.orderId == right.orderId &&
                    left.colonyId == right.colonyId &&
@@ -129,6 +134,19 @@ void test_shipyard_order_created_round_trips() {
         .shipClassId = deep::ShipClassId{5},
         .quantity = 6
     }, "shipyard_order_created payload round-trips");
+}
+
+void test_ship_class_revision_created_round_trips() {
+    requireRoundTrip(deep::ShipClassRevisionCreatedEvent{
+        .shipClassId = deep::ShipClassId{7},
+        .basedOnClassId = deep::ShipClassId{3},
+        .revision = 2
+    }, "ship_class_revision_created payload round-trips");
+    requireRoundTrip(deep::ShipClassRevisionCreatedEvent{
+        .shipClassId = deep::ShipClassId{8},
+        .basedOnClassId = std::nullopt,
+        .revision = 1
+    }, "root revision event round-trips");
 }
 
 void test_ship_completed_round_trips() {
@@ -270,6 +288,8 @@ void test_event_type_names_are_stable_schema_v1_strings() {
             "mineral_extracted type name is stable");
     require(deep::save::eventTypeName(deep::ShipyardOrderCreatedEvent{}) == "shipyard_order_created",
             "shipyard_order_created type name is stable");
+    require(deep::save::eventTypeName(deep::ShipClassRevisionCreatedEvent{}) == "ship_class_revision_created",
+            "ship_class_revision_created type name is stable");
     require(deep::save::eventTypeName(deep::ShipCompletedEvent{}) == "ship_completed",
             "ship_completed type name is stable");
     require(deep::save::eventTypeName(deep::FleetOrderAssignedEvent{}) == "fleet_order_assigned",
@@ -285,6 +305,7 @@ void test_event_type_names_are_stable_schema_v1_strings() {
 void runAllTests() {
     test_mineral_extracted_round_trips();
     test_shipyard_order_created_round_trips();
+    test_ship_class_revision_created_round_trips();
     test_ship_completed_round_trips();
     test_fleet_order_assigned_round_trips();
     test_fleet_arrived_round_trips();

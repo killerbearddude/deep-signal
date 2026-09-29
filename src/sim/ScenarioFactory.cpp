@@ -1,4 +1,5 @@
 #include "sim/ScenarioFactory.h"
+#include "sim/ShipDesignRules.h"
 
 // Builds the deterministic mature home-system scenario used by new games and
 // tests. The scenario is hand-authored so geography, ownership, and deposits
@@ -519,21 +520,15 @@ GameState createHomeSystemScenario() {
     addDeposit(state, frontierObjectId, Mineral::RareEarthElements, 110'000.0, 0.2, 0.0);
     addDeposit(state, frontierObjectId, Mineral::Volatiles, 600'000.0, 0.3, 0.20);
 
-    ProcessedMaterialSet surveyCutterCost;
-    surveyCutterCost.set(ProcessedMaterial::StructuralAlloys, 250.0);
-    surveyCutterCost.set(ProcessedMaterial::Electronics, 80.0);
-    surveyCutterCost.set(ProcessedMaterial::Propellant, 150.0);
-    surveyCutterCost.set(ProcessedMaterial::ReactorFuel, 20.0);
-    surveyCutterCost.set(ProcessedMaterial::IndustrialComposites, 50.0);
-
+    state.shipComponents = standardShipComponentCatalog();
+    state.ids.nextShipComponentId = 6;
     state.shipClasses.push_back(ShipClass{
         .id = surveyCutterId,
         .name = "Survey Cutter",
         .role = ShipRole::Survey,
-        .buildCost = surveyCutterCost,
-        .buildPoints = 500.0,
-        .speedKmPerDay = 50.0,
-        .fuelCapacity = 1'000.0
+        .basedOnClassId = std::nullopt,
+        .components = referenceSurveyCutterComponents(),
+        .speedKmPerDay = 50.0
     });
 
     return state;

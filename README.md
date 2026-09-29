@@ -11,9 +11,10 @@ First buildable headless simulation slice for **Deep Signal Prototype 0.1 - Home
 - Typed event log with isolated event JSON serialization
 - Daily mining
 - Shipyard build order progression
+- Immutable component-based ship designs and derived build/survey capability
 - Ship and fleet creation
 - Fixed-duration fleet movement
-- SQLite schema v2 save/load layer
+- SQLite schema v12 save/load layer; older development saves are unsupported
 - Full-save/full-load transactions
 - Prepared statements for value-bearing SQL
 - CLI smoke runner
@@ -29,7 +30,7 @@ The project has three active CMake libraries by default:
 
 ```text
 deep_signal_sim   # pure deterministic simulation; no SQLite/UI/platform deps
-deep_signal_save  # SQLite C API repository and schema v2 mapping
+deep_signal_save  # SQLite C API repository and schema v12 mapping
 deep_signal_app   # application service wrapping simulation plus save/load
 ```
 
@@ -42,7 +43,7 @@ The simulation library now owns domain validation through `src/sim/GameStateVali
 The persistence layer is intentionally isolated under `src/save`:
 
 - `Database.*` owns the SQLite connection, prepared statements, and transactions.
-- `Schema.*` creates and validates schema version 1.
+- `Schema.*` creates and validates only the active schema v12 structure.
 - `SaveGameRepository.*` maps `GameState` to/from SQLite rows.
 - `EventJson.*` owns event payload JSON serialization/parsing so the repository does not contain event-specific JSON grammar.
 
@@ -74,7 +75,7 @@ The source also follows the current project C++ direction:
 - no raw owning pointers,
 - warning-clean CMake targets with `-Wall -Wextra -Wpedantic -Wconversion` on GCC/Clang.
 
-## SQLite schema v2 coverage
+## SQLite schema v12 coverage
 
 The save file persists:
 
@@ -86,14 +87,14 @@ The save file persists:
 - colonies,
 - colony mineral stockpiles,
 - mineral deposits,
-- ship classes,
-- ship class mineral costs,
+- immutable ship-class revisions and component installations,
+- component processed-material construction costs,
 - shipyard orders,
 - fleets and active movement orders,
 - ships,
 - typed event log rows with JSON payload text.
 
-Prototype 0.1 uses a replace-all save strategy inside one write transaction. Loading uses one read transaction, runs `PRAGMA foreign_key_check`, parses integer metadata strictly as canonical text, validates enum ordinals, validates the fully assembled `GameState`, and rejects missing, duplicate, or unsupported schema metadata. Schema v1 also includes `CHECK` constraints for core non-negative quantities, enum ranges, ID counters, production-order invariants, and fleet-order consistency.
+The current writer uses a replace-all save strategy inside one write transaction. Loading uses one read transaction, runs `PRAGMA foreign_key_check`, parses integer metadata strictly as canonical text, validates enum ordinals, validates the fully assembled `GameState`, and rejects missing, duplicate, or unsupported schema metadata. Schema v12 includes `CHECK` constraints for core non-negative quantities, enum ranges, ID counters, production-order invariants, and fleet-order consistency.
 
 ## Zero-trust hardening status
 

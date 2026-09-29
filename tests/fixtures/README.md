@@ -12,8 +12,8 @@ FIFO vector order **[ID 2, ID 1]**. Both need ten build points and the colony
 has a ten-point daily pool. `validateGameState()` accepts the state. Schema v10
 has no order ordinal for `shipyard_orders`, so its loader's `ORDER BY id`
 reconstructs **[ID 1, ID 2]**. The original order cannot be recovered from this
-file. Compatibility tests should verify truthful legacy reconstruction, not
-claim that a v10 load recovers the lost vector order.
+file. Historical H1B tests verified truthful reconstruction at that baseline;
+the current v12 loader rejects this development save without modifying it.
 
 ## Provenance and reproduction
 
@@ -57,3 +57,18 @@ A read-only SQLite check returned `schema_version = 10`,
 the generated save through the baseline repository and advanced both simulations
 one day. Rebuilding with a different SQLite release may yield different file
 bytes; compare the schema and logical contents as well as the probe output.
+
+## P1 v11 reference save for P2
+
+`schema_v11_p1_reference.sql` is a text dump of a valid save written by the
+P1 `SaveGameRepository::save()` at integrated commit
+`7aa01bb53a208a0952922d9e1a0948946c913d2c`. The source state was
+`createHomeSystemScenario()` with its original aggregate Survey Cutter. A small
+standalone program compiled against that commit's headers and save/simulation
+libraries wrote the SQLite file; Python `sqlite3.Connection.iterdump()` then
+produced the checked-in SQL. The dump includes only deterministic prototype
+scenario data and uses `PRAGMA foreign_keys = OFF` during reconstruction because
+the dump orders tables alphabetically. The current contract test reconstructs a
+throwaway file and verifies that v11 Load rejects it without changing the file.
+The P1 source save reported schema version 11 and its
+Survey Cutter row carried 500 build points and 1000 fuel capacity.

@@ -11,6 +11,7 @@
 #include "sim/Domain.h"
 #include "sim/Events.h"
 #include "sim/IdTypes.h"
+#include "sim/ShipDesignRules.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -134,14 +135,38 @@ struct ProductionBacklogSummary {
     std::string explanation;
 };
 
-// Display-ready buildable ship class row. The UI can use these IDs to submit
-// production commands without reading GameState::shipClasses directly.
+// Display-ready ship class revision, including non-constructible designs. The
+// UI submits its typed ID rather than reading GameState::shipClasses directly.
 struct ShipClassSummary {
     ShipClassId id;
     std::string name;
+    int revision = 1;
     ShipRole role = ShipRole::Survey;
     std::string roleName;
+    std::optional<ShipClassId> basedOnClassId;
+    std::vector<ShipComponentInstall> components;
+    ShipDesignEvaluation design;
     double buildPoints = 0.0;
+};
+
+struct ShipComponentSummary {
+    ShipComponentId id;
+    std::string name;
+    ShipComponentKind kind = ShipComponentKind::Utility;
+    double mass = 0.0;
+    double volume = 0.0;
+    double internalVolumeCapacity = 0.0;
+    double powerGeneration = 0.0;
+    double powerDemand = 0.0;
+    double propellantCapacity = 0.0;
+    double surveyCapability = 0.0;
+    ProcessedMaterialSet buildCost;
+    double buildPoints = 0.0;
+};
+
+struct ShipDesignDraftPreview {
+    ShipDesignEvaluation design;
+    std::vector<std::string> warnings;
 };
 
 // Display-ready personnel row. This preserves durable personnel identity for
@@ -489,8 +514,11 @@ public:
     // Returns one production backlog forecast row per shipyard order.
     [[nodiscard]] std::vector<ProductionBacklogSummary> productionBacklog() const;
 
-    // Returns one summary row per buildable ship class.
+    // Returns one summary row per saved immutable ship class revision.
     [[nodiscard]] std::vector<ShipClassSummary> shipClasses() const;
+    [[nodiscard]] std::vector<ShipComponentSummary> shipComponents() const;
+    [[nodiscard]] ShipDesignDraftPreview previewShipDesign(
+        const std::vector<ShipComponentInstall>& components) const;
 
     // Returns one summary row per fleet, including location and order state.
     [[nodiscard]] std::vector<FleetSummary> fleets() const;
