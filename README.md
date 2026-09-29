@@ -20,7 +20,8 @@ First buildable headless simulation slice for **Deep Signal Prototype 0.1 - Home
   powered workshops, finite engineering teams, actual parts and daily work
 - Ship and fleet creation
 - Prototype sustained-burn fleet movement; loaded cargo does not change its fuel/time model
-- SQLite schema v15 save/load layer; older development saves are unsupported
+- P4A immutable observations, staffed laboratory analysis, dated assessments, and knowledge-limited geology views
+- SQLite schema v16 save/load layer; older development saves are unsupported
 - Full-save/full-load transactions
 - Prepared statements for value-bearing SQL
 - CLI smoke runner
@@ -62,7 +63,7 @@ The project has three active CMake libraries by default:
 
 ```text
 deep_signal_sim   # pure deterministic simulation; no SQLite/UI/platform deps
-deep_signal_save  # SQLite C API repository and schema v15 mapping
+deep_signal_save  # SQLite C API repository and schema v16 mapping
 deep_signal_app   # application service wrapping simulation plus save/load
 ```
 
@@ -75,7 +76,7 @@ The simulation library now owns domain validation through `src/sim/GameStateVali
 The persistence layer is intentionally isolated under `src/save`:
 
 - `Database.*` owns the SQLite connection, prepared statements, and transactions.
-- `Schema.*` creates and validates only the active schema v15 structure.
+- `Schema.*` creates and validates only the active schema v16 structure.
 - `SaveGameRepository.*` maps `GameState` to/from SQLite rows.
 - `EventJson.*` owns event payload JSON serialization/parsing so the repository does not contain event-specific JSON grammar.
 
@@ -107,7 +108,7 @@ The source also follows the current project C++ direction:
 - no raw owning pointers,
 - warning-clean CMake targets with `-Wall -Wextra -Wpedantic -Wconversion` on GCC/Clang.
 
-## SQLite schema v15 coverage
+## SQLite schema v16 coverage
 
 The save file persists:
 
@@ -129,7 +130,7 @@ The save file persists:
 - ships,
 - typed event log rows with JSON payload text.
 
-The current writer uses a replace-all save strategy inside one write transaction. Loading uses one read transaction, runs `PRAGMA foreign_key_check`, parses integer metadata strictly as canonical text, validates enum ordinals, validates the fully assembled `GameState`, and rejects missing, duplicate, or unsupported schema metadata. Schema v15 includes `CHECK` constraints for core non-negative quantities, enum ranges, ID counters, production-order invariants, fleet-order consistency, and program references.
+The current writer uses a replace-all save strategy inside one write transaction. Loading uses one read transaction, runs `PRAGMA foreign_key_check`, parses integer metadata strictly as canonical text, validates enum ordinals, validates the fully assembled `GameState`, and rejects missing, duplicate, or unsupported schema metadata. Schema v16 includes `CHECK` constraints for core non-negative quantities, enum ranges, ID counters, production-order invariants, fleet-order consistency, and program references.
 
 ## Zero-trust hardening status
 
@@ -213,3 +214,38 @@ cmake -S . -B build
 cmake --build build
 ctest --test-dir build --output-on-failure
 ```
+
+## P4A evidence and analysis
+
+Open **Evidence / Analysis** from the window menu or Intelligence workspace.
+Authorize one analysis program to follow an existing survey, or select acquired
+batches in a fixed order. It uses a real SurveyTeam at its laboratory colony;
+a deployed field team cannot also analyze at home. A second actual team permits
+concurrent fieldwork and interpretation. Missing inputs, staff, laboratory
+throughput or work authority preserves intent.
+
+Reconnaissance detects normalized signal at 50 and does not measure accessibility.
+Characterization detects at 10 and reports a coarse accessibility class. Each
+contributing installation needs five exposure units for its full profile. One
+batch requires three scientific team-workdays to analyze; only the authored home
+laboratory starts with one team-workday/day. Data becomes available at D+1,
+independent of distance, without moving personnel.
+
+Raw data is inspectable before analysis. Non-detection is not absence. Reserve
+quantity remains **Unmeasured** and construction/site suitability **Unassessed**.
+There is no investigation gate on existing construction or other authorizations.
+Mining projections use known inventory and current-session output telemetry,
+not hidden reserve quantities. Older development saves, including v15, are rejected
+unchanged; there is no compatibility reader.
+
+Reproducible inspection saves, acquired through normal commands and elapsed days:
+
+```sh
+./build-p4a/deep_signal_cli --write-evidence-fixture /tmp/deep-signal-p4a-shared.sqlite
+./build-p4a/deep_signal_cli --write-evidence-concurrent-fixture /tmp/deep-signal-p4a-concurrent.sqlite
+```
+
+The first fixture has a visible shared-team staffing wait; the second has a real
+home analyst. Both contain an earned local assessment and transmitted field data.
+See [P4A implementation report](docs/architecture/p4a-implementation-report.md)
+for fixture constants, acceptance evidence, and limitations.

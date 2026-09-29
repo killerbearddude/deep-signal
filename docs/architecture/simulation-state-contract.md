@@ -1,7 +1,7 @@
 # Simulation state contract
 
 This document records the H1A processing-configuration, H1B save-continuity,
-P1 shipyard-intent, P2 vessel-design, P3A delegated-survey, P3B freight and P3C service contracts.
+P1 shipyard-intent, P2 vessel-design, P3A delegated-survey, P3B freight, P3C service and P4A scientific-evidence contracts.
 The in-memory `GameState` remains the authority for
 gameplay; SQLite stores explicit snapshots, not a second live world or a replay
 stream.
@@ -141,44 +141,44 @@ by mineral/material enum index, while metadata and ID counters remain keyed by
 name. `event_log` remains ordered by Event ID, with strictly increasing IDs and
 nondecreasing event days validated; it has no second ordinal.
 
-The current v15 writer assigns contiguous ordinals beginning at zero. Schema
+The current v16 writer assigns contiguous ordinals beginning at zero. Schema
 constraints require non-null integer, nonnegative, unique values in each scope;
 the reader also checks storage type and contiguity before accepting a sequence.
 Every ordered read uses explicit `ORDER BY`. Missing, duplicate, fractional,
-negative, or gapped v15 order data is rejected rather than reconstructed in
+negative, or gapped v16 order data is rejected rather than reconstructed in
 legacy ID order. Empty collections are valid.
 
 ## Schema versions and destination policy
 
-H1A wrote schema v10, H1B wrote v11, P2 wrote v12, P3A wrote v13 and P3B wrote v14. P3C writes and reads
-**v15 only**. Deep Signal is in active pre-release development: development
+H1A wrote schema v10, H1B wrote v11, P2 wrote v12, P3A wrote v13 and P3B wrote v14. P3C wrote v15. P4A writes and reads
+**v16 only**. Deep Signal is in active pre-release development: development
 save files are disposable, and compatibility across schema versions is not
 guaranteed unless a future milestone explicitly establishes it. This is the
 current development policy, not a permanent release policy. An older file,
-including v14, fails with an unsupported-schema error before gameplay
+including v15, fails with an unsupported-schema error before gameplay
 reconstruction. Load opens it read-only and does not modify it. Save refuses to
 overwrite older or unknown schemas. No automatic migration or in-place repair
 is performed.
 
-The v15 reader requires the current table, column, key, and foreign-key shape,
+The v16 reader requires the current table, column, key, and foreign-key shape,
 complete component and material-cost rows, class revision identity, ordered
 installations, program/team references, scoped target/receipt/report ordinals,
 freight commitment/custody/history references, and all H1B ordering checks. New
 freight numeric values and enums use strict SQLite storage-type readers. A
 version marker alone does not make a file valid.
 Destination recognition compares the user schema object set and each table's
-`table_xinfo`, `foreign_key_list`, and index shape with a freshly built v15
+`table_xinfo`, `foreign_key_list`, and index shape with a freshly built v16
 reference. Save rejects user triggers even on known tables because their write
 effects are not trusted. Read-only Load may tolerate triggers on known tables.
 The check does not require byte-identical `CREATE TABLE` text or silently add
 missing columns.
 
 Save accepts a new path, a schema-empty database, or an existing compatible,
-valid v15 save. It validates its input state before opening the destination.
+valid v16 save. It validates its input state before opening the destination.
 The connection enables foreign keys before an immediate write transaction.
-Inside that transaction it verifies an existing v15 snapshot before replacement,
-creates v15 schema only if empty, replaces rows, rereads the new snapshot, and
-commits only after validation. Load opens read-only, checks v15 structure and
+Inside that transaction it verifies an existing v16 snapshot before replacement,
+creates v16 schema only if empty, replaces rows, rereads the new snapshot, and
+commits only after validation. Load opens read-only, checks v16 structure and
 foreign keys, and validates a detached snapshot within one read transaction.
 A failed replacement rolls back the previous valid save's **logical** contents
 and schema. A failed first save may leave an empty new file; neither path
@@ -196,16 +196,16 @@ references, processing-editor drafts, and window geometry are also outside the
 game snapshot. Successful Load replaces the world and clears old-world
 interaction and editor state through the existing lifecycle.
 
-The H1B ordering contract, retained in v15, supports comparisons of durable state, ordered
+The H1B ordering contract, retained in v16, supports comparisons of durable state, ordered
 children, counters, and meaningful event order when an unsaved and reloaded
 simulation continue under the **same build and same inputs**. It does not
 promise bitwise identical floating-point results across compilers, platforms,
-or build flags, or unchanged outcomes after gameplay rules change. The H1A processing checks remain in force for current v15 snapshots.
+or build flags, or unchanged outcomes after gameplay rules change. The H1A processing checks remain in force for current v16 snapshots.
 
 ## Review evidence
 
 H1A processing-allocation and H1B durable-ordering tests remain part of the
-current suite. Current persistence evidence covers v15 round trips,
+current suite. Current persistence evidence covers v16 round trips,
 same-build continuation, malformed-state rejection, transactional rollback,
 and explicit rejection of older development schemas without changing their
 source files. Historical v10/v11 fixtures remain documented as evidence of
@@ -236,7 +236,7 @@ sufficient. P2 does not change sustained-burn transit physics.
 
 P2's v12 schema replaced class aggregate cost/BP/tank columns with component
 tables, ordered installations, and revision lineage. P3C retains those records
-in v15 alongside program state and physical instrument condition. Old v10/v11/v12 fixtures remain useful for
+in v16 alongside program state, physical instrument condition and scientific records. Old v10/v11/v12 fixtures remain useful for
 proving current rejection is clean and leaves source files unchanged.
 
 ## P3A: delegated home-supported survey programs
@@ -513,3 +513,114 @@ same-build continuation. No v14 reader or migration is provided.
 This adds no engine/reactor/hull/cargo wear, random failures, remote tender
 deployment/rendezvous, rescue, shipboard supplies, cargo-to-tank conversion,
 refitting, recruitment, crew economy, final propulsion, P4 or P5 systems.
+
+
+## P4A: observations, finite analysis and dated assessments
+
+Physical `MineralDeposit` stores only body/mineral identity, remaining units and
+accessibility. Acquisition does not change those quantities. Confidence and its
+partition helpers are removed. Only `ObservationAcquisition` and the tightly
+scoped `sampleObservationChannels` bridge may read physical geology for science;
+`AssessmentRules` takes sealed records and completed findings without GameState.
+
+The immutable measurement catalog has Reconnaissance (threshold 50, no
+accessibility measurement) and Characterization (threshold 10, coarse
+accessibility). Both declare all 14 minerals in enum order. The existing standard
+and specialist arrays reference these profiles independently of maintenance
+family. Signal is `remaining * min(accessibility, 1)` in fictional normalized
+units. The signal and physical inputs are never returned. A detection has
+accessibility Low `[0, .25)`, Moderate `[.25, .75)`, or High `[.75, unbounded)`
+only for a characterization profile. Unbounded is a tag, not numeric infinity.
+
+Every qualifying instrument installation records actual exposure dates and its
+exact ship/class/component/profile identity. Managed and unmanaged contributors
+are both recorded. Quantity does not accelerate acquisition. Five contributions
+are required for a full-profile reading; shorter exposure produces an explicit
+InsufficientExposure result for every declared channel. A pass samples once at
+its completion boundary. Partial visits and service detours preserve their real
+work dates. One completed pass has exactly one sealed batch and publication audit.
+Immediate manual action still costs five duty units, has one actual date and no
+invented scientific team or five elapsed days, and never completes analysis.
+
+A batch acquired on D is readable raw data immediately and available to analysis
+at opening D+1. This directorate-wide delivery is an explicit distance-independent
+information abstraction. People, cargo and fleets retain their physical locations.
+
+An AnalysisProgram has a fixed laboratory colony and either one FollowSurvey
+source or an ordered, unique, nonempty FixedBatches source. Names, requested
+scientists, responsible leaders and lifetime work allowance can be amended.
+Zero or missing readiness preserves intent. The home scenario authors 1.0
+scientific team-workday/day at Terra; other colonies default to zero. Proof
+fixtures explicitly author one laboratory at their existing fixed survey base.
+One existing SurveyTeam supplies at most 1.0 team-workday/day. Analysis never
+leases a fleet or borrows a deployed team. The derived scientific-team owner
+covers Survey and Analysis using typed identities; maintenance engineers remain
+in their separate workforce.
+
+One batch requires exactly 3.0 scientific team-workdays. One program performs
+at most one job's work per opening. Work is bounded by remaining job demand,
+team rate, remaining opening lab throughput and remaining lifetime allowance.
+Progress and spent allowance derive from positive dated receipts, with actual
+scientist/leader/colony/charter revision and historical installed lab capacity.
+A partially worked job may retain a team while capacity is temporarily absent.
+Completion releases it; an idle follower does not hoard scientists. Released
+teams remain occupied for that opening, including across program kinds.
+
+Common dispatch remains a head-only merge of stored program vectors, with equal
+dates ordered Survey, Freight, Maintenance, Analysis. Transient opening snapshots
+also hold information availability and finite per-colony lab budgets. Mining,
+processing, shipyards and movement keep their predecessor relative ordering.
+No lab work consumes fuel, repair parts or instrument duty.
+
+Completed jobs publish immutable findings and one immutable assessment revision.
+Assembly includes only already completed findings. Claims retain method-specific
+alternatives and use latest applicable acquisition dates, independently for
+indication and accessibility. An older observation analyzed later cannot displace
+newer science. Repetition adds dated history without increased certainty. A newer
+non-detection after an earlier indication states both facts without claiming
+absence or depletion. Reserve quantity is Unmeasured; site suitability is
+Unassessed. There is no construction-permission flag.
+
+Suspension releases stationary analysts and retains documented work. Assignment
+amendments release the old team before later reacquisition; previous receipts
+remain attributed to their actual participants. Cancellation closes unfinished
+jobs without publishing them and retains raw records and completed assessments.
+A follower completes only after its source is Closed and all acquired inputs
+are analyzed; Closing/Completed physical return is still an open source.
+Empty canceled sources close with no observations, not a barren-body conclusion.
+
+Analysis issues use the shared interruption runner. Known insufficient work
+allowance is acknowledged at authorization/amendment. A new exhausted allowance
+after real work and newly acquired backlog can interrupt; acknowledgment does
+not fabricate capacity or repeat work. Reports publish at global 30-day/90-day
+boundaries, snapshot authority/source/work and an audit cutoff, and stop after
+analysis closure. P3A closed-survey report behavior remains a separate residual.
+
+Schema v16 adds 26 focused scientific tables to the retained 50-table snapshot.
+It stores ordered profiles/channels, component links, laboratory capacities,
+active exposure and dates, sealed batches/results, sources, jobs, labor receipts,
+findings, assessments/claim provenance, reports, issues and counters. Persisted
+profile references reconstruct immutable method snapshots without resampling.
+There are no saved reverse owners, latest-assessment caches, input queues or
+opening budgets. Current-only structural checks, foreign keys, strict numeric
+readers, graph/accounting validation and transactional replacement remain.
+
+Preparation allocates observations before duty is charged, and prepares completed
+findings/assessment storage before the last labor receipt. Tested identity-limit
+failures charge no missing duty/work and publish no free result. These are
+focused guarantees; an unexpected exception can still leave the global day
+advanced, consistent with the existing nontransactional simulation tick contract.
+Save/Load remains transactional and never silently repairs scientific records.
+
+Ordinary body/detail/intelligence previews enumerate public bodies and declared
+channels, never hidden deposit existence. Stock and output telemetry remain
+visible. Geological lifetime forecasts report insufficient evidence. A current
+job ETA is shown only with positive capacity/authority and no current competing
+ready analyst; it is conditional on those resources remaining unchanged, not a
+completion forecast for future follower inputs.
+
+P4A implements only the bounded field/analysis team tradeoff. Requirements/design
+staffing, staffed Mission Control, remote tender support, final propulsion, site
+development, research and the remaining P3 residuals are not implemented here.
+The accepted historical [P3 residual register](p3-closeout-and-residual-register.md)
+remains the record of the pre-P4A scope decision; R04 is addressed by this section.
