@@ -6,6 +6,8 @@
 #include "sim/ProgramControl.h"
 #include "sim/ScenarioFactory.h"
 #include "sim/Simulation.h"
+#include "sim/ShipDesignRules.h"
+#include "sim/SurveyProgramExecution.h"
 
 #include <cmath>
 #include <iostream>
@@ -160,6 +162,64 @@ void test_waiting_survey_uses_delivery_next_opening() {
     for (int day=0;day<100 && sim.state().surveyPrograms.front().receipts.empty();++day) sim.advanceDays(1);
     require(sim.state().surveyPrograms.front().receipts.size()==1,"receiving survey completes without reauthorization");
     validateGameState(sim.state());
+}
+
+void test_survey_condition_and_report_name_freight_owner() {
+    // Both cases reach the report boundary with a real freight lease. The
+    // dual-capability hull, co-located team and prepaid fuel make ownership the
+    // only stationary readiness blocker; transit must not be called manual.
+    for (const bool moving : {false, true}) {
+        auto state = createDelegatedFreightScenario();
+        state.date.day = moving ? 24 : 28;
+        const auto sourceId = state.colonies.at(state.colonies.size() - 2).id;
+        const auto fleetId = state.fleets.back().id;
+        state.surveyTeams.front().colonyId = sourceId;
+        state.shipClasses.back().components.push_back({ShipComponentId{4}, 1});
+        state.ships.back().fuel = 1000.0;
+        for (auto& body : state.bodies) {
+            if (body.id == state.colonies.back().bodyId) body.x = 100.0;
+        }
+        require(evaluateFleetSurvey(state, state.fleets.back()).operationalCapability > 0.0,
+                "freight fixture has powered survey equipment as well as cargo bays");
+
+        Simulation sim(state);
+        auto fc = freight(state);
+        fc.name = "Supply Delivery";
+        require(sim.execute(CreateFreightProgramCommand{fc}).ok, "freight owner authorized first");
+        const int setupDays = moving ? 5 : 1;
+        require(sim.advanceDaysDetailed(setupDays).advancedDays == setupDays && sim.state().date.day == 29,
+                "freight owns the requested fleet before the survey report boundary");
+        require((sim.state().fleets.back().activeOrder.type == FleetOrderType::MoveToBody) == moving,
+                "fixture exercises the intended stationary or moving ownership case");
+        require(sim.state().ships.back().cargo.has_value(), "freight ownership includes real loaded cargo");
+
+        auto sc = receivingSurvey(state);
+        sc.homeColonyId = sourceId;
+        sc.requestedFleetId = fleetId;
+        require(sim.execute(CreateSurveyProgramCommand{sc}).ok, "competing survey intention remains valid");
+        const auto surveyId = sim.state().surveyPrograms.front().id;
+        const auto freightId = sim.state().freightPrograms.front().id;
+        require(surveyId.value == freightId.value && ProgramController{surveyId} != ProgramController{freightId},
+                "equal numeric IDs remain distinct typed owners");
+        const std::string expected = "Waiting: requested fleet is controlled by freight program Supply Delivery (#1)";
+        require(surveyProgramExecutionCondition(sim.state(), sim.state().surveyPrograms.front()) == expected,
+                "survey primary condition names the actual freight controller before movement or readiness");
+
+        require(sim.advanceDaysDetailed(1).advancedDays == 1, "ordinary ownership wait does not interrupt time");
+        const auto& survey = sim.state().surveyPrograms.front();
+        require(survey.id == surveyId && survey.lifecycle == SurveyProgramLifecycle::Authorized &&
+                survey.charter.requestedFleetId == fleetId && !survey.leasedFleetId && !survey.leasedTeamId &&
+                survey.task == SurveyProgramTask::None && survey.receipts.empty(),
+                "survey retains its intent without acquiring or using freight assets");
+        require(controllingProgram(sim.state(), fleetId) == ProgramController{freightId},
+                "freight retains exclusive fleet control");
+        require(surveyProgramExecutionCondition(sim.state(), survey) == expected,
+                "ownership remains the primary survey condition on the report day");
+        require(survey.reports.size() == 1 && survey.reports.front().endDay == 30 &&
+                survey.reports.front().waitingReason == expected,
+                "durable due survey report preserves the correct freight ownership explanation");
+        validateGameState(sim.state());
+    }
 }
 
 void test_older_freight_and_mixed_bulk_equivalence() {
@@ -323,6 +383,7 @@ int main() {
         test_scheduled_closure_report_once();
         test_typed_arbitration_and_manual_guards();
         test_waiting_survey_uses_delivery_next_opening();
+        test_survey_condition_and_report_name_freight_owner();
         test_older_freight_and_mixed_bulk_equivalence();
         test_inbound_stock_supplies_later_shipyard_phase();
         test_processing_supply_and_retained_empty_return();

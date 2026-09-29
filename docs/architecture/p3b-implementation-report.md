@@ -311,3 +311,37 @@ crew, market, tender maintenance, P4 or P5 systems. The planner is bounded and
 non-optimal. P3A closed-program periodic reporting and unleased manual movement
 cancellation behavior are retained; freight custody is protected from that
 manual shortcut. Native UI review remains outstanding.
+
+## PR #9 review correction: survey ownership explanations
+
+The review of `96b869be0a5c015edd5d46b774ffb8d28c08506f` found that survey
+conditions still searched only survey leases. The correction uses the existing
+`controllingProgram` lookup and `programControllerLabel` before evaluating an
+unleased fleet's movement or readiness. It compares a typed `ProgramController`
+against the survey program's identity and retains the separate survey-team
+conflict check. Execution, schema v14 and scheduling are unchanged.
+
+`test_survey_condition_and_report_name_freight_owner` in
+`tests/program_control_tests.cpp` exercises stationary loading and real freight
+transit with a powered dual-capability hull, a survey team at its source, and
+sufficient engine fuel. Survey and freight both have numeric ID 1. In both cases
+the survey keeps its requested intent without acquiring assets, its primary
+condition names `freight program Supply Delivery (#1)`, and its day-30 report
+stores that exact waiting reason.
+
+The regression failed on the reviewed code at the owner-explanation assertion,
+then passed after the correction. Verification used the existing configured
+build directories, with full suites run sequentially:
+
+```sh
+cmake --build build-p3b -j 2
+ctest --test-dir build-p3b --output-on-failure -j 2
+cmake --build build-p3b-ui -j 2
+ctest --test-dir build-p3b-ui --output-on-failure -j 2
+git diff --check
+git diff --cached --check
+```
+
+Results: both builds passed; **25/25 headless** (3.92 seconds),
+**32/32 UI-enabled** (3.83 seconds), and diff checks passed. No native visual
+check was performed for this diagnostic/report-only correction.

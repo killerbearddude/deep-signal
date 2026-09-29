@@ -749,9 +749,16 @@ std::string surveyProgramExecutionCondition(const GameState& state, const Survey
     const SurveyTeam* team = byId(state.surveyTeams, *desiredTeam);
     if (fleet == nullptr || team == nullptr) return "Waiting: requested asset is unavailable";
     if (!program.leasedFleetId.has_value()) {
+        // Explain the same typed ownership boundary used by dispatch before
+        // interpreting a controller's transit as manual movement or readiness.
+        // Reports persist this condition, so freight custody must be visible.
+        if (const auto owner = controllingProgram(state, *desiredFleet);
+            owner && *owner != ProgramController{program.id}) {
+            return "Waiting: requested fleet is controlled by " + programControllerLabel(state, *owner);
+        }
         for (const SurveyProgram& other : state.surveyPrograms) {
-            if (other.id != program.id &&
-                (other.leasedFleetId == desiredFleet || other.leasedTeamId == desiredTeam)) {
+            // Teams remain a survey-only lease even though fleets are shared.
+            if (other.id != program.id && other.leasedTeamId == desiredTeam) {
                 return "Waiting: requested fleet or team is committed to another program";
             }
         }
