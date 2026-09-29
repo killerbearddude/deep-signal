@@ -8,6 +8,7 @@
 #include "sim/IdTypes.h"
 #include "sim/Minerals.h"
 #include "sim/SurveyProgram.h"
+#include "sim/SiteEvents.h"
 
 #include <cstdint>
 #include <optional>
@@ -137,12 +138,13 @@ struct FreightProgramAuditEvent {
     FreightProgramId programId;
     FreightProgramAuditKind kind = FreightProgramAuditKind::Authorized;
     std::optional<FleetId> fleetId = std::nullopt;
-    std::optional<ColonyId> colonyId = std::nullopt;
+    std::optional<StockLocation> location = std::nullopt;
     std::optional<PersonId> leaderId = std::nullopt;
     int charterRevision = 1;
     int shipmentNumber = 0;
     double amount = 0.0;
     std::string detail{};
+    std::optional<Commodity> commodity = std::nullopt;
 };
 
 // Actual per-installation operating deltas. A timed day records one duty;
@@ -202,6 +204,8 @@ using SimEventPayload = std::variant<
     EquipmentDutyUsedEvent,
     MaintenanceProgramAuditEvent,
     AnalysisProgramAuditEvent,
+    SiteDevelopmentAuditEvent,
+    SiteOperatingAuditEvent,
     CommandRejectedEvent
 >;
 

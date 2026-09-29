@@ -27,8 +27,9 @@ const deep::Colony& source(const deep::GameState& state) { return state.colonies
 deep::FreightProgramCharter charter(const deep::GameState& state, const double quantity = 500.0) {
     deep::FreightProgramCharter c;
     c.name = "Freight edge evidence";
-    c.sourceColonyId = source(state).id;
-    c.destinationColonyId = state.colonies.back().id;
+    c.source = source(state).id;
+    c.operatingBaseColonyId = std::get<deep::ColonyId>(c.source);
+    c.destination = state.colonies.back().id;
     c.totalQuantity = quantity;
     c.requestedFleetId = state.fleets.back().id;
     c.requestedLeaderId = state.people.front().id;
@@ -59,7 +60,7 @@ void unreadyEquipmentAndBusyFleetRemainIntent() {
     // role labels or command admission into substitute cargo equipment.
     for (int mode = 0; mode < 5; ++mode) {
         auto state = deep::createDelegatedFreightScenario();
-        auto& design = state.shipClasses.back();
+        auto& design = *std::find_if(state.shipClasses.begin(),state.shipClasses.end(),[&](const auto& cls){return cls.id==state.ships.back().shipClassId;});
         const auto removeKind = [&](const deep::ShipComponentKind kind) {
             std::erase_if(design.components, [&](const auto& install) {
                 const auto component = std::find_if(state.shipComponents.begin(), state.shipComponents.end(),
@@ -152,17 +153,17 @@ void operatingAllowanceCountsOnlyRealAdditionalFuel() {
     partial.ships.back().fuel = 3.0;
     source(partial).processedStockpile.set(deep::ProcessedMaterial::Propellant, 120.0);
     auto payload = charter(partial, 90.0);
-    payload.material = deep::ProcessedMaterial::Propellant;
+    payload.commodity = deep::ProcessedMaterial::Propellant;
     payload.policy.sourceCargoFloor = 20.0;
-    payload.policy.sourcePropellantFloor = 10.0;
+    payload.policy.basePropellantFloor = 10.0;
     payload.policy.maxAdditionalPropellant = 7.0;
     deep::Simulation delivery{partial};
     authorize(delivery, payload);
     until(delivery, [](const auto& s) { return s.freightPrograms.back().lifecycle == deep::FreightProgramLifecycle::Closed; });
     near(program(delivery).fuelLoaded, 7.0, "partial tanks receive exactly missing7 operating units");
     near(program(delivery).cargoDelivered, 90.0, "90 payload units are not charged against operating allowance7");
-    near(source(delivery.state()).processedStockpile.get(payload.material), 23.0, "source120 pays7 engine plus90 cargo exactly once");
-    near(source(delivery.state()).processedStockpile.get(payload.material) + delivery.state().colonies.back().processedStockpile.get(payload.material) +
+    near(source(delivery.state()).processedStockpile.get(std::get<deep::ProcessedMaterial>(payload.commodity)), 23.0, "source120 pays7 engine plus90 cargo exactly once");
+    near(source(delivery.state()).processedStockpile.get(std::get<deep::ProcessedMaterial>(payload.commodity)) + delivery.state().colonies.back().processedStockpile.get(std::get<deep::ProcessedMaterial>(payload.commodity)) +
          delivery.state().ships.back().fuel + program(delivery).fuelBurned, 123.0,
          "source120 plus initial engine3 equals final stock, tanks and actual burn");
 

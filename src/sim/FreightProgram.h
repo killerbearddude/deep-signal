@@ -1,11 +1,12 @@
 #pragma once
 
-// Durable intent and custody history for the bounded two-colony freight loop.
-// Quantities are normalized processed-material cargo units. Physical inventory
-// lives only in colony stockpiles, ship cargo lots, and engine tanks; manifests
+// Durable intent and custody history for the bounded colony/site freight loop.
+// Quantities are normalized raw or processed cargo units. Physical inventory
+// lives only in colony/site stockpiles, ship cargo lots, and engine tanks; manifests
 // below are finite planned limits, never a second inventory.
 
 #include "sim/Domain.h"
+#include "sim/StockTypes.h"
 
 #include <cstdint>
 #include <optional>
@@ -16,12 +17,13 @@ namespace deep {
 
 struct FreightProgramPolicy {
     double sourceCargoFloor = 0.0;
-    double sourcePropellantFloor = 0.0;
+    // Protects only actual engine Propellant at the immutable colony base.
+    double basePropellantFloor = 0.0;
     std::optional<double> maxAdditionalPropellant;
     double returnContingencyFraction = 0.0;
 };
 
-// This is the complete editable portion of a charter. Keeping route/material
+// This is the complete editable portion of a charter. Keeping route/commodity
 // outside it prevents an amendment from redirecting committed physical goods.
 struct FreightProgramAmendment {
     std::string name;
@@ -33,9 +35,11 @@ struct FreightProgramAmendment {
 
 struct FreightProgramCharter {
     std::string name;
-    ColonyId sourceColonyId;
-    ColonyId destinationColonyId;
-    ProcessedMaterial material = ProcessedMaterial::StructuralAlloys;
+    StockLocation source;
+    StockLocation destination;
+    // Must name a colony endpoint. Source selects delivery, destination collection.
+    ColonyId operatingBaseColonyId;
+    Commodity commodity = ProcessedMaterial::StructuralAlloys;
     double totalQuantity = 0.0;
     std::optional<FleetId> requestedFleetId;
     std::optional<PersonId> requestedLeaderId;
@@ -53,7 +57,9 @@ enum class FreightProgramTask {
     Outbound,
     Unloading,
     Return,
-    ReturningCargo
+    ReturningCargo,
+    // Empty paid collection leg from the immutable base to the source.
+    Collecting
 };
 enum class FreightTransferKind { Load, Delivery, SourceReturn, OperatingFuel };
 
@@ -69,9 +75,11 @@ struct FreightShipment {
     std::int64_t committedDay = 0;
     FleetId fleetId;
     PersonId leaderId;
-    ColonyId sourceColonyId;
-    ColonyId destinationColonyId;
-    ProcessedMaterial material = ProcessedMaterial::StructuralAlloys;
+    StockLocation source;
+    StockLocation destination;
+    // Must name a colony endpoint. Source selects delivery, destination collection.
+    ColonyId operatingBaseColonyId;
+    Commodity commodity = ProcessedMaterial::StructuralAlloys;
     std::vector<FreightManifestRow> manifest;
 };
 
@@ -83,8 +91,8 @@ struct FreightTransferReceipt {
     std::int64_t day = 0;
     FleetId fleetId;
     PersonId leaderId;
-    ColonyId colonyId;
-    ProcessedMaterial material = ProcessedMaterial::StructuralAlloys;
+    StockLocation location;
+    Commodity commodity = ProcessedMaterial::StructuralAlloys;
     FreightTransferKind kind = FreightTransferKind::Load;
     double amount = 0.0;
 };

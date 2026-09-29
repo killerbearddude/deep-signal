@@ -6,6 +6,7 @@
 // express domain calculations; command validation and mutation belong to Simulation.
 
 #include "sim/IdTypes.h"
+#include "sim/StockTypes.h"
 #include "sim/Minerals.h"
 
 #include <cmath>
@@ -347,6 +348,8 @@ struct Colony {
     std::string name;
     MineralSet stockpile;
     ProcessedMaterialSet processedStockpile;
+    // Actual campaign recipe output, excluding authored initial inventory.
+    ProcessedMaterialSet processedProductionTotals{};
     double mines = 0.0;
     double processorCapacity = 0.0;
     double shipyardCapacity = 0.0;
@@ -363,7 +366,8 @@ struct Colony {
 enum class ShipRole {
     Survey,
     Freighter,
-    Escort
+    Escort,
+    Builder
 };
 
 enum class ShipComponentKind {
@@ -475,7 +479,7 @@ struct ShipyardOrder {
 struct ShipCargo {
     FreightProgramId programId;
     int shipmentNumber = 0;
-    ProcessedMaterial material = ProcessedMaterial::StructuralAlloys;
+    Commodity commodity = ProcessedMaterial::StructuralAlloys;
     double quantity = 0.0;
 };
 

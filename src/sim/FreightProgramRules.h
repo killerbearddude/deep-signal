@@ -27,7 +27,23 @@ struct FreightHullCapability {
     double onboardQuantity = 0.0;
 };
 
+// Structured causes drive interruptions; display wording never controls execution.
+enum class FreightReadinessCause {
+    None,
+    Participants,
+    Capacity,
+    CargoStock,
+    Handling,
+    SiteRoom,
+    Route,
+    FuelCapacity,
+    FuelAllowance,
+    FuelStock,
+    Precision
+};
+
 struct FreightShipmentPlan {
+    FreightReadinessCause cause = FreightReadinessCause::None;
     std::vector<FreightManifestRow> manifest;
     double quantity = 0.0;
     double requiredFuel = 0.0;
@@ -50,7 +66,11 @@ struct FreightShipmentPlan {
 // without changing manual/P3A payment behavior or mutating engine fuel.
 [[nodiscard]] bool freightFuelDebitRepresentable(const GameState&, const Fleet&, double cost) noexcept;
 [[nodiscard]] double freightFuelAllowanceRemaining(const FreightProgram&) noexcept;
-[[nodiscard]] double freightEffectiveFloor(const FreightProgram&, ProcessedMaterial) noexcept;
+[[nodiscard]] double freightEffectiveFloor(const FreightProgram&, const StockLocation&,
+                                           const Commodity&) noexcept;
+
+// True when the destination colony is the fixed base, selecting the empty-first cycle.
+[[nodiscard]] bool freightIsCollection(const FreightProgram&) noexcept;
 
 // Admission rejects malformed structure, never absent execution capability.
 // allowZeroQuantity is used for already amended persisted charters.
@@ -74,7 +94,14 @@ void applyFreightAmendment(FreightProgramCharter&, const FreightProgramAmendment
 [[nodiscard]] FreightShipmentPlan evaluateFreightManifest(const GameState&, const FreightProgram&,
                                                           const Fleet&,
                                                           const std::vector<FreightManifestRow>&,
-                                                          std::int64_t departureDay);
+                                                          std::int64_t departureDay,
+                                                          bool collectionFromBase = false);
+// Pure readiness uses current public stocks/capabilities and never hidden geology.
+struct FreightReadiness {
+    FreightReadinessCause cause = FreightReadinessCause::None;
+    std::string message;
+};
+[[nodiscard]] FreightReadiness freightProgramReadiness(const GameState&, const FreightProgram&);
 [[nodiscard]] std::string freightProgramExecutionCondition(const GameState&, const FreightProgram&);
 
 } // namespace deep

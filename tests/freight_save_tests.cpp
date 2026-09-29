@@ -59,15 +59,15 @@ std::string freightFingerprint(const GameState& state) {
     for (const auto& ship : state.ships) {
         out << "ship " << ship.id.value << ':' << ship.fleetId.value << ':' << ship.fuel << ':' << ship.cargo.has_value();
         if (ship.cargo) out << ':' << ship.cargo->programId.value << ':' << ship.cargo->shipmentNumber
-            << ':' << number(ship.cargo->material) << ':' << ship.cargo->quantity;
+            << ':' << number(commodityKind(ship.cargo->commodity)) << ":" << commodityOrdinal(ship.cargo->commodity) << ':' << ship.cargo->quantity;
         out << '\n';
     }
     for (const auto& p : state.freightPrograms) {
         const auto& c = p.charter;
-        out << "program " << p.id.value << ':' << std::quoted(c.name) << ':' << c.sourceColonyId.value
-            << ':' << c.destinationColonyId.value << ':' << number(c.material) << ':' << c.totalQuantity
+        out << "program " << p.id.value << ':' << std::quoted(c.name) << ':' << number(stockLocationKind(c.source)) << ":" << stockLocationId(c.source)
+            << ':' << number(stockLocationKind(c.destination)) << ":" << stockLocationId(c.destination) << ":" << c.operatingBaseColonyId.value << ':' << number(commodityKind(c.commodity)) << ":" << commodityOrdinal(c.commodity) << ':' << c.totalQuantity
             << ':' << value(c.requestedFleetId) << ':' << value(c.requestedLeaderId)
-            << ':' << c.policy.sourceCargoFloor << ':' << c.policy.sourcePropellantFloor
+            << ':' << c.policy.sourceCargoFloor << ':' << c.policy.basePropellantFloor
             << ':' << c.policy.maxAdditionalPropellant.has_value() << ':' << c.policy.maxAdditionalPropellant.value_or(-1.0)
             << ':' << c.policy.returnContingencyFraction << ':' << p.createdDay << ':' << p.charterRevision
             << ':' << number(p.lifecycle) << ':' << number(p.closure) << ':' << p.closedDay.value_or(-1)
@@ -82,19 +82,19 @@ std::string freightFingerprint(const GameState& state) {
         if (p.shipment) {
             const auto& s = *p.shipment;
             out << "shipment " << s.number << ':' << s.charterRevision << ':' << s.committedDay
-                << ':' << s.fleetId.value << ':' << s.leaderId.value << ':' << s.sourceColonyId.value
-                << ':' << s.destinationColonyId.value << ':' << number(s.material) << '\n';
+                << ':' << s.fleetId.value << ':' << s.leaderId.value << ':' << number(stockLocationKind(s.source)) << ":" << stockLocationId(s.source)
+                << ':' << number(stockLocationKind(s.destination)) << ":" << stockLocationId(s.destination) << ":" << s.operatingBaseColonyId.value << ':' << number(commodityKind(s.commodity)) << ":" << commodityOrdinal(s.commodity) << '\n';
             for (const auto& row : s.manifest) out << row.shipId.value << ':' << row.plannedQuantity << '\n';
         }
         for (const auto& r : p.receipts) out << "receipt " << r.sequence << ':' << r.shipmentNumber << ':' << r.day
-            << ':' << r.fleetId.value << ':' << r.leaderId.value << ':' << r.colonyId.value
-            << ':' << number(r.material) << ':' << number(r.kind) << ':' << r.amount << '\n';
+            << ':' << r.fleetId.value << ':' << r.leaderId.value << ':' << number(stockLocationKind(r.location)) << ":" << stockLocationId(r.location)
+            << ':' << number(commodityKind(r.commodity)) << ":" << commodityOrdinal(r.commodity) << ':' << number(r.kind) << ':' << r.amount << '\n';
         for (const auto& r : p.reports) out << "report " << r.startDay << ':' << r.endDay << ':' << r.isNinetyDayReview
             << ':' << r.charterRevision << ':' << r.cargoLoaded << ':' << r.cargoDelivered << ':' << r.cargoReturned
             << ':' << r.fuelLoaded << ':' << r.fuelBurned << ':' << r.cargoAboard << ':' << r.shipmentsStarted
             << ':' << r.targetQuantity << ':' << r.cumulativeDelivered << ':' << r.committedQuantity
             << ':' << value(r.fleetId) << ':' << value(r.fleetBodyId) << ':' << std::quoted(r.waitingReason)
-            << ':' << r.policy.sourceCargoFloor << ':' << r.policy.sourcePropellantFloor
+            << ':' << r.policy.sourceCargoFloor << ':' << r.policy.basePropellantFloor
             << ':' << r.policy.maxAdditionalPropellant.has_value() << ':' << r.policy.maxAdditionalPropellant.value_or(-1.0)
             << ':' << r.policy.returnContingencyFraction << '\n';
     }
@@ -102,8 +102,8 @@ std::string freightFingerprint(const GameState& state) {
         if (const auto* e = std::get_if<FreightProgramAuditEvent>(&event.payload))
             out << "audit " << event.id.value << ':' << event.day << ':' << number(event.severity)
                 << ':' << e->programId.value << ':' << number(e->kind) << ':' << value(e->fleetId)
-                << ':' << value(e->colonyId) << ':' << value(e->leaderId) << ':' << e->charterRevision
-                << ':' << e->shipmentNumber << ':' << e->amount << ':' << std::quoted(e->detail) << '\n';
+                << ':' << (e->location ? number(stockLocationKind(*e->location)) : -1) << ":" << (e->location ? stockLocationId(*e->location) : 0) << ':' << value(e->leaderId) << ':' << e->charterRevision
+                << ':' << e->shipmentNumber << ':' << e->amount << ':' << (e->commodity ? number(commodityKind(*e->commodity)) : -1) << ":" << (e->commodity ? commodityOrdinal(*e->commodity) : -1) << ':' << std::quoted(e->detail) << '\n';
     }
     return out.str();
 }
@@ -159,11 +159,11 @@ GameState fixture() {
 
 FreightProgramCharter charter(const GameState& state) {
     return FreightProgramCharter{
-        .name = "Persistence cargo \"proof\"", .sourceColonyId = state.colonies.at(state.colonies.size()-2).id,
-        .destinationColonyId = state.colonies.back().id, .material = ProcessedMaterial::StructuralAlloys,
+        .name = "Persistence cargo \"proof\"", .source = state.colonies.at(state.colonies.size()-2).id,
+        .destination = state.colonies.back().id, .operatingBaseColonyId = state.colonies.at(state.colonies.size()-2).id, .commodity = ProcessedMaterial::StructuralAlloys,
         .totalQuantity = 500.0, .requestedFleetId = state.fleets.back().id,
         .requestedLeaderId = state.people.front().id,
-        .policy = {.sourceCargoFloor = 0.0, .sourcePropellantFloor = 3.5,
+        .policy = {.sourceCargoFloor = 0.0, .basePropellantFloor = 3.5,
                    .maxAdditionalPropellant = 1000.0, .returnContingencyFraction = 0.1}
     };
 }
@@ -278,7 +278,7 @@ void test_order_and_all_materials() {
     auto c = charter(sim.state());
     require(sim.execute(CreateFreightProgramCommand{c}).ok, "first ordered charter creates");
     c.requestedFleetId.reset();
-    c.material = ProcessedMaterial::OrdnanceMaterials;
+    c.commodity = ProcessedMaterial::OrdnanceMaterials;
     c.name = "Last processed material remains valid";
     require(sim.execute(CreateFreightProgramCommand{c}).ok, "all enum endpoints remain accepted");
     GameState reordered = sim.state();
@@ -370,13 +370,18 @@ void test_malformed_current_snapshot_and_failed_load() {
         {"cargo-nonfinite", "UPDATE ship_cargo SET quantity=1e999;"},
         {"cargo-dangling", "PRAGMA foreign_keys=OFF; UPDATE ship_cargo SET program_id=999;"},
         {"cargo-shipment", "PRAGMA foreign_keys=OFF; UPDATE ship_cargo SET shipment_number=99;"},
-        {"cargo-material", "UPDATE ship_cargo SET material=2;"},
+        {"cargo-material", "UPDATE ship_cargo SET commodity=2;"},
+        {"cargo-kind-alias", "UPDATE ship_cargo SET commodity_kind=1;"},
+        {"source-kind-alias", "UPDATE freight_programs SET source_kind=1;"},
+        {"receipt-kind-alias", "UPDATE freight_transfer_receipts SET commodity_kind=1;"},
+        {"bad-commodity-tag", "PRAGMA ignore_check_constraints=ON; UPDATE ship_cargo SET commodity_kind=7;"},
+        {"bad-location-tag", "PRAGMA ignore_check_constraints=ON; UPDATE freight_programs SET destination_kind=7;"},
         {"cargo-zero", "PRAGMA ignore_check_constraints=ON; UPDATE ship_cargo SET quantity=0;"},
         {"program-ordinal", "UPDATE freight_programs SET ordinal=7;"},
         {"program-type", "PRAGMA ignore_check_constraints=ON; UPDATE freight_programs SET task=1.5;"},
         {"program-counter", "UPDATE freight_programs SET cargo_loaded=cargo_loaded+1;"},
         {"return-with-cargo", "UPDATE freight_programs SET task=6;"},
-        {"task-location", "UPDATE fleets SET current_body_id=(SELECT body_id FROM colonies WHERE id=(SELECT destination_colony_id FROM freight_programs)) WHERE id=(SELECT leased_fleet_id FROM freight_programs);"},
+        {"task-location", "UPDATE fleets SET current_body_id=(SELECT body_id FROM colonies WHERE id=(SELECT destination_id FROM freight_programs)) WHERE id=(SELECT leased_fleet_id FROM freight_programs);"},
         {"program-fractional-id", "UPDATE id_counters SET value=1.5 WHERE key='next_freight_program_id';"},
         {"manifest-ordinal", "UPDATE freight_shipment_manifest SET ordinal=4;"},
         {"manifest-type", "UPDATE freight_shipment_manifest SET planned_quantity='bogus';"},
@@ -440,7 +445,7 @@ void test_report_limits_survive_amendment_and_load() {
     Simulation sim{fixture()};
     auto c = charter(sim.state());
     c.requestedFleetId.reset();
-    c.policy = {.sourceCargoFloor = 7.0, .sourcePropellantFloor = 11.0,
+    c.policy = {.sourceCargoFloor = 7.0, .basePropellantFloor = 11.0,
                 .maxAdditionalPropellant = 20.0, .returnContingencyFraction = 0.3};
     require(sim.execute(CreateFreightProgramCommand{c}).ok, "waiting charter with explicit limits authorizes");
     require(sim.advanceDaysDetailed(30).advancedDays == 30, "waiting charter publishes its first report");
@@ -448,7 +453,7 @@ void test_report_limits_survive_amendment_and_load() {
     auto amendment = FreightProgramAmendment{
         .name = c.name, .totalQuantity = 700.0, .requestedFleetId = std::nullopt,
         .requestedLeaderId = c.requestedLeaderId,
-        .policy = {.sourceCargoFloor = 17.0, .sourcePropellantFloor = 31.0,
+        .policy = {.sourceCargoFloor = 17.0, .basePropellantFloor = 31.0,
                    .maxAdditionalPropellant = std::nullopt, .returnContingencyFraction = 0.7}
     };
     require(sim.execute(AmendFreightProgramCommand{id, amendment}).ok, "later limits amendment is accepted");
@@ -461,10 +466,10 @@ void test_report_limits_survive_amendment_and_load() {
     require(p.reports.size() == 2, "both dated reports survive");
     const auto& oldPolicy = p.reports.front().policy;
     const auto& newPolicy = p.reports.back().policy;
-    require(oldPolicy.sourceCargoFloor == 7.0 && oldPolicy.sourcePropellantFloor == 11.0 &&
+    require(oldPolicy.sourceCargoFloor == 7.0 && oldPolicy.basePropellantFloor == 11.0 &&
             oldPolicy.maxAdditionalPropellant == 20.0 && oldPolicy.returnContingencyFraction == 0.3,
             "prior report retains its original finite lifetime allowance and floors");
-    require(newPolicy.sourceCargoFloor == 17.0 && newPolicy.sourcePropellantFloor == 31.0 &&
+    require(newPolicy.sourceCargoFloor == 17.0 && newPolicy.basePropellantFloor == 31.0 &&
             !newPolicy.maxAdditionalPropellant && newPolicy.returnContingencyFraction == 0.7 &&
             p.charter.policy.sourceCargoFloor == 17.0 && !p.charter.policy.maxAdditionalPropellant,
             "later report and active charter retain amended unlimited allowance independently");

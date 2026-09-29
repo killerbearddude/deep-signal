@@ -39,7 +39,7 @@ template <typename IdT>
     return id.value;
 }
 
-// Converts enum values to stable persisted ordinals. Schema migrations must
+// Converts enum values to stable persisted ordinals. Future schema revisions must
 // account for any future enum reordering.
 template <typename EnumT>
 [[nodiscard]] std::int64_t enumValue(const EnumT value) noexcept {
@@ -62,6 +62,12 @@ template <typename EnumT>
         return value >= 0 && value <= static_cast<std::int64_t>(AnalysisAuditKind::IssueAcknowledged);
     } else if constexpr (std::is_same_v<EnumT, MaintenanceAuditKind>) {
         return value >= 0 && value <= static_cast<std::int64_t>(MaintenanceAuditKind::IssueAcknowledged);
+    } else if constexpr (std::is_same_v<EnumT, SiteDevelopmentAuditKind>) {
+        return value >= 0 && value <= static_cast<std::int64_t>(SiteDevelopmentAuditKind::IssueAcknowledged);
+    } else if constexpr (std::is_same_v<EnumT, SiteOperatingAuditKind>) {
+        return value >= 0 && value <= static_cast<std::int64_t>(SiteOperatingAuditKind::IssueAcknowledged);
+    } else if constexpr (std::is_same_v<EnumT, SiteOperatingIssueCause>) {
+        return value >= 0 && value <= static_cast<std::int64_t>(SiteOperatingIssueCause::DutyAllowance);
     } else {
         static_assert(std::is_enum_v<EnumT>, "enumFromValue requires an enum type");
         return false;
@@ -267,6 +273,45 @@ void requireFlatJsonObjectShape(const std::string_view json) {
 
 #endif // !DEEP_SIGNAL_HAS_NLOHMANN_JSON
 
+template<class Id> std::optional<Id> optionalAuditId(std::int64_t value) {
+    if(value<0)throw std::runtime_error("Negative optional audit identity");
+    return value==0?std::nullopt:std::optional{Id{value}};
+}
+// Kind/value pairs have one canonical absent spelling. Decode the new flat
+// records identically with either JSON backend; no legacy shape is inferred.
+template<class Integer,class Number,class Text>
+std::optional<SimEventPayload> readSiteAndFreightAudit(std::string_view type,Integer integer,Number number,Text text) {
+    if(type=="freight_program_audit") {
+        const auto locationKind=integer("location_kind"),locationId=integer("location_id");
+        const auto cargoKind=integer("commodity_kind"),cargoValue=integer("commodity");
+        if((locationKind==-1&&locationId!=0)||(cargoKind==-1&&cargoValue!=0))throw std::runtime_error("Invalid absent tagged audit reference");
+        FreightProgramAuditEvent e;
+        e.programId=FreightProgramId{integer("program_id")};e.kind=enumFromValue<FreightProgramAuditKind>(integer("kind"));
+        e.fleetId=optionalAuditId<FleetId>(integer("fleet_id"));
+        if(locationKind!=-1)e.location=stockLocationFromStored(locationKind,locationId);
+        e.leaderId=optionalAuditId<PersonId>(integer("leader_id"));
+        e.charterRevision=checkedIntFromPayload(integer("charter_revision"),"event.charter_revision");
+        e.shipmentNumber=checkedIntFromPayload(integer("shipment_number"),"event.shipment_number");
+        e.amount=number("amount");e.detail=text("detail");
+        if(cargoKind!=-1)e.commodity=commodityFromStored(cargoKind,cargoValue);
+        return e;
+    }
+    if(type=="site_development_audit") {
+        SiteDevelopmentAuditEvent e;e.programId=SiteDevelopmentProgramId{integer("program_id")};
+        e.kind=enumFromValue<SiteDevelopmentAuditKind>(integer("kind"));e.siteId=SiteId{integer("site_id")};
+        e.fleetId=optionalAuditId<FleetId>(integer("fleet_id"));e.teamId=optionalAuditId<MaintenanceTeamId>(integer("team_id"));
+        e.workshopShipId=optionalAuditId<ShipId>(integer("workshop_ship_id"));e.leaderId=optionalAuditId<PersonId>(integer("leader_id"));
+        e.charterRevision=checkedIntFromPayload(integer("charter_revision"),"event.charter_revision");
+        e.packageRow=checkedIntFromPayload(integer("package_row"),"event.package_row");e.amount=number("amount");e.detail=text("detail");return e;
+    }
+    if(type=="site_operating_audit") {
+        SiteOperatingAuditEvent e;e.siteId=SiteId{integer("site_id")};e.kind=enumFromValue<SiteOperatingAuditKind>(integer("kind"));
+        e.operatingRevision=checkedIntFromPayload(integer("operating_revision"),"event.operating_revision");
+        e.cause=enumFromValue<SiteOperatingIssueCause>(integer("cause"));e.episodeStartedDay=integer("episode_started_day");e.amount=number("amount");e.detail=text("detail");return e;
+    }
+    return std::nullopt;
+}
+
 } // namespace
 
 [[nodiscard]] std::string eventTypeName(const SimEventPayload& payload) {
@@ -296,6 +341,10 @@ void requireFlatJsonObjectShape(const std::string_view json) {
             return "maintenance_program_audit";
         } else if constexpr (std::is_same_v<Event, AnalysisProgramAuditEvent>) {
             return "analysis_program_audit";
+        } else if constexpr (std::is_same_v<Event, SiteDevelopmentAuditEvent>) {
+            return "site_development_audit";
+        } else if constexpr (std::is_same_v<Event, SiteOperatingAuditEvent>) {
+            return "site_operating_audit";
         } else if constexpr (std::is_same_v<Event, CommandRejectedEvent>) {
             return "command_rejected";
         }
@@ -356,7 +405,10 @@ void requireFlatJsonObjectShape(const std::string_view json) {
             object["program_id"] = idValue(event.programId);
             object["kind"] = enumValue(event.kind);
             object["fleet_id"] = event.fleetId ? idValue(*event.fleetId) : 0;
-            object["colony_id"] = event.colonyId ? idValue(*event.colonyId) : 0;
+            object["location_kind"] = event.location ? enumValue(stockLocationKind(*event.location)) : -1;
+            object["location_id"] = event.location ? stockLocationId(*event.location) : 0;
+            object["commodity_kind"] = event.commodity ? enumValue(commodityKind(*event.commodity)) : -1;
+            object["commodity"] = event.commodity ? commodityOrdinal(*event.commodity) : 0;
             object["leader_id"] = event.leaderId ? idValue(*event.leaderId) : 0;
             object["charter_revision"] = event.charterRevision;
             object["shipment_number"] = event.shipmentNumber;
@@ -375,6 +427,16 @@ void requireFlatJsonObjectShape(const std::string_view json) {
         } else if constexpr (std::is_same_v<Event, AnalysisProgramAuditEvent>) {
             object["program_id"] = idValue(event.programId); object["kind"] = enumValue(event.kind);
             object["job_id"] = event.jobId.value; object["detail"] = event.detail;
+        } else if constexpr (std::is_same_v<Event, SiteDevelopmentAuditEvent>) {
+            object["program_id"]=event.programId.value;object["kind"]=enumValue(event.kind);object["site_id"]=event.siteId.value;
+            object["fleet_id"]=event.fleetId?event.fleetId->value:0;object["team_id"]=event.teamId?event.teamId->value:0;
+            object["workshop_ship_id"]=event.workshopShipId?event.workshopShipId->value:0;object["leader_id"]=event.leaderId?event.leaderId->value:0;
+            object["charter_revision"]=event.charterRevision;object["package_row"]=event.packageRow;
+            object["amount"]=checkedFiniteDoubleFromPayload(event.amount,"event.amount");object["detail"]=event.detail;
+        } else if constexpr (std::is_same_v<Event, SiteOperatingAuditEvent>) {
+            object["site_id"]=event.siteId.value;object["kind"]=enumValue(event.kind);object["operating_revision"]=event.operatingRevision;
+            object["cause"]=enumValue(event.cause);object["episode_started_day"]=event.episodeStartedDay;
+            object["amount"]=checkedFiniteDoubleFromPayload(event.amount,"event.amount");object["detail"]=event.detail;
         } else if constexpr (std::is_same_v<Event, CommandRejectedEvent>) {
             object["reason"] = event.reason;
         }
@@ -435,7 +497,10 @@ void requireFlatJsonObjectShape(const std::string_view json) {
             out << "\"program_id\":" << idValue(event.programId)
                 << ",\"kind\":" << enumValue(event.kind)
                 << ",\"fleet_id\":" << (event.fleetId ? idValue(*event.fleetId) : 0)
-                << ",\"colony_id\":" << (event.colonyId ? idValue(*event.colonyId) : 0)
+                << ",\"location_kind\":" << (event.location ? enumValue(stockLocationKind(*event.location)) : -1)
+                << ",\"location_id\":" << (event.location ? stockLocationId(*event.location) : 0)
+                << ",\"commodity_kind\":" << (event.commodity ? enumValue(commodityKind(*event.commodity)) : -1)
+                << ",\"commodity\":" << (event.commodity ? commodityOrdinal(*event.commodity) : 0)
                 << ",\"leader_id\":" << (event.leaderId ? idValue(*event.leaderId) : 0)
                 << ",\"charter_revision\":" << event.charterRevision
                 << ",\"shipment_number\":" << event.shipmentNumber
@@ -454,6 +519,16 @@ void requireFlatJsonObjectShape(const std::string_view json) {
         } else if constexpr (std::is_same_v<Event, AnalysisProgramAuditEvent>) {
             out << "\"program_id\":" << idValue(event.programId) << ",\"kind\":" << enumValue(event.kind)
                 << ",\"job_id\":" << event.jobId.value << ",\"detail\":" << quoteJson(event.detail);
+        } else if constexpr (std::is_same_v<Event, SiteDevelopmentAuditEvent>) {
+            out << "\"program_id\":" << event.programId.value << ",\"kind\":" << enumValue(event.kind) << ",\"site_id\":" << event.siteId.value
+                << ",\"fleet_id\":" << (event.fleetId?event.fleetId->value:0) << ",\"team_id\":" << (event.teamId?event.teamId->value:0)
+                << ",\"workshop_ship_id\":" << (event.workshopShipId?event.workshopShipId->value:0) << ",\"leader_id\":" << (event.leaderId?event.leaderId->value:0)
+                << ",\"charter_revision\":" << event.charterRevision << ",\"package_row\":" << event.packageRow
+                << ",\"amount\":" << numberToJson(event.amount,"event.amount") << ",\"detail\":" << quoteJson(event.detail);
+        } else if constexpr (std::is_same_v<Event, SiteOperatingAuditEvent>) {
+            out << "\"site_id\":" << event.siteId.value << ",\"kind\":" << enumValue(event.kind) << ",\"operating_revision\":" << event.operatingRevision
+                << ",\"cause\":" << enumValue(event.cause) << ",\"episode_started_day\":" << event.episodeStartedDay
+                << ",\"amount\":" << numberToJson(event.amount,"event.amount") << ",\"detail\":" << quoteJson(event.detail);
         } else if constexpr (std::is_same_v<Event, CommandRejectedEvent>) {
             out << "\"reason\":" << quoteJson(event.reason);
         }
@@ -498,6 +573,7 @@ void requireFlatJsonObjectShape(const std::string_view json) {
         }
         return it->get<std::string>();
     };
+    if (const auto added = readSiteAndFreightAudit(eventType,requireInt64,requireDouble,requireString)) return *added;
 
     if (eventType == "mineral_extracted") {
         return MineralExtractedEvent{
@@ -582,25 +658,6 @@ void requireFlatJsonObjectShape(const std::string_view json) {
         };
     }
 
-    if (eventType == "freight_program_audit") {
-        const std::int64_t fleetId = requireInt64("fleet_id");
-        const std::int64_t colonyId = requireInt64("colony_id");
-        const std::int64_t leaderId = requireInt64("leader_id");
-        if (fleetId < 0 || colonyId < 0 || leaderId < 0) {
-            throw std::runtime_error{"Invalid optional ID in freight program audit payload"};
-        }
-        return FreightProgramAuditEvent{
-            .programId = FreightProgramId{requireInt64("program_id")},
-            .kind = enumFromValue<FreightProgramAuditKind>(requireInt64("kind")),
-            .fleetId = fleetId == 0 ? std::nullopt : std::optional{FleetId{fleetId}},
-            .colonyId = colonyId == 0 ? std::nullopt : std::optional{ColonyId{colonyId}},
-            .leaderId = leaderId == 0 ? std::nullopt : std::optional{PersonId{leaderId}},
-            .charterRevision = checkedIntFromPayload(requireInt64("charter_revision"), "event.charter_revision"),
-            .shipmentNumber = checkedIntFromPayload(requireInt64("shipment_number"), "event.shipment_number"),
-            .amount = requireDouble("amount"),
-            .detail = requireString("detail")
-        };
-    }
 
     if (eventType == "equipment_duty_used") {
         const auto id = requireInt64("survey_program_id");
@@ -625,6 +682,10 @@ void requireFlatJsonObjectShape(const std::string_view json) {
 
     throw std::runtime_error{"Unknown event type in save file"};
 #else
+    if (const auto added = readSiteAndFreightAudit(eventType,
+        [&](std::string_view key){return jsonInt64(payloadJson,key);},
+        [&](std::string_view key){return jsonDouble(payloadJson,key);},
+        [&](std::string_view key){return jsonString(payloadJson,key);})) return *added;
 
     if (eventType == "mineral_extracted") {
         return MineralExtractedEvent{
@@ -709,25 +770,6 @@ void requireFlatJsonObjectShape(const std::string_view json) {
         };
     }
 
-    if (eventType == "freight_program_audit") {
-        const std::int64_t fleetId = jsonInt64(payloadJson, "fleet_id");
-        const std::int64_t colonyId = jsonInt64(payloadJson, "colony_id");
-        const std::int64_t leaderId = jsonInt64(payloadJson, "leader_id");
-        if (fleetId < 0 || colonyId < 0 || leaderId < 0) {
-            throw std::runtime_error{"Invalid optional ID in freight program audit payload"};
-        }
-        return FreightProgramAuditEvent{
-            .programId = FreightProgramId{jsonInt64(payloadJson, "program_id")},
-            .kind = enumFromValue<FreightProgramAuditKind>(jsonInt64(payloadJson, "kind")),
-            .fleetId = fleetId == 0 ? std::nullopt : std::optional{FleetId{fleetId}},
-            .colonyId = colonyId == 0 ? std::nullopt : std::optional{ColonyId{colonyId}},
-            .leaderId = leaderId == 0 ? std::nullopt : std::optional{PersonId{leaderId}},
-            .charterRevision = checkedIntFromPayload(jsonInt64(payloadJson, "charter_revision"), "event.charter_revision"),
-            .shipmentNumber = checkedIntFromPayload(jsonInt64(payloadJson, "shipment_number"), "event.shipment_number"),
-            .amount = jsonDouble(payloadJson, "amount"),
-            .detail = jsonString(payloadJson, "detail")
-        };
-    }
 
     if (eventType == "equipment_duty_used") {
         const auto id = jsonInt64(payloadJson,"survey_program_id");

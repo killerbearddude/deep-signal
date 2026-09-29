@@ -1,3 +1,5 @@
+#include "sim/SiteOperationRules.h"
+#include "sim/StockAccess.h"
 #include "app/SimulationQueries.h"
 
 #include "app/ForecastService.h"
@@ -198,6 +200,7 @@ template <typename T, typename IdT>
         return "Survey";
     case ShipRole::Freighter:
         return "Freighter";
+    case ShipRole::Builder: return "Builder";
     case ShipRole::Escort:
         return "Escort";
     }
@@ -878,6 +881,10 @@ void addProcessingWeight(ProcessingShares& weights, const ProcessedMaterial mate
             return "maintenance_program";
         } else if constexpr (std::is_same_v<Event, AnalysisProgramAuditEvent>) {
             return "analysis_program";
+        } else if constexpr (std::is_same_v<Event, SiteDevelopmentAuditEvent>) {
+            return "site_development";
+        } else if constexpr (std::is_same_v<Event, SiteOperatingAuditEvent>) {
+            return "site_operation";
         } else if constexpr (std::is_same_v<Event, CommandRejectedEvent>) {
             return "command_rejected";
         }
@@ -922,6 +929,10 @@ void addProcessingWeight(ProcessingShares& weights, const ProcessedMaterial mate
             out << "Maintenance program " << event.programId.value << ": " << event.detail;
         } else if constexpr (std::is_same_v<Event, AnalysisProgramAuditEvent>) {
             out << "Analysis program " << event.programId.value << ": " << event.detail;
+        } else if constexpr (std::is_same_v<Event, SiteDevelopmentAuditEvent>) {
+            out << "Site development " << event.programId.value << ": " << event.detail;
+        } else if constexpr (std::is_same_v<Event, SiteOperatingAuditEvent>) {
+            out << "Site " << event.siteId.value << ": " << event.detail;
         } else if constexpr (std::is_same_v<Event, CommandRejectedEvent>) {
             out << event.reason;
         }
@@ -974,7 +985,9 @@ std::vector<ColonySummary> SimulationQueries::colonies() const {
                 state, AppointmentRole::ShipyardDirector, AppointmentScopeType::Colony, colony.id.value)
                 .value_or(AppointmentModifierDetails{}).breakdown,
             .totalRawStockpile = totalMinerals(colony.stockpile),
-            .totalProcessedStockpile = totalProcessedMaterials(colony.processedStockpile)
+            .totalProcessedStockpile = totalProcessedMaterials(colony.processedStockpile),
+            .processedProductionTotals=colony.processedProductionTotals,
+            .rawStockpiles=colony.stockpile
         });
     }
 
@@ -1986,19 +1999,27 @@ std::vector<FreightProgramSummary> SimulationQueries::freightPrograms() const {
         if (program.closure == FreightProgramClosure::Completed) row.lifecycleName += " / Completed";
         if (program.closure == FreightProgramClosure::Cancelled) row.lifecycleName += " / Cancelled";
         switch (program.task) {
+        case FreightProgramTask::Collecting: row.taskName="Empty collection leg to source"; break;
         case FreightProgramTask::None: row.taskName = "Planning"; break;
-        case FreightProgramTask::Reposition: row.taskName = "Reposition to source"; break;
+        case FreightProgramTask::Reposition: row.taskName = "Reposition to operating base"; break;
         case FreightProgramTask::Preparing: row.taskName = "Prepare operating fuel"; break;
         case FreightProgramTask::Loading: row.taskName = "Loading cargo"; break;
         case FreightProgramTask::Outbound: row.taskName = "Outbound"; break;
         case FreightProgramTask::Unloading: row.taskName = "Unload at destination"; break;
-        case FreightProgramTask::Return: row.taskName = "Empty return to source"; break;
+        case FreightProgramTask::Return: row.taskName = "Empty return to operating base"; break;
         case FreightProgramTask::ReturningCargo: row.taskName = "Return unshipped cargo to source stock"; break;
         }
         row.condition = freightProgramExecutionCondition(state, program);
-        row.sourceName = colonyName(state, program.charter.sourceColonyId);
-        row.destinationName = colonyName(state, program.charter.destinationColonyId);
-        row.materialName = std::string{toString(program.charter.material)};
+        row.sourceName = stockLocationName(state, program.charter.source);
+        row.destinationName = stockLocationName(state, program.charter.destination);
+        row.materialName = std::string{commodityName(program.charter.commodity)};
+        row.operatingBaseName=stockLocationName(state,program.charter.operatingBaseColonyId);
+        const auto openingDay=state.date.day==std::numeric_limits<std::int64_t>::max()?state.date.day:state.date.day+1;
+        if(const auto* site=std::get_if<SiteId>(&program.charter.source))row.sourceRawHandling=siteRawHandlingPreview(state,*site,openingDay);
+        if(const auto* site=std::get_if<SiteId>(&program.charter.destination)) {
+            row.destinationRawHandling=siteRawHandlingPreview(state,*site,openingDay);
+            row.destinationRawRoom=siteRawRoom(state,*site,openingDay);
+        }
         row.requestedFleetName = program.charter.requestedFleetId ? fleetName(state, *program.charter.requestedFleetId) : "Unassigned";
         row.leasedFleetName = program.leasedFleetId ? fleetName(state, *program.leasedFleetId) : "None";
         row.taskFleetName = program.taskFleetId ? fleetName(state, *program.taskFleetId) : "None";
@@ -2030,13 +2051,9 @@ std::vector<FreightProgramSummary> SimulationQueries::freightPrograms() const {
         row.canSuspend = row.canAmend && program.lifecycle != FreightProgramLifecycle::Suspended;
         row.canResume = program.lifecycle == FreightProgramLifecycle::Suspended;
         row.canCancel = row.canAmend;
-        if (const Colony* source = findById(state.colonies, program.charter.sourceColonyId)) {
-            row.sourceCargoStock = source->processedStockpile.get(program.charter.material);
-            row.sourcePropellantStock = source->processedStockpile.get(ProcessedMaterial::Propellant);
-        }
-        if (const Colony* destination = findById(state.colonies, program.charter.destinationColonyId)) {
-            row.destinationStock = destination->processedStockpile.get(program.charter.material);
-        }
+        row.sourceCargoStock=stockQuantity(state,program.charter.source,program.charter.commodity);
+        row.sourcePropellantStock=stockQuantity(state,program.charter.operatingBaseColonyId,ProcessedMaterial::Propellant);
+        row.destinationStock=stockQuantity(state,program.charter.destination,program.charter.commodity);
         const auto fleetId = program.lifecycle == FreightProgramLifecycle::Closed ? std::optional<FleetId>{}
             : program.taskFleetId ? program.taskFleetId
             : (program.leasedFleetId ? program.leasedFleetId : program.charter.requestedFleetId);
@@ -2063,7 +2080,7 @@ std::vector<FreightProgramSummary> SimulationQueries::freightPrograms() const {
                 if (ship && ship->cargo) {
                     hull.cargoProgramId = ship->cargo->programId;
                     hull.shipmentNumber = ship->cargo->shipmentNumber;
-                    hull.materialName = std::string{toString(ship->cargo->material)};
+                    hull.materialName = std::string{commodityName(ship->cargo->commodity)};
                 }
                 row.hulls.push_back(std::move(hull));
             }
@@ -2077,7 +2094,7 @@ std::vector<FreightProgramSummary> SimulationQueries::freightPrograms() const {
             case FreightTransferKind::OperatingFuel: action = "Operating fuel loaded"; break;
             }
             row.receipts.push_back({receipt, std::move(action), fleetName(state, receipt.fleetId),
-                personName(state, receipt.leaderId), colonyName(state, receipt.colonyId), std::string{toString(receipt.material)}});
+                personName(state, receipt.leaderId), stockLocationName(state, receipt.location), std::string{commodityName(receipt.commodity)}});
         }
         for (const FreightProgramReport& report : program.reports) {
             row.reports.push_back({report, report.fleetId ? fleetName(state, *report.fleetId) : "None",
@@ -2099,8 +2116,8 @@ FreightProgramCharterPreview SimulationQueries::previewFreightProgramCharter(
             preview.validationMessage = "No editable freight program with that identity";
             return preview;
         }
-        if (charter.sourceColonyId != existing->charter.sourceColonyId ||
-            charter.destinationColonyId != existing->charter.destinationColonyId || charter.material != existing->charter.material) {
+        if (charter.source != existing->charter.source ||
+            charter.destination != existing->charter.destination || charter.commodity != existing->charter.commodity || charter.operatingBaseColonyId!=existing->charter.operatingBaseColonyId) {
             preview.validationMessage = "Source, destination and material are fixed contract identity";
             return preview;
         }
@@ -2156,7 +2173,7 @@ FreightProgramCharterPreview SimulationQueries::previewFreightProgramCharter(
             if (ship && ship->cargo) {
                 hull.cargoProgramId = ship->cargo->programId;
                 hull.shipmentNumber = ship->cargo->shipmentNumber;
-                hull.materialName = std::string{toString(ship->cargo->material)};
+                hull.materialName = std::string{commodityName(ship->cargo->commodity)};
             }
             preview.hulls.push_back(std::move(hull));
         }

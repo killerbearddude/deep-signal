@@ -1,7 +1,7 @@
 # Simulation state contract
 
 This document records the H1A processing-configuration, H1B save-continuity,
-P1 shipyard-intent, P2 vessel-design, P3A delegated-survey, P3B freight, P3C service and P4A scientific-evidence contracts.
+P1 shipyard-intent, P2 vessel-design, P3A delegated-survey, P3B freight, P3C service, P4A scientific evidence and P4B site-development contracts.
 The in-memory `GameState` remains the authority for
 gameplay; SQLite stores explicit snapshots, not a second live world or a replay
 stream.
@@ -120,6 +120,9 @@ vectors:
 | `equipmentFamilies` (v15) | `equipment_families` |
 | `maintenanceTeams` (v15) | `maintenance_teams` |
 | `maintenancePrograms` (v15) | `maintenance_programs` |
+| `siteModuleCatalog` (v17) | `site_module_catalog` |
+| `resourceSites` (v17) | `resource_sites` |
+| `siteDevelopmentPrograms` (v17) | `site_development_programs` |
 | `shipClasses` | `ship_classes` |
 | `shipyardOrders` | `shipyard_orders` |
 | `ships` | `ships` |
@@ -141,44 +144,44 @@ by mineral/material enum index, while metadata and ID counters remain keyed by
 name. `event_log` remains ordered by Event ID, with strictly increasing IDs and
 nondecreasing event days validated; it has no second ordinal.
 
-The current v16 writer assigns contiguous ordinals beginning at zero. Schema
+The current v17 writer assigns contiguous ordinals beginning at zero. Schema
 constraints require non-null integer, nonnegative, unique values in each scope;
 the reader also checks storage type and contiguity before accepting a sequence.
 Every ordered read uses explicit `ORDER BY`. Missing, duplicate, fractional,
-negative, or gapped v16 order data is rejected rather than reconstructed in
+negative, or gapped v17 order data is rejected rather than reconstructed in
 legacy ID order. Empty collections are valid.
 
 ## Schema versions and destination policy
 
-H1A wrote schema v10, H1B wrote v11, P2 wrote v12, P3A wrote v13 and P3B wrote v14. P3C wrote v15. P4A writes and reads
-**v16 only**. Deep Signal is in active pre-release development: development
+H1A wrote schema v10, H1B wrote v11, P2 wrote v12, P3A wrote v13 and P3B wrote v14. P3C wrote v15 and P4A wrote v16. P4B writes and reads
+**v17 only**. Deep Signal is in active pre-release development: development
 save files are disposable, and compatibility across schema versions is not
 guaranteed unless a future milestone explicitly establishes it. This is the
 current development policy, not a permanent release policy. An older file,
-including v15, fails with an unsupported-schema error before gameplay
+including v16, fails with an unsupported-schema error before gameplay
 reconstruction. Load opens it read-only and does not modify it. Save refuses to
 overwrite older or unknown schemas. No automatic migration or in-place repair
 is performed.
 
-The v16 reader requires the current table, column, key, and foreign-key shape,
+The v17 reader requires the current table, column, key, and foreign-key shape,
 complete component and material-cost rows, class revision identity, ordered
 installations, program/team references, scoped target/receipt/report ordinals,
 freight commitment/custody/history references, and all H1B ordering checks. New
 freight numeric values and enums use strict SQLite storage-type readers. A
 version marker alone does not make a file valid.
 Destination recognition compares the user schema object set and each table's
-`table_xinfo`, `foreign_key_list`, and index shape with a freshly built v16
+`table_xinfo`, `foreign_key_list`, and index shape with a freshly built v17
 reference. Save rejects user triggers even on known tables because their write
 effects are not trusted. Read-only Load may tolerate triggers on known tables.
 The check does not require byte-identical `CREATE TABLE` text or silently add
 missing columns.
 
 Save accepts a new path, a schema-empty database, or an existing compatible,
-valid v16 save. It validates its input state before opening the destination.
+valid v17 save. It validates its input state before opening the destination.
 The connection enables foreign keys before an immediate write transaction.
-Inside that transaction it verifies an existing v16 snapshot before replacement,
-creates v16 schema only if empty, replaces rows, rereads the new snapshot, and
-commits only after validation. Load opens read-only, checks v16 structure and
+Inside that transaction it verifies an existing v17 snapshot before replacement,
+creates v17 schema only if empty, replaces rows, rereads the new snapshot, and
+commits only after validation. Load opens read-only, checks v17 structure and
 foreign keys, and validates a detached snapshot within one read transaction.
 A failed replacement rolls back the previous valid save's **logical** contents
 and schema. A failed first save may leave an empty new file; neither path
@@ -196,16 +199,16 @@ references, processing-editor drafts, and window geometry are also outside the
 game snapshot. Successful Load replaces the world and clears old-world
 interaction and editor state through the existing lifecycle.
 
-The H1B ordering contract, retained in v16, supports comparisons of durable state, ordered
+The H1B ordering contract, retained in v17, supports comparisons of durable state, ordered
 children, counters, and meaningful event order when an unsaved and reloaded
 simulation continue under the **same build and same inputs**. It does not
 promise bitwise identical floating-point results across compilers, platforms,
-or build flags, or unchanged outcomes after gameplay rules change. The H1A processing checks remain in force for current v16 snapshots.
+or build flags, or unchanged outcomes after gameplay rules change. The H1A processing checks remain in force for current v17 snapshots.
 
 ## Review evidence
 
 H1A processing-allocation and H1B durable-ordering tests remain part of the
-current suite. Current persistence evidence covers v16 round trips,
+current suite. Current persistence evidence covers v17 round trips,
 same-build continuation, malformed-state rejection, transactional rollback,
 and explicit rejection of older development schemas without changing their
 source files. Historical v10/v11 fixtures remain documented as evidence of
@@ -236,7 +239,7 @@ sufficient. P2 does not change sustained-burn transit physics.
 
 P2's v12 schema replaced class aggregate cost/BP/tank columns with component
 tables, ordered installations, and revision lineage. P3C retains those records
-in v16 alongside program state, physical instrument condition and scientific records. Old v10/v11/v12 fixtures remain useful for
+in v17 alongside program state, physical instrument condition and scientific records. Old v10/v11/v12 fixtures remain useful for
 proving current rejection is clean and leaves source files unchanged.
 
 ## P3A: delegated home-supported survey programs
@@ -640,3 +643,165 @@ staffing, staffed Mission Control, remote tender support, final propulsion, site
 development, research and the remaining P3 residuals are not implemented here.
 The accepted historical [P3 residual register](p3-closeout-and-residual-register.md)
 remains the record of the pre-P4A scope decision; R04 is addressed by this section.
+
+## P4B: v17 persistence boundary
+
+Only the active v17 snapshot is read or written. A v16 or older development
+file is rejected before gameplay reconstruction or replacement; no migration,
+synthetic site, catalog conversion, or in-place repair is provided. Historical
+rejection fixtures remain in use and have not been removed.
+
+`SiteSchema.cpp` and `SitePersistence.cpp` add focused relational records:
+
+| Stored authority | Tables |
+| --- | --- |
+| Authored module definitions, exact version/kind, costs and vector order | `site_module_catalog` |
+| Typed construction-family capability binding | `site_construction_binding` |
+| Cumulative actual colony processor output by processed channel | `colony_processing_totals` |
+| Registered location/body, separate raw/processed stores, standing operating policy/revision, report cursor and issue episode | `resource_sites` |
+| Frozen construction route/package version, requested/leased/task assets, work/commissioning status, fuel and policy/history cursors | `site_development_programs` |
+| Ordered package rows, exact counts, partial work, pinned workshop and consumed channels | `site_development_rows` |
+| Earned groups tied to their originating program/package row and commissioning day | `site_installed_modules` |
+| Actual engineering participants, dated work and consumed inputs | `site_development_work` |
+| Dated construction summaries, policy snapshots and publication audit cutoff | `site_development_reports` |
+| Actual supported duty and supply debits with historical policy/equipment cutoff | `site_duty_receipts` |
+| Dated attempted/recovered Ice and observed limitations, without hidden reserve/accessibility | `site_extraction_receipts` |
+| Operating totals, raw occupancy/capacity, export/delivery, historical policy and publication cutoff | `site_operating_reports` |
+
+Every ordered child retains a contiguous zero-based ordinal in its parent
+scope; loading never sorts the reconstructed domain vectors by identity.
+Construction package rows and their partial-work rows share the same stored
+ordinal. Fixed material arrays use explicitly indexed columns in these new
+records, and colony production totals require exactly one row for every material
+channel. A partially NULL material-allowance set is malformed. SQLite numerical
+storage, finite values, integer range, flags, ordinals and final domain/accounting
+invariants are checked before a detached snapshot can become the active world.
+
+Freight charters, shipments, lots and receipts now persist explicit commodity
+and stock-location kind/value pairs. Processed versus raw and Colony versus Site
+are distinct namespaces even when values overlap. The actual operating base has
+a Colony foreign key. Polymorphic endpoints are checked by strict tag decoding
+and domain reference validation, rather than aliased to a Colony foreign key.
+Ship cargo remains the single physical per-hull inventory. New audit envelopes
+preserve construction participants/row identity and typed site-operating issue
+episodes; they do not masquerade as P4A scientific observations.
+
+Site/development child records are cleared before their referenced parents.
+Snapshot writes insert ordinary assets and engineering records before site and
+construction children, with foreign keys enabled throughout. Existing schema
+recognition, input preflight, transactional replacement, reread-before-commit,
+rollback, and failed-Load world preservation remain in force. No projected
+capacity, reverse controller, receiving-space reservation, opening stock/handling
+budget, or copied geological reserve is persisted.
+
+## P4B: unrestricted site development and Ice supply
+
+A `ResourceSite` is a typed working location, not a colony. Atomic new-site
+registration plus development authorization creates no inventory, installed
+capacity, fleet, or workforce. A known public body is sufficient; observations,
+assessments, true deposit existence, reserve and accessibility are not admission
+inputs. A development's site, support colony, catalog version and ordered
+package remain fixed. Assignment and authority amendments preserve sunk work,
+material debits and the original physical participants until safe return.
+
+The authored v1 module catalog defines extraction, power, handling, storage and
+automation. The reference package costs 240 Structural Alloys, 70 Electronics
+and 60 Industrial Composites, with 14 engineer-workdays of proportional assembly
+and two further commissioning workdays. Zero capability and inadequate power
+are valid package consequences. Each opening selects at most one executable
+assembly row in stored package order; an input-blocked row does not block an
+independent later row. Positive work debits proportional real site materials,
+bounded by current stock, opening stock, floors and lifetime material authority.
+The bounded rounding adjustment applies only to an already positive final paid
+step, never to a zero-input completion.
+
+Field construction uses a powered installed workshop with an explicit authored
+family binding and a qualified real `MaintenanceTeam`. Ship role grants no
+work. A row pins its workshop hull. Embark, operating-fuel loading, departure,
+work, commissioning, return and disembark are separate physical actions. A
+cancelled project keeps sunk work and physically returns its participants;
+completed equipment is not removed by cancelling builder closeout. Construction
+closure ends its future reports while independent site operations continue.
+Additive developments pay their own material/labor cost, append installed groups
+once, and preserve prior operating history and policy.
+
+`ProgramController` has distinct Survey, Freight, Maintenance, Analysis and
+Development alternatives. Equal numeric IDs from different kinds do not alias.
+The opening dispatcher still merges only the unvisited head of each stored
+vector by creation date; ties follow that order. Maintenance and Development
+share one engineering workforce. Fleet/team/site construction leases remain on
+the owning program, and reverse ownership is derived. A site's operating
+responsibility is a separate `DecisionSource`, never a fleet-owning program.
+All time entry points use the same interruption-aware runner.
+
+### Typed freight and cold starts
+
+`Commodity` distinguishes processed materials from raw minerals, and
+`StockLocation` distinguishes colonies from sites. Tag plus value is identity;
+matching ordinals alone are not interchangeable. Cargo stays in one real lot on
+each hull and is never a second engine tank. A freight charter fixes both
+endpoints, commodity and a colony operating base that must be one endpoint.
+Site-to-site freight and remote engine refuelling are outside this increment.
+
+Processed packages use powered ship handling to land at a completely cold site.
+Raw transfer requires commissioned site storage and paid site handling. A
+source-base delivery keeps the previous loaded-out/empty-home cycle. A
+destination-base collection fuels at that base, travels empty to the source,
+loads a manifest supported by actual source stock, and carries it home. Completed
+collection closes at the base. Committing a manifest does not reserve inventory:
+if competing work spends it before arrival, the retained shipment waits. It does
+not shrink itself to predicted yield or acquire fuel from its payload.
+
+Cancellation settles unshipped cargo back to the source using real stock space
+and handling, or delivers dispatched cargo to the committed destination. Paid
+transit and cargo custody survive suspension and amendments. Distinct storage
+locations on the same body still require transfers but no artificial journey.
+
+### Daily eligibility and support
+
+1. The new day snapshots all real opening raw/processed stocks, existing leases,
+   eligible installed groups and raw receiving space.
+2. Sites pay supported duty from eligible opening Reactor Fuel and Industrial
+   Composites. Hardware commissioned today is not eligible. Paid duty funds one
+   shared site raw-handling pool.
+3. The stable program merge runs. Inbound stock is not added to opening spending
+   authority. Raw incoming freight consumes opening receiving room; outgoing
+   transfers do not replenish that room during the opening.
+4. Colony mining runs first, then sites extract in stored site order using actual
+   remaining raw room and the handler left after freight.
+5. Colony processing runs, followed by shipyards and fleet movement, then reports
+   and observed decisions. Raw unloaded this opening can feed this processing
+   phase; its resulting Propellant can fuel a program only at a later opening.
+
+All eligible installed equipment is active. Supported duty requires power and
+automation with enough total power for the whole installed set. Duty is bounded
+by one day, remaining lifetime duty authority and actual above-floor support
+stocks. It consumes Reactor Fuel and Industrial Composites even when storage is
+full, the extraction target is zero, or a genuine attempt recovers nothing.
+Passive storage remains available without supported duty; active raw handling
+does not. There is no local site refinery.
+
+The only site physical-geology reader is the extraction boundary. With positive room and handling, nominal attempted work is supported duty times
+the lesser of rated extraction and the daily target. Recovery is bounded by true
+remaining Ice, nominal times accessibility clamped to [0,1], actual free raw room
+and remaining daily handling. Actual recovered
+Ice debits that deposit, credits site raw stock and consumes the shared handler.
+Unrepresentable coupled transfers do not manufacture inventory or a false
+negative observation. A zero-duty/full-bin/no-handler day is not an attempt.
+Records expose dated nominal work and recovered output, never true reserve,
+accessibility or proof of absence. These operating observations do not create
+P4A batches, findings or assessments.
+
+Five genuine zero-recovery attempts create an observed dated issue. Explicit
+acknowledgment neither stops operation nor grants resources. The episode uses
+recorded attempts and audit acknowledgments; pauses do not repeatedly announce
+the same negative result. Loss of previously used support and exhausted duty
+authority are distinct operational decisions. Reports retain dated policy,
+hardware cutoff, support cost, attempts, yield and raw freight flows. Net exports
+may be negative in a period that returns cargo loaded in an earlier period.
+
+Colony `processedProductionTotals` records actual gross recipe output only;
+authored stocks, freight and commissioning transfers do not increment it. The
+existing recipe remains 1 Water Ice + 0.5 Volatiles per Propellant unit, subject
+to the existing allocation and capacity rules. These totals do not claim that
+mixed inventory can be attributed to an individual site after delivery.

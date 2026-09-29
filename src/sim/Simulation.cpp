@@ -1,4 +1,6 @@
 #include "sim/AnalysisProgramExecution.h"
+#include "sim/SiteDevelopmentExecution.h"
+#include "sim/SiteOperationExecution.h"
 #include "sim/Simulation.h"
 #include "sim/ObservationAcquisition.h"
 #include "sim/ObservationRules.h"
@@ -447,6 +449,26 @@ CommandResult Simulation::execute(const SimCommand& command) {
             return setMaintenanceLifecycle(concreteCommand.programId,MaintenanceProgramLifecycle::Closed);
         } else if constexpr (std::is_same_v<Command, AcknowledgeMaintenanceIssueCommand>) {
             return acknowledgeMaintenanceIssue(concreteCommand);
+        } else if constexpr (std::is_same_v<Command, AmendSiteOperatingPolicyCommand>) {
+            return amendSiteOperatingPolicy(concreteCommand);
+        } else if constexpr (std::is_same_v<Command, SuspendSiteOperationCommand>) {
+            return setSiteOperationEnabled(concreteCommand.siteId,false);
+        } else if constexpr (std::is_same_v<Command, ResumeSiteOperationCommand>) {
+            return setSiteOperationEnabled(concreteCommand.siteId,true);
+        } else if constexpr (std::is_same_v<Command, AcknowledgeSiteOperatingIssueCommand>) {
+            return acknowledgeSiteOperatingIssue(concreteCommand);
+        } else if constexpr (std::is_same_v<Command, CreateSiteDevelopmentCommand>) {
+            return createSiteDevelopment(concreteCommand);
+        } else if constexpr (std::is_same_v<Command, AmendSiteDevelopmentCommand>) {
+            return amendSiteDevelopment(concreteCommand);
+        } else if constexpr (std::is_same_v<Command, SuspendSiteDevelopmentCommand>) {
+            return setSiteDevelopmentLifecycle(concreteCommand.programId,SiteDevelopmentLifecycle::Suspended);
+        } else if constexpr (std::is_same_v<Command, ResumeSiteDevelopmentCommand>) {
+            return setSiteDevelopmentLifecycle(concreteCommand.programId,SiteDevelopmentLifecycle::Authorized);
+        } else if constexpr (std::is_same_v<Command, CancelSiteDevelopmentCommand>) {
+            return setSiteDevelopmentLifecycle(concreteCommand.programId,SiteDevelopmentLifecycle::Closing);
+        } else if constexpr (std::is_same_v<Command, AcknowledgeSiteDevelopmentIssueCommand>) {
+            return acknowledgeSiteDevelopmentIssue(concreteCommand);
         } else if constexpr (std::is_same_v<Command, CreateAnalysisProgramCommand>) {
             return createAnalysisProgram(concreteCommand);
         } else if constexpr (std::is_same_v<Command, AmendAnalysisProgramCommand>) {
@@ -481,9 +503,10 @@ AdvanceResult Simulation::advanceDaysDetailed(const int days) {
     }
 
     for (int i = 0; i < days; ++i) {
-        if (const auto pending = pendingProgramIssue(state_)) {
+        if (const auto pending = pendingDecision(state_)) {
             result.interrupted = true;
-            result.issueProgramId = pending->controller;
+            result.issueSource = pending->source;
+            if(const auto* owner=std::get_if<ProgramController>(&pending->source)) result.issueProgramId=*owner;
             result.stopReason = pending->message;
             break;
         }
@@ -504,16 +527,21 @@ AdvanceResult Simulation::advanceDaysDetailed(const int days) {
              std::any_of(state_.maintenancePrograms.begin(), state_.maintenancePrograms.end(),
                 [=](const auto& p) { return p.lifecycle != MaintenanceProgramLifecycle::Closed && p.nextReportDay == nextDay; }) ||
              std::any_of(state_.analysisPrograms.begin(),state_.analysisPrograms.end(),
-                [=](const auto& p){return p.lifecycle!=AnalysisLifecycle::Closed && p.nextReportDay==nextDay;}))) {
+                [=](const auto& p){return p.lifecycle!=AnalysisLifecycle::Closed && p.nextReportDay==nextDay;}) ||
+             std::any_of(state_.siteDevelopmentPrograms.begin(),state_.siteDevelopmentPrograms.end(),
+                [=](const auto& p){return p.lifecycle!=SiteDevelopmentLifecycle::Closed && p.nextReportDay==nextDay;}) ||
+             std::any_of(state_.resourceSites.begin(),state_.resourceSites.end(),
+                [=](const auto& p){return p.nextReportDay==nextDay;}))) {
             result.interrupted = true;
             result.stopReason = "Program reporting date limit reached";
             break;
         }
         simulateOneDay(result.events);
         ++result.advancedDays;
-        if (const auto raised = pendingProgramIssue(state_)) {
+        if (const auto raised = pendingDecision(state_)) {
             result.interrupted = true;
-            result.issueProgramId = raised->controller;
+            result.issueSource = raised->source;
+            if(const auto* owner=std::get_if<ProgramController>(&raised->source)) result.issueProgramId=*owner;
             result.stopReason = raised->message;
             break;
         }
@@ -570,7 +598,7 @@ CommandResult Simulation::createShipClassRevision(const CreateShipClassRevisionC
         return CommandResult::failure(reason);
     };
     if (command.name.empty()) return reject("Ship class name must be non-empty");
-    if (command.role < ShipRole::Survey || command.role > ShipRole::Escort) {
+    if (command.role < ShipRole::Survey || command.role > ShipRole::Builder) {
         return reject("Ship class role is invalid");
     }
     const ShipClass* source = command.basedOnClassId.has_value()
@@ -1300,6 +1328,12 @@ void Simulation::simulateOneDay(std::vector<SimEvent>& emitted) {
         .emit = programHooks.emit
     };
     const MaintenanceExecutionHooks maintenanceHooks{programHooks.emit};
+    const SiteDevelopmentExecutionHooks developmentHooks{
+        [this,&emitted](SiteDevelopmentProgramId id,FleetId fleet,BodyId body,double& fuel) {
+            return startProgramMove(id,fleet,body,fuel,emitted);
+        }, programHooks.emit,programHooks.prepareEvents};
+    const SiteOperationHooks siteHooks{programHooks.emit,programHooks.prepareEvents};
+    runSitesOpeningDay(state_,opening,siteHooks);
     // Compare only unvisited vector heads. Released assets and inbound stock
     // stay unavailable to later programs until the next opening boundary.
     for (const auto& owner : programOpeningOrder(state_)) {
@@ -1310,8 +1344,10 @@ void Simulation::simulateOneDay(std::vector<SimEvent>& emitted) {
                 runFreightProgramOpeningDay(state_, *findById(state_.freightPrograms, id), opening, freightHooks);
             } else if constexpr (std::is_same_v<decltype(id), MaintenanceProgramId>) {
                 runMaintenanceProgramOpeningDay(state_, *findById(state_.maintenancePrograms, id), opening, maintenanceHooks);
-            } else {
+            } else if constexpr (std::is_same_v<decltype(id),AnalysisProgramId>) {
                 runAnalysisOpeningDay(state_,*findById(state_.analysisPrograms,id),opening,{programHooks.emit,programHooks.prepareEvents});
+            } else {
+                runSiteDevelopmentOpeningDay(state_,*findById(state_.siteDevelopmentPrograms,id),opening,developmentHooks);
             }
         }, owner);
     }
@@ -1321,6 +1357,7 @@ void Simulation::simulateOneDay(std::vector<SimEvent>& emitted) {
     // a later command, while existing arrivals can start their next queued leg.
     // All telemetry/events below carry the newly advanced simulation day.
     simulateMining(emitted);
+    runSitesExtractionDay(state_,opening,siteHooks);
     simulateProcessing();
     simulateShipyards(emitted);
     simulateFleetMovement(emitted);
@@ -1328,6 +1365,8 @@ void Simulation::simulateOneDay(std::vector<SimEvent>& emitted) {
     finishFreightProgramsDay(state_, freightHooks);
     finishMaintenanceProgramsDay(state_, maintenanceHooks);
     finishAnalysisDay(state_,{programHooks.emit,programHooks.prepareEvents});
+    finishSiteDevelopmentsDay(state_,developmentHooks);
+    finishSitesDay(state_,siteHooks);
 }
 
 void Simulation::simulateMining(std::vector<SimEvent>&) {
@@ -1389,8 +1428,24 @@ void Simulation::simulateProcessing() {
                 continue;
             }
 
-            colony.stockpile.subtract(scaledMineralCost(recipe.rawCostPerUnit, producible));
-            colony.processedStockpile.add(recipe.output, producible);
+            const double stock=colony.processedStockpile.get(recipe.output);
+            const double produced=colony.processedProductionTotals.get(recipe.output);
+            const auto inputCost=scaledMineralCost(recipe.rawCostPerUnit,producible);
+            const auto represents=[](double before,double after,double expected) {
+                const double actual=std::abs(after-before);
+                return std::isfinite(after)&&after>=0 &&
+                    (expected==0 ? actual==0 : actual>0 &&
+                     std::abs(actual-expected)<=1e-9*std::max(actual,expected));
+            };
+            bool representable=represents(stock,stock+producible,producible)&&
+                represents(produced,produced+producible,producible);
+            for(std::size_t i=0;i<inputCost.amount.size();++i)
+                representable=representable&&represents(colony.stockpile.amount[i],
+                    colony.stockpile.amount[i]-inputCost.amount[i],inputCost.amount[i]);
+            if(!representable)continue; // Preserve coupled inputs/output/history at numeric limits.
+            colony.stockpile.subtract(inputCost);
+            colony.processedStockpile.add(recipe.output,producible);
+            colony.processedProductionTotals.add(recipe.output,producible);
         }
     }
 }
@@ -1641,7 +1696,9 @@ FleetId Simulation::allocateFleetId() noexcept {
     return FleetId{state_.ids.nextFleetId++};
 }
 
-EventId Simulation::allocateEventId() noexcept {
+EventId Simulation::allocateEventId() {
+    if(state_.ids.nextEventId==std::numeric_limits<std::int64_t>::max())
+        throw std::runtime_error("Audit identity limit reached");
     return EventId{state_.ids.nextEventId++};
 }
 

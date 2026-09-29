@@ -2,6 +2,7 @@
 #include "sim/ShipDesignRules.h"
 #include "sim/EquipmentServiceRules.h"
 #include "sim/ObservationRules.h"
+#include <algorithm>
 
 // Builds the deterministic mature home-system scenario used by new games and
 // tests. The scenario is hand-authored so geography, ownership, and deposits
@@ -528,10 +529,13 @@ GameState createHomeSystemScenario() {
             c.measurementProfileId=MeasurementProfileId{c.id.value == 7 ? 2 : 1};
     // Only the authored home laboratory has throughput; other colonies wait.
     state.colonies.front().analysisCapacity=1.0;
-    state.ids.nextShipComponentId = 10;
+    state.ids.nextShipComponentId = 11;
     state.equipmentFamilies = {{EquipmentFamilyId{1}, "Standard Survey Instruments"},
-                              {EquipmentFamilyId{2}, "Specialist Survey Instruments"}};
-    state.ids.nextEquipmentFamilyId = 3;
+                              {EquipmentFamilyId{2}, "Specialist Survey Instruments"},
+                              {EquipmentFamilyId{3}, "Field Construction"}};
+    state.ids.nextEquipmentFamilyId = 4;
+    state.siteConstructionFamilyId=EquipmentFamilyId{3};
+    state.siteModuleCatalog=referenceSiteModuleCatalog();
     state.maintenanceTeams.push_back(MaintenanceTeam{
         .id = MaintenanceTeamId{state.ids.nextMaintenanceTeamId++}, .name = "Standard Engineering Team",
         .qualifiedFamilies = {EquipmentFamilyId{1}}, .workdaysPerDay = 1.0,
@@ -551,6 +555,14 @@ GameState createHomeSystemScenario() {
         .role = ShipRole::Freighter, .basedOnClassId = std::nullopt,
         .components = referenceFreighterComponents(), .speedKmPerDay = 50.0
     });
+
+    state.shipClasses.push_back(ShipClass{
+        .id=ShipClassId{state.ids.nextShipClassId++},.name="Reference Builder",.role=ShipRole::Builder,
+        .basedOnClassId=std::nullopt,.components=referenceBuilderComponents(),.speedKmPerDay=50.0});
+    state.maintenanceTeams.push_back(MaintenanceTeam{
+        .id=MaintenanceTeamId{state.ids.nextMaintenanceTeamId++},.name="Field Construction Team",
+        .qualifiedFamilies={*state.siteConstructionFamilyId},.workdaysPerDay=1.0,
+        .location=MaintenanceTeamLocation::Colony,.colonyId=terraColonyId,.fleetId=std::nullopt});
 
     Person priorityLeader = state.people.at(2);
     priorityLeader.id = PersonId{state.ids.nextPersonId++};
@@ -648,7 +660,7 @@ GameState createDelegatedFreightScenario() {
     const FleetId fleetId{state.ids.nextFleetId++};
     const ShipId shipId{state.ids.nextShipId++};
     state.ships.push_back(Ship{
-        .id = shipId, .shipClassId = state.shipClasses.back().id,
+        .id = shipId, .shipClassId = state.shipClasses.at(1).id,
         .name = "P3B Reference Freighter", .fleetId = fleetId, .fuel = 0.0
     });
     state.fleets.push_back(Fleet{
@@ -707,6 +719,25 @@ GameState createMaintenanceSupplyScenario() {
     // Keep home identity explicit: colony order is meaningful, so callers use
     // this fixture's second-last home and last source without sorting either.
     return state;
+}
+
+GameState createSiteDevelopmentScenario(bool usefulIce) {
+    GameState s=createHomeSystemScenario();
+    const BodyId home{s.ids.nextBodyId++},target{s.ids.nextBodyId++};
+    s.bodies.push_back(Body{.id=home,.systemId=s.starSystems.front().id,.name="P4B Industrial Base",
+        .type=BodyType::Asteroid,.strategicZone=StrategicZone::DeepSurveyFrontier,
+        .parentBodyId=std::nullopt,.x=0,.y=0});
+    s.bodies.push_back(Body{.id=target,.systemId=s.starSystems.front().id,.name="Uninvestigated Ice Prospect",
+        .type=BodyType::Asteroid,.strategicZone=StrategicZone::DeepSurveyFrontier,
+        .parentBodyId=std::nullopt,.x=100,.y=0});
+    Colony c;c.id=ColonyId{s.ids.nextColonyId++};c.bodyId=home;c.name="P4B Supply Base";
+    c.processedStockpile.amount.fill(10000);c.stockpile.set(Mineral::Volatiles,10000);
+    c.processorCapacity=5;c.shipyardCapacity=5300;c.processingPolicy=ProcessingPolicy::Manual;
+    c.manualProcessingAllocations={{ProcessedMaterial::Propellant,1}};
+    c.ownerInstitutionId=s.institutions.front().id;s.colonies.push_back(c);
+    for(auto& t:s.maintenanceTeams)if(std::find(t.qualifiedFamilies.begin(),t.qualifiedFamilies.end(),*s.siteConstructionFamilyId)!=t.qualifiedFamilies.end())t.colonyId=c.id;
+    if(usefulIce)s.mineralDeposits.push_back({target,Mineral::WaterIce,100000,1});
+    return s;
 }
 
 } // namespace deep

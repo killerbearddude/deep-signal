@@ -44,6 +44,8 @@ struct ObservationBatchTag;
 struct AnalysisProgramTag;
 struct AnalysisJobTag;
 struct AssessmentTag;
+struct SiteTag;
+struct SiteDevelopmentProgramTag;
 
 using StarSystemId = Id<StarSystemTag>;
 using BodyId = Id<BodyTag>;
@@ -67,5 +69,7 @@ using ObservationBatchId = Id<ObservationBatchTag>;
 using AnalysisProgramId = Id<AnalysisProgramTag>;
 using AnalysisJobId = Id<AnalysisJobTag>;
 using AssessmentId = Id<AssessmentTag>;
+using SiteId = Id<SiteTag>;
+using SiteDevelopmentProgramId = Id<SiteDevelopmentProgramTag>;
 
 } // namespace deep

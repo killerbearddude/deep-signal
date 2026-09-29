@@ -140,7 +140,7 @@ bool samePayload(const deep::SimEventPayload& lhs, const deep::SimEventPayload& 
                    almostEqual(left.fuelAmount, right.fuelAmount) && left.detail == right.detail;
         } else if constexpr (std::is_same_v<Left, deep::FreightProgramAuditEvent>) {
             return left.programId == right.programId && left.kind == right.kind &&
-                   left.fleetId == right.fleetId && left.colonyId == right.colonyId &&
+                   left.fleetId == right.fleetId && left.location == right.location && left.commodity == right.commodity &&
                    left.leaderId == right.leaderId && left.charterRevision == right.charterRevision &&
                    left.shipmentNumber == right.shipmentNumber &&
                    almostEqual(left.amount, right.amount) && left.detail == right.detail;
@@ -154,6 +154,15 @@ bool samePayload(const deep::SimEventPayload& lhs, const deep::SimEventPayload& 
                    left.jobNumber == right.jobNumber && left.detail == right.detail;
         } else if constexpr (std::is_same_v<Left, deep::AnalysisProgramAuditEvent>) {
             return left.programId==right.programId && left.kind==right.kind && left.jobId==right.jobId && left.detail==right.detail;
+        } else if constexpr (std::is_same_v<Left, deep::SiteDevelopmentAuditEvent>) {
+            return left.programId==right.programId && left.kind==right.kind && left.siteId==right.siteId &&
+                left.fleetId==right.fleetId && left.teamId==right.teamId && left.workshopShipId==right.workshopShipId &&
+                left.leaderId==right.leaderId && left.charterRevision==right.charterRevision && left.packageRow==right.packageRow &&
+                almostEqual(left.amount,right.amount) && left.detail==right.detail;
+        } else if constexpr (std::is_same_v<Left, deep::SiteOperatingAuditEvent>) {
+            return left.siteId==right.siteId && left.kind==right.kind && left.operatingRevision==right.operatingRevision &&
+                left.cause==right.cause && left.episodeStartedDay==right.episodeStartedDay &&
+                almostEqual(left.amount,right.amount) && left.detail==right.detail;
         } else if constexpr (std::is_same_v<Left, deep::CommandRejectedEvent>) {
             return left.reason == right.reason;
         }
@@ -172,6 +181,9 @@ void requireSameState(const deep::GameState& expected, const deep::GameState& ac
     require(expected.ids.nextInstitutionId == actual.ids.nextInstitutionId, "institution counter round-trips");
     require(expected.ids.nextPersonId == actual.ids.nextPersonId, "person counter round-trips");
     require(expected.ids.nextFreightProgramId == actual.ids.nextFreightProgramId, "freight program counter round-trips");
+    require(expected.ids.nextSiteId == actual.ids.nextSiteId &&
+        expected.ids.nextSiteDevelopmentProgramId == actual.ids.nextSiteDevelopmentProgramId,
+        "site and construction counters round-trip");
     require(expected.ids.nextEquipmentFamilyId == actual.ids.nextEquipmentFamilyId &&
             expected.ids.nextMaintenanceTeamId == actual.ids.nextMaintenanceTeamId &&
             expected.ids.nextMaintenanceProgramId == actual.ids.nextMaintenanceProgramId,
@@ -274,6 +286,8 @@ void requireSameState(const deep::GameState& expected, const deep::GameState& ac
         require(sameMineralSet(left.stockpile, right.stockpile), "colony raw stockpile round-trips");
         require(sameProcessedMaterialSet(left.processedStockpile, right.processedStockpile),
                 "colony processed stockpile round-trips");
+        require(sameProcessedMaterialSet(left.processedProductionTotals, right.processedProductionTotals),
+                "actual cumulative processed production round-trips");
         require(almostEqual(left.mines, right.mines), "colony mines round-trip");
         require(almostEqual(left.processorCapacity, right.processorCapacity), "processor capacity round-trips");
         require(almostEqual(left.shipyardCapacity, right.shipyardCapacity), "shipyard capacity round-trips");
@@ -395,7 +409,7 @@ void requireSameState(const deep::GameState& expected, const deep::GameState& ac
         require(left.cargo.has_value() == right.cargo.has_value(), "ship cargo presence round-trips");
         if (left.cargo) require(left.cargo->programId == right.cargo->programId &&
             left.cargo->shipmentNumber == right.cargo->shipmentNumber &&
-            left.cargo->material == right.cargo->material && almostEqual(left.cargo->quantity, right.cargo->quantity),
+            left.cargo->commodity == right.cargo->commodity && almostEqual(left.cargo->quantity, right.cargo->quantity),
             "physical ship cargo custody and quantity round-trip");
     }
 
@@ -1033,7 +1047,7 @@ void test_design_revision_round_trip() {
     require(service.execute(deep::AssignShipyardBuildCommand{colonyId, original.id, 1}).ok,
             "later order binds original revision before save");
     const deep::GameState expected = service.state();
-    require(service.saveGame(path).ok, "v16 component revision snapshot saves");
+    require(service.saveGame(path).ok, "v17 component revision snapshot saves");
     const deep::GameState loaded = deep::save::SaveGameRepository::load(path);
     requireSameState(expected, loaded);
     require(loaded.shipClasses.back().components == draft &&

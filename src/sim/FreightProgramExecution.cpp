@@ -1,6 +1,9 @@
+// Executes one physical freight action per opening while preserving per-hull
+// custody, shared site budgets, immutable base routes and dated audit history.
 #include "sim/FreightProgramExecution.h"
 
 #include "sim/FreightProgramRules.h"
+#include "sim/StockAccess.h"
 #include "sim/ProgramControl.h"
 #include "sim/ShipDesignRules.h"
 #include "sim/SurveyProgramRules.h"
@@ -31,18 +34,20 @@ bool targetMet(const FreightProgram& p) {
            (p.cargoDelivered > 0.0 && freightNearlyEqual(p.cargoDelivered, p.charter.totalQuantity));
 }
 void audit(const FreightProgram& p, FreightProgramAuditKind kind, const FreightProgramExecutionHooks& h,
-           std::string detail, double amount = 0.0, std::optional<ColonyId> colony = std::nullopt) {
+           std::string detail, double amount = 0.0, std::optional<StockLocation> location = std::nullopt,
+           std::optional<Commodity> commodity = std::nullopt) {
     h.emit(EventSeverity::Info,
            FreightProgramAuditEvent{.programId = p.id,
                                     .kind = kind,
                                     .fleetId = p.leasedFleetId ? p.leasedFleetId : p.taskFleetId,
-                                    .colonyId = colony,
+                                    .location = location,
                                     .leaderId = p.shipment ? std::optional<PersonId>{p.shipment->leaderId}
                                                            : p.charter.requestedLeaderId,
                                     .charterRevision = p.charterRevision,
                                     .shipmentNumber = p.shipment ? p.shipment->number : 0,
                                     .amount = amount,
-                                    .detail = std::move(detail)});
+                                    .detail = std::move(detail),
+                                    .commodity = commodity});
 }
 void clearTask(FreightProgram& p) {
     p.task = FreightProgramTask::None;
@@ -60,7 +65,7 @@ void close(GameState& state, FreightProgram& p, const FreightProgramExecutionHoo
     p.issue = {};
     std::ostringstream summary;
     summary << (p.closure == FreightProgramClosure::Completed
-                    ? "Delivery target met; empty fleet returned to source"
+                    ? "Delivery target met; empty fleet settled at operating base"
                     : "Future pickups cancelled; all committed cargo settled")
             << "; loaded=" << p.cargoLoaded << "; delivered=" << p.cargoDelivered
             << "; returned=" << p.cargoReturned << "; operating fuel loaded=" << p.fuelLoaded
@@ -68,17 +73,17 @@ void close(GameState& state, FreightProgram& p, const FreightProgramExecutionHoo
             << "; unmet target=" << std::max(0.0, p.charter.totalQuantity - p.cargoDelivered);
     if (fleet)
         summary << "; final body=" << fleet->currentBodyId.value;
-    const Colony* source = find(state.colonies, p.charter.sourceColonyId);
-    const Colony* destination = find(state.colonies, p.charter.destinationColonyId);
-    const bool settledAtDestination = p.task == FreightProgramTask::Unloading && destination && fleet &&
-                                      fleet->currentBodyId == destination->bodyId;
-    const std::optional<ColonyId> disposition =
-        settledAtDestination ? std::optional<ColonyId>{destination->id}
-        : fleet && source && fleet->currentBodyId == source->bodyId
-            ? std::optional<ColonyId>{source->id}
-            : (fleet && destination && fleet->currentBodyId == destination->bodyId
-                   ? std::optional<ColonyId>{destination->id}
-                   : std::nullopt);
+    std::optional<StockLocation> disposition;
+    if (fleet && p.task == FreightProgramTask::ReturningCargo)
+        disposition = p.charter.source;
+    else if (fleet && p.task == FreightProgramTask::Unloading)
+        disposition = p.charter.destination;
+    else if (fleet && fleet->currentBodyId == stockLocationBody(state, p.charter.operatingBaseColonyId))
+        disposition = p.charter.operatingBaseColonyId;
+    else if (fleet && fleet->currentBodyId == stockLocationBody(state, p.charter.source))
+        disposition = p.charter.source;
+    else if (fleet && fleet->currentBodyId == stockLocationBody(state, p.charter.destination))
+        disposition = p.charter.destination;
     audit(p, FreightProgramAuditKind::Closed, hooks, summary.str(), 0.0, disposition);
     p.leasedFleetId.reset();
     clearTask(p);
@@ -107,12 +112,12 @@ bool acquire(GameState& state, FreightProgram& p, OpeningProgramContext& context
 
 // Receipts are allocated before debits. Following this call all numerical
 // results and per-hull changes have already been checked and cannot throw.
-void receipt(GameState& state, FreightProgram& p, FreightTransferKind kind, ColonyId colony,
-             ProcessedMaterial material, double amount) {
+void receipt(GameState& state, FreightProgram& p, FreightTransferKind kind, StockLocation location,
+             Commodity commodity, double amount) {
     if (!p.shipment || p.receipts.size() >= static_cast<std::size_t>(std::numeric_limits<int>::max()))
         throw std::runtime_error{"Freight receipt identity is exhausted"};
     p.receipts.push_back({static_cast<int>(p.receipts.size()) + 1, p.shipment->number, state.date.day,
-                          p.shipment->fleetId, p.shipment->leaderId, colony, material, kind, amount});
+                          p.shipment->fleetId, p.shipment->leaderId, location, commodity, kind, amount});
 }
 struct HullTransfer {
     Ship* ship;
@@ -135,7 +140,7 @@ double refill(GameState& state, FreightProgram& p, Fleet& fleet, Colony& source,
     double left =
         std::min({std::max(0.0, required - freightFleetFuel(state, fleet)), freightFuelAllowanceRemaining(p),
                   context.available(state, source.id, ProcessedMaterial::Propellant,
-                                    freightEffectiveFloor(p, ProcessedMaterial::Propellant))});
+                                    freightEffectiveFloor(p, source.id, ProcessedMaterial::Propellant))});
     std::vector<HullTransfer> changes;
     changes.reserve(fleet.shipIds.size());
     double total = 0.0;
@@ -167,16 +172,21 @@ double refill(GameState& state, FreightProgram& p, Fleet& fleet, Colony& source,
     context.debit(source.id, ProcessedMaterial::Propellant, total);
     p.fuelLoaded += total;
     audit(p, FreightProgramAuditKind::Transfer, hooks,
-          "Operating propellant transferred from source stock into engine tanks", total, source.id);
+          "Operating propellant transferred from base stock into engine tanks", total, source.id,
+          Commodity{ProcessedMaterial::Propellant});
     return total;
 }
 
-double load(GameState& state, FreightProgram& p, Fleet& fleet, Colony& source, OpeningProgramContext& context,
-            const FreightProgramExecutionHooks& hooks) {
+double load(GameState& state, FreightProgram& p, Fleet& fleet, StockLocation source,
+            OpeningProgramContext& context, const FreightProgramExecutionHooks& hooks) {
     if (!p.shipment)
         return 0.0;
-    double remaining = context.available(state, source.id, p.shipment->material,
-                                         freightEffectiveFloor(p, p.shipment->material));
+    double remaining = context.available(state, source, p.shipment->commodity,
+                                         freightEffectiveFloor(p, source, p.shipment->commodity));
+    const auto* rawSite =
+        std::holds_alternative<Mineral>(p.shipment->commodity) ? std::get_if<SiteId>(&source) : nullptr;
+    if (rawSite)
+        remaining = std::min(remaining, context.availableSiteRawHandling(*rawSite));
     const auto capabilities = freightHullCapabilities(state, fleet);
     std::vector<HullTransfer> changes;
     changes.reserve(capabilities.size());
@@ -200,29 +210,36 @@ double load(GameState& state, FreightProgram& p, Fleet& fleet, Colony& source, O
     }
     if (!freightPositive(total) || !finiteAdd(p.cargoLoaded, total))
         return 0.0;
-    const double stock = source.processedStockpile.get(p.shipment->material);
+    const double stock = stockQuantity(state, source, p.shipment->commodity);
     if (stock < total || !representsTransfer(stock, stock - total, total) ||
         !representsTransfer(p.cargoLoaded, p.cargoLoaded + total, total))
         return 0.0;
-    receipt(state, p, FreightTransferKind::Load, source.id, p.shipment->material, total);
+    receipt(state, p, FreightTransferKind::Load, source, p.shipment->commodity, total);
     for (const auto& c : changes) {
         if (!c.ship->cargo)
-            c.ship->cargo = ShipCargo{p.id, p.shipment->number, p.shipment->material, c.amount};
+            c.ship->cargo = ShipCargo{p.id, p.shipment->number, p.shipment->commodity, c.amount};
         else
             c.ship->cargo->quantity += c.amount;
     }
-    source.processedStockpile.set(p.shipment->material, stock - total);
-    context.debit(source.id, p.shipment->material, total);
+    stockQuantity(state, source, p.shipment->commodity) = stock - total;
+    if (rawSite)
+        context.debitSiteRawHandling(*rawSite, total);
+    context.debit(source, p.shipment->commodity, total);
     p.cargoLoaded += total;
     audit(p, FreightProgramAuditKind::Transfer, hooks, "Cargo loaded from source into identified hulls",
-          total, source.id);
+          total, source, p.shipment->commodity);
     return total;
 }
 
-double unload(GameState& state, FreightProgram& p, Fleet& fleet, Colony& location, bool toSource,
-              const FreightProgramExecutionHooks& hooks) {
+double unload(GameState& state, FreightProgram& p, Fleet& fleet, StockLocation location, bool toSource,
+              OpeningProgramContext& context, const FreightProgramExecutionHooks& hooks) {
     if (!p.shipment)
         return 0.0;
+    const auto* rawSite =
+        std::holds_alternative<Mineral>(p.shipment->commodity) ? std::get_if<SiteId>(&location) : nullptr;
+    double room =
+        rawSite ? std::min(context.availableSiteRawHandling(*rawSite), context.availableSiteRawRoom(*rawSite))
+                : std::numeric_limits<double>::infinity();
     std::vector<HullTransfer> changes;
     changes.reserve(fleet.shipIds.size());
     double total = 0.0;
@@ -230,21 +247,22 @@ double unload(GameState& state, FreightProgram& p, Fleet& fleet, Colony& locatio
         Ship* ship = find(state.ships, cap.shipId);
         if (!ship || !ship->cargo || ship->cargo->programId != p.id)
             continue;
-        const double q = std::min(ship->cargo->quantity, cap.operationalHandlingPerDay);
+        const double q = std::min({ship->cargo->quantity, cap.operationalHandlingPerDay, room});
         if (!finiteAdd(total, q) || !representsTransfer(ship->cargo->quantity, ship->cargo->quantity - q, q))
             return 0.0;
         if (q > 0.0)
             changes.push_back({ship, q});
         total += q;
+        room -= q;
     }
     double& counter = toSource ? p.cargoReturned : p.cargoDelivered;
-    const double stock = location.processedStockpile.get(p.shipment->material);
+    const double stock = stockQuantity(state, location, p.shipment->commodity);
     if (!freightPositive(total) || !finiteAdd(counter, total) || !finiteAdd(stock, total) ||
         !representsTransfer(stock, stock + total, total) ||
         !representsTransfer(counter, counter + total, total))
         return 0.0;
-    receipt(state, p, toSource ? FreightTransferKind::SourceReturn : FreightTransferKind::Delivery,
-            location.id, p.shipment->material, total);
+    receipt(state, p, toSource ? FreightTransferKind::SourceReturn : FreightTransferKind::Delivery, location,
+            p.shipment->commodity, total);
     for (const auto& c : changes) {
         c.ship->cargo->quantity -= c.amount;
         // The debit uses the exact remaining lot on its final day; no positive
@@ -252,11 +270,15 @@ double unload(GameState& state, FreightProgram& p, Fleet& fleet, Colony& locatio
         if (c.ship->cargo->quantity <= 0.0)
             c.ship->cargo.reset();
     }
-    location.processedStockpile.set(p.shipment->material, stock + total);
+    stockQuantity(state, location, p.shipment->commodity) = stock + total;
+    if (rawSite) {
+        context.debitSiteRawHandling(*rawSite, total);
+        context.debitSiteRawRoom(*rawSite, total);
+    }
     counter += total;
     audit(p, FreightProgramAuditKind::Transfer, hooks,
           toSource ? "Unshipped cargo returned to source stock" : "Cargo delivered into destination stock",
-          total, location.id);
+          total, location, p.shipment->commodity);
     return total;
 }
 
@@ -290,8 +312,9 @@ std::vector<FreightManifestRow> actualManifest(const GameState& state, const Fre
 
 // A fuel top-up is the day's only physical action. Reprice tomorrow, since the
 // same fleet cannot both refill and depart today. Payload never supplies tanks.
-bool depart(GameState& state, FreightProgram& p, Fleet& fleet, Colony& source, Colony& destination,
-            OpeningProgramContext& context, const FreightProgramExecutionHooks& hooks) {
+bool depart(GameState& state, FreightProgram& p, Fleet& fleet, StockLocation source,
+            StockLocation destination, OpeningProgramContext& context,
+            const FreightProgramExecutionHooks& hooks) {
     if (freightCargoAboard(state, p.id) <= 0.0)
         return false;
     const auto manifest = actualManifest(state, p, fleet);
@@ -302,16 +325,17 @@ bool depart(GameState& state, FreightProgram& p, Fleet& fleet, Colony& source, C
         if (state.date.day == std::numeric_limits<std::int64_t>::max())
             return false;
         const auto tomorrow = evaluateFreightManifest(state, p, fleet, manifest, state.date.day + 1);
-        if (tomorrow.ready)
-            static_cast<void>(refill(state, p, fleet, source, tomorrow.requiredFuel, context, hooks));
+        if (tomorrow.ready && !freightIsCollection(p))
+            static_cast<void>(refill(state, p, fleet, *find(state.colonies, p.charter.operatingBaseColonyId),
+                                     tomorrow.requiredFuel, context, hooks));
         return false;
     }
-    if (source.bodyId == destination.bodyId) {
+    if (stockLocationBody(state, source) == stockLocationBody(state, destination)) {
         p.shipment->manifest = manifest;
         p.task = FreightProgramTask::Unloading;
         return true;
     }
-    if (!startLeg(state, p, fleet, destination.bodyId, hooks))
+    if (!startLeg(state, p, fleet, stockLocationBody(state, destination), hooks))
         return false;
     p.shipment->manifest = manifest;
     p.task = FreightProgramTask::Outbound;
@@ -327,9 +351,10 @@ void commit(GameState& state, FreightProgram& p, const Fleet& fleet, FreightShip
                                  state.date.day,
                                  fleet.id,
                                  *p.charter.requestedLeaderId,
-                                 p.charter.sourceColonyId,
-                                 p.charter.destinationColonyId,
-                                 p.charter.material,
+                                 p.charter.source,
+                                 p.charter.destination,
+                                 p.charter.operatingBaseColonyId,
+                                 p.charter.commodity,
                                  std::move(plan.manifest)};
     p.taskFleetId = fleet.id;
     p.task = FreightProgramTask::Preparing;
@@ -337,8 +362,8 @@ void commit(GameState& state, FreightProgram& p, const Fleet& fleet, FreightShip
           "Finite per-hull shipment committed under the current charter", plan.quantity);
 }
 
-void handleCancellation(GameState& state, FreightProgram& p, Fleet& fleet, Colony& source,
-                        Colony& destination, const FreightProgramExecutionHooks& hooks) {
+void handleCancellation(GameState& state, FreightProgram& p, Fleet& fleet, OpeningProgramContext& context,
+                        const FreightProgramExecutionHooks& hooks) {
     if (!stationary(fleet))
         return;
     if (freightCargoAboard(state, p.id) <= 0.0) {
@@ -348,10 +373,10 @@ void handleCancellation(GameState& state, FreightProgram& p, Fleet& fleet, Colon
     const bool unshipped = p.task == FreightProgramTask::Preparing || p.task == FreightProgramTask::Loading ||
                            p.task == FreightProgramTask::ReturningCargo;
     p.task = unshipped ? FreightProgramTask::ReturningCargo : FreightProgramTask::Unloading;
-    Colony& location = unshipped ? source : destination;
-    if (fleet.currentBodyId != location.bodyId)
+    const auto location = unshipped ? p.charter.source : p.charter.destination;
+    if (fleet.currentBodyId != stockLocationBody(state, location))
         return;
-    static_cast<void>(unload(state, p, fleet, location, unshipped, hooks));
+    static_cast<void>(unload(state, p, fleet, location, unshipped, context, hooks));
     if (freightCargoAboard(state, p.id) <= 0.0)
         close(state, p, hooks);
 }
@@ -368,53 +393,19 @@ std::optional<std::pair<std::string, std::string>> cause(const GameState& state,
     const Fleet* fleet = id ? find(state.fleets, *id) : nullptr;
     if (!fleet || !stationary(*fleet))
         return std::nullopt;
-    const Colony* source = find(state.colonies, p.charter.sourceColonyId);
-    if (!source)
+    const auto readiness = freightProgramReadiness(state, p);
+    // An uncommitted wait for another real cargo batch remains ordinary intent.
+    // Existing delivery programs only interrupt here for exhausted authority.
+    if (!p.shipment && readiness.cause != FreightReadinessCause::FuelAllowance)
         return std::nullopt;
-    if (p.task == FreightProgramTask::Unloading || p.task == FreightProgramTask::ReturningCargo) {
-        for (const auto& cap : freightHullCapabilities(state, *fleet))
-            if (cap.onboardQuantity > 0.0 && cap.operationalHandlingPerDay <= 0.0)
-                return std::pair{
-                    "handling", "Cargo disposition blocked by a carrying hull's power or handling equipment"};
-    }
-    if ((p.task == FreightProgramTask::Return || p.task == FreightProgramTask::Reposition) &&
-        fleet->currentBodyId != source->bodyId) {
-        const double cost =
-            adjustedFleetMoveFuelCost(state, *fleet, fleet->currentBodyId, source->bodyId, state.date.day);
-        if (!std::isfinite(cost) || freightFleetFuel(state, *fleet) < cost)
-            return std::pair{"return",
-                             "Committed return is blocked by actual engine fuel or route conditions"};
-        if (!freightFuelDebitRepresentable(state, *fleet, cost))
-            return std::pair{"fuel-precision",
-                             "Engine fuel debit cannot conserve the representable tank inventory"};
-    }
-    if (fleet->currentBodyId == source->bodyId && p.closure != FreightProgramClosure::Cancelled) {
-        if (p.shipment && freightCargoAboard(state, p.id) > 0.0) {
-            const auto plan =
-                evaluateFreightManifest(state, p, *fleet, actualManifest(state, p, *fleet), state.date.day);
-            if (!plan.ready)
-                return std::pair{"manifest", plan.waitingReason};
-            const Colony* destination = find(state.colonies, p.charter.destinationColonyId);
-            const double outwardCost =
-                adjustedFleetMoveFuelCost(state, *fleet, source->bodyId, destination->bodyId, state.date.day);
-            if (plan.additionalFuel == 0.0 && !freightFuelDebitRepresentable(state, *fleet, outwardCost))
-                return std::pair{"fuel-precision",
-                                 "Engine fuel debit cannot conserve the representable tank inventory"};
-            if (plan.additionalFuel > freightFuelAllowanceRemaining(p) &&
-                !freightNearlyEqual(plan.additionalFuel, freightFuelAllowanceRemaining(p)))
-                return std::pair{"allowance",
-                                 "Operating-fuel allowance cannot support the committed shipment"};
-            if (plan.additionalFuel >
-                std::max(0.0, source->processedStockpile.get(ProcessedMaterial::Propellant) -
-                                  freightEffectiveFloor(p, ProcessedMaterial::Propellant)))
-                return std::pair{"fuel-stock",
-                                 "Source operating Propellant no longer supports the committed shipment"};
-        } else if (!targetMet(p)) {
-            const auto plan = planFreightShipment(state, p, *fleet);
-            if (!plan.ready && plan.waitingReason.find("allowance") != std::string::npos)
-                return std::pair{"allowance", plan.waitingReason};
-        }
-    }
+    if (readiness.cause != FreightReadinessCause::None &&
+        readiness.cause != FreightReadinessCause::Participants)
+        return std::pair{readiness.cause == FreightReadinessCause::FuelAllowance ? std::string{"allowance"}
+                         : readiness.cause == FreightReadinessCause::Precision
+                             ? std::string{"fuel-precision"}
+                             : "readiness-" + std::to_string(static_cast<int>(readiness.cause)),
+                         readiness.message};
+
     return std::nullopt;
 }
 void updateIssue(GameState& state, FreightProgram& p, const FreightProgramExecutionHooks& hooks) {
@@ -482,7 +473,8 @@ void settleFreightCancellationAtDecision(GameState& state, FreightProgram& p,
     const Fleet* fleet = p.leasedFleetId ? find(state.fleets, *p.leasedFleetId) : nullptr;
     if (freightCargoAboard(state, p.id) <= 0.0 && (!fleet || stationary(*fleet)))
         close(state, p, hooks);
-    else if (p.task == FreightProgramTask::Preparing || p.task == FreightProgramTask::Loading)
+    else if (freightCargoAboard(state, p.id) > 0.0 &&
+             (p.task == FreightProgramTask::Preparing || p.task == FreightProgramTask::Loading))
         p.task = FreightProgramTask::ReturningCargo;
 }
 void acknowledgeKnownFreightLimitAtDecision(const GameState& state, FreightProgram& p) {
@@ -504,19 +496,20 @@ void runFreightProgramOpeningDay(GameState& state, FreightProgram& p, OpeningPro
     if (!acquire(state, p, context, hooks))
         return;
     Fleet* fleet = find(state.fleets, *p.leasedFleetId);
-    Colony* source = find(state.colonies, p.charter.sourceColonyId);
-    Colony* destination = find(state.colonies, p.charter.destinationColonyId);
-    if (!fleet || !source || !destination || !stationary(*fleet))
+    Colony* base = find(state.colonies, p.charter.operatingBaseColonyId);
+    if (!fleet || !base || !stationary(*fleet))
         return;
+    const BodyId source = stockLocationBody(state, p.charter.source),
+                 destination = stockLocationBody(state, p.charter.destination);
+    const bool collection = freightIsCollection(p);
     if (p.closure == FreightProgramClosure::Cancelled) {
-        handleCancellation(state, p, *fleet, *source, *destination, hooks);
+        handleCancellation(state, p, *fleet, context, hooks);
         return;
     }
-
     if ((p.task == FreightProgramTask::Return || p.task == FreightProgramTask::Reposition) &&
-        fleet->currentBodyId == source->bodyId)
+        fleet->currentBodyId == base->bodyId)
         clearTask(p);
-    if (p.task == FreightProgramTask::None && fleet->currentBodyId == source->bodyId) {
+    if (p.task == FreightProgramTask::None && fleet->currentBodyId == base->bodyId) {
         if (targetMet(p)) {
             p.lifecycle = FreightProgramLifecycle::Closing;
             p.closure = FreightProgramClosure::Completed;
@@ -529,39 +522,45 @@ void runFreightProgramOpeningDay(GameState& state, FreightProgram& p, OpeningPro
         }
     }
     if (p.task == FreightProgramTask::Return || p.task == FreightProgramTask::Reposition ||
-        (p.task == FreightProgramTask::None && fleet->currentBodyId != source->bodyId)) {
-        if (startLeg(state, p, *fleet, source->bodyId, hooks)) {
+        (!p.shipment && fleet->currentBodyId != base->bodyId)) {
+        if (startLeg(state, p, *fleet, base->bodyId, hooks)) {
             if (p.task == FreightProgramTask::None)
                 p.task = FreightProgramTask::Reposition;
             p.taskFleetId = fleet->id;
         }
         return;
     }
+    if (p.task == FreightProgramTask::Collecting) {
+        if (fleet->currentBodyId != source) {
+            // A released empty fleet may have moved manually while suspended.
+            // Reacquisition retains the committed roster and pays its real leg.
+            static_cast<void>(startLeg(state, p, *fleet, source, hooks));
+            return;
+        }
+        p.task = FreightProgramTask::Loading;
+    }
     if (p.task == FreightProgramTask::Outbound) {
-        if (fleet->currentBodyId != destination->bodyId)
+        if (fleet->currentBodyId != destination)
             return;
         p.task = FreightProgramTask::Unloading;
     }
     if (p.task == FreightProgramTask::Unloading) {
-        if (fleet->currentBodyId != destination->bodyId)
+        if (fleet->currentBodyId != destination)
             return;
-        static_cast<void>(unload(state, p, *fleet, *destination, false, hooks));
+        static_cast<void>(unload(state, p, *fleet, p.charter.destination, false, context, hooks));
         if (freightCargoAboard(state, p.id) <= 0.0) {
             p.task = FreightProgramTask::Return;
             if (targetMet(p)) {
                 p.lifecycle = FreightProgramLifecycle::Closing;
                 p.closure = FreightProgramClosure::Completed;
             }
+            // A collection is already physically at its base after settlement.
+            if (collection) {
+                clearTask(p);
+                if (targetMet(p))
+                    close(state, p, hooks);
+            }
         }
-        return;
-    }
-    if (fleet->currentBodyId != source->bodyId) {
-        // A suspended empty planning task can release its fleet. If the same
-        // hulls later move manually, reacquisition keeps that identity and must
-        // pay a real repositioning leg before resuming its original load.
-        if (freightCargoAboard(state, p.id) <= 0.0 &&
-            (p.task == FreightProgramTask::Loading || p.task == FreightProgramTask::Preparing))
-            static_cast<void>(startLeg(state, p, *fleet, source->bodyId, hooks));
         return;
     }
     if (!p.shipment) {
@@ -570,25 +569,58 @@ void runFreightProgramOpeningDay(GameState& state, FreightProgram& p, OpeningPro
             return;
         commit(state, p, *fleet, plan, hooks);
         if (plan.additionalFuel > 0.0) {
-            static_cast<void>(refill(state, p, *fleet, *source, plan.requiredFuel, context, hooks));
-            p.task = FreightProgramTask::Loading;
+            static_cast<void>(refill(state, p, *fleet, *base, plan.requiredFuel, context, hooks));
+            if (!collection)
+                p.task = FreightProgramTask::Loading;
             return;
         }
-        p.task = FreightProgramTask::Loading;
+    }
+    if (p.task == FreightProgramTask::Preparing && collection) {
+        if (fleet->currentBodyId != base->bodyId) {
+            static_cast<void>(startLeg(state, p, *fleet, base->bodyId, hooks));
+            return;
+        }
+        const auto plan =
+            evaluateFreightManifest(state, p, *fleet, p.shipment->manifest, state.date.day, true);
+        if (!plan.ready)
+            return;
+        if (plan.additionalFuel > 0.0 && !freightNearlyEqual(plan.additionalFuel, 0.0)) {
+            if (state.date.day == std::numeric_limits<std::int64_t>::max())
+                return;
+            const auto tomorrow =
+                evaluateFreightManifest(state, p, *fleet, p.shipment->manifest, state.date.day + 1, true);
+            if (tomorrow.ready)
+                static_cast<void>(refill(state, p, *fleet, *base, tomorrow.requiredFuel, context, hooks));
+            return;
+        }
+        if (base->bodyId == source) {
+            p.task = FreightProgramTask::Loading;
+        } else {
+            if (startLeg(state, p, *fleet, source, hooks))
+                p.task = FreightProgramTask::Collecting;
+            return;
+        }
     }
     if (p.task == FreightProgramTask::Preparing)
         p.task = FreightProgramTask::Loading;
+    if (fleet->currentBodyId != source) {
+        if (freightCargoAboard(state, p.id) <= 0.0 && p.task == FreightProgramTask::Loading)
+            static_cast<void>(startLeg(state, p, *fleet, source, hooks));
+        return;
+    }
     if (p.task == FreightProgramTask::Loading) {
-        const double aboard = freightCargoAboard(state, p.id);
-        const double planned = freightShipmentPlannedQuantity(*p.shipment);
-        const double available = context.available(state, source->id, p.charter.material,
-                                                   freightEffectiveFloor(p, p.charter.material));
+        const double aboard = freightCargoAboard(state, p.id),
+                     planned = freightShipmentPlannedQuantity(*p.shipment);
+        const double available =
+            context.available(state, p.charter.source, p.charter.commodity,
+                              freightEffectiveFloor(p, p.charter.source, p.charter.commodity));
         if (aboard >= planned || (aboard > 0.0 && freightNearlyEqual(aboard, planned)) ||
-            (aboard > 0.0 && available <= 0.0)) {
-            static_cast<void>(depart(state, p, *fleet, *source, *destination, context, hooks));
+            (!collection && aboard > 0.0 && available <= 0.0)) {
+            static_cast<void>(
+                depart(state, p, *fleet, p.charter.source, p.charter.destination, context, hooks));
             return;
         }
-        static_cast<void>(load(state, p, *fleet, *source, context, hooks));
+        static_cast<void>(load(state, p, *fleet, p.charter.source, context, hooks));
     }
 }
 
@@ -605,7 +637,7 @@ void finishFreightProgramsDay(GameState& state, const FreightProgramExecutionHoo
                 else if (p.task == FreightProgramTask::Outbound)
                     p.task = FreightProgramTask::Unloading;
                 else if (p.task == FreightProgramTask::Return || p.task == FreightProgramTask::Reposition) {
-                    const Colony* source = find(state.colonies, p.charter.sourceColonyId);
+                    const Colony* source = find(state.colonies, p.charter.operatingBaseColonyId);
                     if (source && fleet->currentBodyId == source->bodyId) {
                         clearTask(p);
                         if (targetMet(p)) {

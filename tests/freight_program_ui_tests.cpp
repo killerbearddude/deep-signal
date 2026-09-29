@@ -58,9 +58,10 @@ void visibleIntentCustodyAndReplacement() {
             "empty authoring workflow is visible");
     deep::FreightProgramCharter charter;
     charter.name = "Visible waiting delivery";
-    charter.sourceColonyId = service.state().colonies.at(service.state().colonies.size() - 2).id;
-    charter.destinationColonyId = service.state().colonies.back().id;
-    charter.material = deep::ProcessedMaterial::StructuralAlloys;
+    charter.source = service.state().colonies.at(service.state().colonies.size() - 2).id;
+    charter.operatingBaseColonyId = std::get<deep::ColonyId>(charter.source);
+    charter.destination = service.state().colonies.back().id;
+    charter.commodity = deep::ProcessedMaterial::StructuralAlloys;
     charter.totalQuantity = 500.0;
     require(service.execute(deep::CreateFreightProgramCommand{charter}).ok, "unready charter accepted");
     const auto id = queries.freightPrograms().front().id;
@@ -68,7 +69,7 @@ void visibleIntentCustodyAndReplacement() {
     require(waiting.find(charter.name) != std::string::npos && waiting.find("Waiting") != std::string::npos &&
             waiting.find("Edit delivery commitment") != std::string::npos,
             "accepted waiting intent remains visible and editable");
-    require(waiting.find("Source, destination and material are fixed") != std::string::npos &&
+    require(waiting.find("Source, destination, operating base and commodity are fixed") != std::string::npos &&
             waiting.find("normalized units") != std::string::npos && waiting.find("ignores payload mass") != std::string::npos,
             "contract identity, units and retained transit limitation are explicit");
     auto amendment = deep::FreightProgramAmendment{

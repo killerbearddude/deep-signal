@@ -23,7 +23,9 @@ struct AdvanceResult {
     int requestedDays = 0;
     int advancedDays = 0;
     bool interrupted = false;
+    // Legacy program-only projection; site issues use the canonical source below.
     std::optional<ProgramController> issueProgramId = std::nullopt;
+    std::optional<DecisionSource> issueSource = std::nullopt;
     std::string stopReason{};
     std::vector<SimEvent> events{};
 };
@@ -90,6 +92,13 @@ private:
     CommandResult amendMaintenanceProgram(const AmendMaintenanceProgramCommand& command);
     CommandResult setMaintenanceLifecycle(MaintenanceProgramId id, MaintenanceProgramLifecycle target);
     CommandResult acknowledgeMaintenanceIssue(const AcknowledgeMaintenanceIssueCommand& command);
+    CommandResult amendSiteOperatingPolicy(const AmendSiteOperatingPolicyCommand&);
+    CommandResult setSiteOperationEnabled(SiteId,bool);
+    CommandResult acknowledgeSiteOperatingIssue(const AcknowledgeSiteOperatingIssueCommand&);
+    CommandResult createSiteDevelopment(const CreateSiteDevelopmentCommand&);
+    CommandResult amendSiteDevelopment(const AmendSiteDevelopmentCommand&);
+    CommandResult setSiteDevelopmentLifecycle(SiteDevelopmentProgramId, SiteDevelopmentLifecycle);
+    CommandResult acknowledgeSiteDevelopmentIssue(const AcknowledgeSiteDevelopmentIssueCommand&);
     CommandResult createAnalysisProgram(const CreateAnalysisProgramCommand&);
     CommandResult amendAnalysisProgram(const AmendAnalysisProgramCommand&);
     CommandResult setAnalysisLifecycle(AnalysisProgramId, AnalysisLifecycle);
@@ -135,7 +144,7 @@ private:
     [[nodiscard]] ShipyardOrderId allocateShipyardOrderId() noexcept;
     [[nodiscard]] ShipId allocateShipId() noexcept;
     [[nodiscard]] FleetId allocateFleetId() noexcept;
-    [[nodiscard]] EventId allocateEventId() noexcept;
+    [[nodiscard]] EventId allocateEventId();
 };
 
 } // namespace deep

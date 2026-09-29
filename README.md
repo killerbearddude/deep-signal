@@ -14,14 +14,16 @@ First buildable headless simulation slice for **Deep Signal Prototype 0.1 - Home
 - Immutable component-based ship designs and derived build/survey capability
 - Persistent home-supported survey programs with finite teams, real refueling,
   timed visits, reports, and interruption-aware time advancement
-- Delegated two-colony freight programs with per-hull cargo, powered handling,
-  source-only operating refueling, repeated shipments and safe cargo settlement
+- Delegated colony/site freight with typed raw or processed cargo, powered handling,
+  explicit colony operating bases, delivery/collection cycles and safe cargo settlement
 - Survey-instrument duty and colony-supported tender maintenance with compatible
   powered workshops, finite engineering teams, actual parts and daily work
 - Ship and fleet creation
 - Prototype sustained-burn fleet movement; loaded cargo does not change its fuel/time model
 - P4A immutable observations, staffed laboratory analysis, dated assessments, and knowledge-limited geology views
-- SQLite schema v16 save/load layer; older development saves are unsupported
+- P4B unrestricted resource-site investment: real deliveries, qualified field builders,
+  finite assembly/commissioning, paid operating support, raw Ice collection and colony processing
+- SQLite schema v17 save/load layer; older development saves are unsupported
 - Full-save/full-load transactions
 - Prepared statements for value-bearing SQL
 - CLI smoke runner
@@ -32,6 +34,28 @@ First buildable headless simulation slice for **Deep Signal Prototype 0.1 - Home
 - Malformed-save rejection tests for schema singleton, enum, range, stale counter, metadata, event chronology, shipyard lifecycle, fleet-order, foreign-key, and event-payload failures
 
 ## Architecture status
+
+For an earned P4B inspection save (actual shipyard builds, cold-site deliveries,
+field construction, supported extraction, and a standing Ice collection route):
+
+```sh
+./build-p4b/deep_signal_cli --write-site-development-fixture /tmp/deep-signal-p4b.sqlite
+./build-p4b/deep_signal_cli --write-site-development-zero-fixture /tmp/deep-signal-p4b-zero.sqlite
+```
+
+Open **Sites / Development** and **Freight / Supply Programs** after
+loading. Registration gives a site no stock or capacity, and does not require
+scientific approval. Sealed processed packages can be delivered to the cold site
+using ship handling. Raw transfers require commissioned storage and supported
+site handling. A collection fleet fuels at its colony destination/base, travels
+empty to the source, and brings real cargo home; it cannot use remote stock or
+cargo to refill its engine tanks.
+
+Both inspection saves advance through day 90 with explicit acknowledgments of
+reported issues. The zero-result variant still builds and pays operating costs;
+it records unsuccessful attempts without declaring a measured reserve or a
+formal scientific assessment. The [P4B implementation report](docs/architecture/p4b-implementation-report.md)
+records verification, the acceptance matrix, and scope limits.
 
 For the P3C inspection fixture, which starts with worn instruments and empty
 service parts bins supplied by two real single-material freight programs:
@@ -63,7 +87,7 @@ The project has three active CMake libraries by default:
 
 ```text
 deep_signal_sim   # pure deterministic simulation; no SQLite/UI/platform deps
-deep_signal_save  # SQLite C API repository and schema v16 mapping
+deep_signal_save  # SQLite C API repository and schema v17 mapping
 deep_signal_app   # application service wrapping simulation plus save/load
 ```
 
@@ -76,7 +100,7 @@ The simulation library now owns domain validation through `src/sim/GameStateVali
 The persistence layer is intentionally isolated under `src/save`:
 
 - `Database.*` owns the SQLite connection, prepared statements, and transactions.
-- `Schema.*` creates and validates only the active schema v16 structure.
+- `Schema.*` creates and validates only the active schema v17 structure.
 - `SaveGameRepository.*` maps `GameState` to/from SQLite rows.
 - `EventJson.*` owns event payload JSON serialization/parsing so the repository does not contain event-specific JSON grammar.
 
@@ -108,7 +132,7 @@ The source also follows the current project C++ direction:
 - no raw owning pointers,
 - warning-clean CMake targets with `-Wall -Wextra -Wpedantic -Wconversion` on GCC/Clang.
 
-## SQLite schema v16 coverage
+## SQLite schema v17 coverage
 
 The save file persists:
 
@@ -118,7 +142,9 @@ The save file persists:
 - star systems,
 - bodies,
 - colonies,
-- colony mineral stockpiles,
+- colony mineral stockpiles and actual cumulative processed-material output,
+- ordered site catalogs, registrations, installed groups, typed stocks, operating
+  policies/receipts/reports/issues, and development packages/work/custody/history,
 - mineral deposits,
 - immutable ship-class revisions and component installations,
 - component processed-material construction costs,
@@ -130,7 +156,7 @@ The save file persists:
 - ships,
 - typed event log rows with JSON payload text.
 
-The current writer uses a replace-all save strategy inside one write transaction. Loading uses one read transaction, runs `PRAGMA foreign_key_check`, parses integer metadata strictly as canonical text, validates enum ordinals, validates the fully assembled `GameState`, and rejects missing, duplicate, or unsupported schema metadata. Schema v16 includes `CHECK` constraints for core non-negative quantities, enum ranges, ID counters, production-order invariants, fleet-order consistency, and program references.
+The current writer uses a replace-all save strategy inside one write transaction. Loading uses one read transaction, runs `PRAGMA foreign_key_check`, parses integer metadata strictly as canonical text, validates enum ordinals, validates the fully assembled `GameState`, and rejects missing, duplicate, or unsupported schema metadata. Schema v17 includes `CHECK` constraints for core non-negative quantities, enum ranges, ID counters, production-order invariants, fleet-order consistency, and program references.
 
 ## Zero-trust hardening status
 

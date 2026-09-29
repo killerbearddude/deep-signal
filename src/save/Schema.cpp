@@ -1,8 +1,9 @@
 #include "save/Schema.h"
 #include "save/MaintenancePersistence.h"
 #include "save/SciencePersistence.h"
+#include "save/SitePersistence.h"
 
-// Responsibility: define the active v16 schema and inspect its structure.
+// Responsibility: define the active v17 schema and inspect its structure.
 // Tables mirror durable GameState records; event payloads remain inspectable JSON
 // text. Foreign keys and CHECK constraints provide a first line of validation,
 // not complete type/graph validation. Repository reconstruction and the domain
@@ -126,11 +127,11 @@ struct IndexShape {
 
 } // namespace
 
-void createSchemaV16(Database& db) {
+void createSchemaV17(Database& db) {
     db.execute(R"sql(
         CREATE TABLE schema_version (
             id INTEGER PRIMARY KEY CHECK(id = 1),
-            version INTEGER NOT NULL CHECK(version = 16)
+            version INTEGER NOT NULL CHECK(version = 17)
         );
 
         CREATE TABLE game_meta (
@@ -286,7 +287,7 @@ void createSchemaV16(Database& db) {
             id INTEGER PRIMARY KEY NOT NULL CHECK(id > 0),
             ordinal INTEGER NOT NULL UNIQUE CHECK(typeof(ordinal) = 'integer' AND ordinal >= 0),
             name TEXT NOT NULL CHECK(length(name) > 0),
-            role INTEGER NOT NULL CHECK(role BETWEEN 0 AND 2),
+            role INTEGER NOT NULL CHECK(role BETWEEN 0 AND 3),
             speed_km_per_day REAL NOT NULL CHECK(speed_km_per_day >= 0.0),
             revision INTEGER NOT NULL CHECK(revision > 0),
             based_on_class_id INTEGER NULL CHECK(based_on_class_id IS NULL OR based_on_class_id > 0),
@@ -527,14 +528,18 @@ void createSchemaV16(Database& db) {
             id INTEGER PRIMARY KEY NOT NULL CHECK(id > 0),
             ordinal INTEGER NOT NULL UNIQUE CHECK(typeof(ordinal) = 'integer' AND ordinal >= 0),
             name TEXT NOT NULL CHECK(length(name) > 0),
-            source_colony_id INTEGER NOT NULL CHECK(source_colony_id > 0),
-            destination_colony_id INTEGER NOT NULL CHECK(destination_colony_id > 0),
-            material INTEGER NOT NULL CHECK(material BETWEEN 0 AND 5),
+            source_kind INTEGER NOT NULL CHECK(typeof(source_kind)='integer' AND source_kind IN (0,1)),
+            source_id INTEGER NOT NULL CHECK(typeof(source_id)='integer' AND source_id > 0),
+            destination_kind INTEGER NOT NULL CHECK(typeof(destination_kind)='integer' AND destination_kind IN (0,1)),
+            destination_id INTEGER NOT NULL CHECK(typeof(destination_id)='integer' AND destination_id > 0),
+            operating_base_colony_id INTEGER NOT NULL CHECK(typeof(operating_base_colony_id)='integer' AND operating_base_colony_id > 0),
+            commodity_kind INTEGER NOT NULL CHECK(typeof(commodity_kind)='integer' AND commodity_kind IN (0,1)),
+            commodity INTEGER NOT NULL CHECK(typeof(commodity)='integer' AND commodity >= 0),
             total_quantity REAL NOT NULL CHECK(total_quantity >= 0.0),
             requested_fleet_id INTEGER NULL CHECK(requested_fleet_id IS NULL OR requested_fleet_id > 0),
             requested_leader_id INTEGER NULL CHECK(requested_leader_id IS NULL OR requested_leader_id > 0),
             source_cargo_floor REAL NOT NULL CHECK(source_cargo_floor >= 0.0),
-            source_propellant_floor REAL NOT NULL CHECK(source_propellant_floor >= 0.0),
+            base_propellant_floor REAL NOT NULL CHECK(base_propellant_floor >= 0.0),
             max_additional_propellant REAL NULL CHECK(max_additional_propellant IS NULL OR max_additional_propellant >= 0.0),
             return_contingency_fraction REAL NOT NULL CHECK(return_contingency_fraction >= 0.0),
             created_day INTEGER NOT NULL CHECK(created_day >= 0),
@@ -543,7 +548,7 @@ void createSchemaV16(Database& db) {
             closure INTEGER NOT NULL CHECK(closure BETWEEN 0 AND 2),
             closed_day INTEGER NULL CHECK(closed_day IS NULL OR closed_day >= created_day),
             leased_fleet_id INTEGER NULL UNIQUE CHECK(leased_fleet_id IS NULL OR leased_fleet_id > 0),
-            task INTEGER NOT NULL CHECK(task BETWEEN 0 AND 7),
+            task INTEGER NOT NULL CHECK(task BETWEEN 0 AND 8),
             task_fleet_id INTEGER NULL CHECK(task_fleet_id IS NULL OR task_fleet_id > 0),
             next_shipment_number INTEGER NOT NULL CHECK(next_shipment_number > 0),
             cargo_loaded REAL NOT NULL CHECK(cargo_loaded >= 0.0),
@@ -562,9 +567,8 @@ void createSchemaV16(Database& db) {
             issue_signature TEXT NOT NULL,
             issue_message TEXT NOT NULL,
             issue_acknowledged INTEGER NOT NULL CHECK(issue_acknowledged IN (0, 1)),
-            CHECK(source_colony_id != destination_colony_id),
-            FOREIGN KEY(source_colony_id) REFERENCES colonies(id),
-            FOREIGN KEY(destination_colony_id) REFERENCES colonies(id),
+            CHECK(source_kind != destination_kind OR source_id != destination_id),
+            FOREIGN KEY(operating_base_colony_id) REFERENCES colonies(id),
             FOREIGN KEY(requested_fleet_id) REFERENCES fleets(id),
             FOREIGN KEY(requested_leader_id) REFERENCES people(id),
             FOREIGN KEY(leased_fleet_id) REFERENCES fleets(id),
@@ -578,15 +582,18 @@ void createSchemaV16(Database& db) {
             committed_day INTEGER NOT NULL CHECK(committed_day >= 0),
             fleet_id INTEGER NOT NULL CHECK(fleet_id > 0),
             leader_id INTEGER NOT NULL CHECK(leader_id > 0),
-            source_colony_id INTEGER NOT NULL CHECK(source_colony_id > 0),
-            destination_colony_id INTEGER NOT NULL CHECK(destination_colony_id > 0),
-            material INTEGER NOT NULL CHECK(material BETWEEN 0 AND 5),
+            source_kind INTEGER NOT NULL CHECK(typeof(source_kind)='integer' AND source_kind IN (0,1)),
+            source_id INTEGER NOT NULL CHECK(typeof(source_id)='integer' AND source_id > 0),
+            destination_kind INTEGER NOT NULL CHECK(typeof(destination_kind)='integer' AND destination_kind IN (0,1)),
+            destination_id INTEGER NOT NULL CHECK(typeof(destination_id)='integer' AND destination_id > 0),
+            operating_base_colony_id INTEGER NOT NULL CHECK(typeof(operating_base_colony_id)='integer' AND operating_base_colony_id > 0),
+            commodity_kind INTEGER NOT NULL CHECK(typeof(commodity_kind)='integer' AND commodity_kind IN (0,1)),
+            commodity INTEGER NOT NULL CHECK(typeof(commodity)='integer' AND commodity >= 0),
             UNIQUE(program_id, number),
             FOREIGN KEY(program_id) REFERENCES freight_programs(id),
             FOREIGN KEY(fleet_id) REFERENCES fleets(id),
             FOREIGN KEY(leader_id) REFERENCES people(id),
-            FOREIGN KEY(source_colony_id) REFERENCES colonies(id),
-            FOREIGN KEY(destination_colony_id) REFERENCES colonies(id)
+            FOREIGN KEY(operating_base_colony_id) REFERENCES colonies(id)
         );
 
         CREATE TABLE freight_shipment_manifest (
@@ -604,7 +611,8 @@ void createSchemaV16(Database& db) {
             ship_id INTEGER PRIMARY KEY NOT NULL CHECK(ship_id > 0),
             program_id INTEGER NOT NULL CHECK(program_id > 0),
             shipment_number INTEGER NOT NULL CHECK(shipment_number > 0),
-            material INTEGER NOT NULL CHECK(material BETWEEN 0 AND 5),
+            commodity_kind INTEGER NOT NULL CHECK(typeof(commodity_kind)='integer' AND commodity_kind IN (0,1)),
+            commodity INTEGER NOT NULL CHECK(typeof(commodity)='integer' AND commodity >= 0),
             quantity REAL NOT NULL CHECK(quantity > 0.0),
             FOREIGN KEY(ship_id) REFERENCES ships(id),
             FOREIGN KEY(program_id, shipment_number) REFERENCES freight_shipments(program_id, number)
@@ -618,16 +626,17 @@ void createSchemaV16(Database& db) {
             day INTEGER NOT NULL CHECK(day >= 0),
             fleet_id INTEGER NOT NULL CHECK(fleet_id > 0),
             leader_id INTEGER NOT NULL CHECK(leader_id > 0),
-            colony_id INTEGER NOT NULL CHECK(colony_id > 0),
-            material INTEGER NOT NULL CHECK(material BETWEEN 0 AND 5),
+            location_kind INTEGER NOT NULL CHECK(typeof(location_kind)='integer' AND location_kind IN (0,1)),
+            location_id INTEGER NOT NULL CHECK(typeof(location_id)='integer' AND location_id > 0),
+            commodity_kind INTEGER NOT NULL CHECK(typeof(commodity_kind)='integer' AND commodity_kind IN (0,1)),
+            commodity INTEGER NOT NULL CHECK(typeof(commodity)='integer' AND commodity >= 0),
             kind INTEGER NOT NULL CHECK(kind BETWEEN 0 AND 3),
             amount REAL NOT NULL CHECK(amount > 0.0),
             PRIMARY KEY(program_id, ordinal),
             UNIQUE(program_id, sequence),
             FOREIGN KEY(program_id) REFERENCES freight_programs(id),
             FOREIGN KEY(fleet_id) REFERENCES fleets(id),
-            FOREIGN KEY(leader_id) REFERENCES people(id),
-            FOREIGN KEY(colony_id) REFERENCES colonies(id)
+            FOREIGN KEY(leader_id) REFERENCES people(id)
         );
 
         CREATE TABLE freight_program_reports (
@@ -651,7 +660,7 @@ void createSchemaV16(Database& db) {
             fleet_body_id INTEGER NULL CHECK(fleet_body_id IS NULL OR fleet_body_id > 0),
             waiting_reason TEXT NOT NULL,
             source_cargo_floor REAL NOT NULL CHECK(source_cargo_floor >= 0.0),
-            source_propellant_floor REAL NOT NULL CHECK(source_propellant_floor >= 0.0),
+            base_propellant_floor REAL NOT NULL CHECK(base_propellant_floor >= 0.0),
             max_additional_propellant REAL NULL CHECK(max_additional_propellant IS NULL OR max_additional_propellant >= 0.0),
             return_contingency_fraction REAL NOT NULL CHECK(return_contingency_fraction >= 0.0),
             PRIMARY KEY(program_id, ordinal),
@@ -687,6 +696,7 @@ void createSchemaV16(Database& db) {
     )sql");
     createMaintenanceSchema(db);
     createScienceSchema(db);
+    createSiteSchema(db);
 }
 
 
@@ -716,10 +726,10 @@ std::int64_t readSchemaVersion(Database& db) {
 namespace {
 
 void requireStructure(Database& db, const bool allowKnownTableTriggers) {
-    // Compare against a fresh v16 declaration. Load permits known-table
+    // Compare against a fresh v17 declaration. Load permits known-table
     // triggers only because it is read-only; Save rejects their write effects.
     Database reference{std::filesystem::path{":memory:"}};
-    createSchemaV16(reference);
+    createSchemaV17(reference);
     const auto expectedObjects = readUserObjects(reference);
     std::vector<std::string> tables;
     for (const auto& object : expectedObjects) {
@@ -742,7 +752,7 @@ void requireStructure(Database& db, const bool allowKnownTableTriggers) {
 
 } // namespace
 
-void requireV16Structure(Database& db, const bool allowKnownTableTriggers) {
+void requireV17Structure(Database& db, const bool allowKnownTableTriggers) {
     requireStructure(db, allowKnownTableTriggers);
 }
 
