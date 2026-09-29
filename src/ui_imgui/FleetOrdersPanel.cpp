@@ -190,8 +190,10 @@ void FleetOrdersPanel::render(const SimulationQueries& queries,
                         return service.execute(SuspendSurveyProgramCommand{id});
                     } else if constexpr (std::is_same_v<decltype(id), const FreightProgramId>) {
                         return service.execute(SuspendFreightProgramCommand{id});
-                    } else {
+                    } else if constexpr (std::is_same_v<decltype(id), const MaintenanceProgramId>) {
                         return service.execute(SuspendMaintenanceProgramCommand{id});
+                    } else {
+                        return service.execute(SuspendAnalysisProgramCommand{id});
                     }
                 }, *fleet->controllingProgram);
                 commandSucceeded_ = result.ok;
@@ -205,8 +207,10 @@ void FleetOrdersPanel::render(const SimulationQueries& queries,
                         return service.execute(CancelSurveyProgramCommand{id});
                     } else if constexpr (std::is_same_v<decltype(id), const FreightProgramId>) {
                         return service.execute(CancelFreightProgramCommand{id});
-                    } else {
+                    } else if constexpr (std::is_same_v<decltype(id), const MaintenanceProgramId>) {
                         return service.execute(CancelMaintenanceProgramCommand{id});
+                    } else {
+                        return service.execute(CancelAnalysisProgramCommand{id});
                     }
                 }, *fleet->controllingProgram);
                 commandSucceeded_ = result.ok;
@@ -281,12 +285,6 @@ void FleetOrdersPanel::render(const SimulationQueries& queries,
 
     if (surveyPreview.has_value()) {
         ImGui::Text("Survey target: %s", surveyPreview->bodyName.c_str());
-        ImGui::Text("Surveyable deposits: %zu", surveyPreview->surveyableDepositCount);
-        if (surveyPreview->surveyableDepositCount > 0U) {
-            ImGui::Text("Avg confidence: %.0f%% -> %.0f%%",
-                        surveyPreview->averageConfidenceBefore * 100.0,
-                        surveyPreview->projectedAverageConfidenceAfter * 100.0);
-        }
         if (!surveyPreview->warningText.empty()) {
             ImGui::TextWrapped("%s", surveyPreview->warningText.c_str());
         }

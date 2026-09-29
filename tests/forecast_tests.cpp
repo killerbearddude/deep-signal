@@ -121,12 +121,13 @@ const deep::ProcessedMaterialForecastCauseChain& requireMaterialCauseChain(
 void test_mineral_income_per_day_uses_current_mining_formula() {
     // Verifies the app forecast mirrors the prototype mining rule without UI
     // code reimplementing colony/deposit joins.
-    const deep::SimulationService service;
+    deep::SimulationService service;
+    static_cast<void>(service.advanceDays(1));
     const deep::ForecastService forecasts{service};
 
     const auto income = forecasts.mineralIncomePerDay();
 
-    require(income.size() == 19, "home scenario has mature-system income forecast rows");
+    require(income.size() == service.state().colonies.size()*deep::mineralCount(), "home scenario has mature-system income forecast rows");
     require(income.front().colonyName == "Terra Directorate", "income forecast resolves colony name");
     require(income.front().bodyName == "Terra", "income forecast resolves body name");
     require(income.front().mineralName == "Iron", "income forecast exposes mineral name");
@@ -164,7 +165,8 @@ void test_mineral_income_per_day_shares_deposits_between_colonies() {
         .ownerInstitutionId = state.colonies.front().ownerInstitutionId
     });
 
-    const deep::SimulationService service{std::move(state)};
+    deep::SimulationService service{std::move(state)};
+    static_cast<void>(service.advanceDays(1));
     const deep::ForecastService forecasts{service};
     const auto income = forecasts.mineralIncomePerDay();
 
@@ -194,29 +196,26 @@ void test_mineral_income_per_day_shares_deposits_between_colonies() {
 void test_mineral_forecast_cause_chains_report_processing_demand() {
     // Verifies raw mineral cause chains explain the new extraction-to-processing
     // bridge: mining income is offset by raw inputs consumed by recipes.
-    const deep::SimulationService service;
+    deep::SimulationService service;
+    static_cast<void>(service.advanceDays(1));
     const deep::ForecastService forecasts{service};
     const auto chains = forecasts.mineralForecastCauseChains();
     const deep::MineralForecastCauseChain& iron = requireCauseChain(chains, deep::Mineral::Iron);
 
     require(chains.size() == deep::mineralCount(), "one cause chain is returned for every mineral");
     require(iron.mineralName == "Iron", "cause chain exposes mineral name");
-    requireNear(iron.stockpile, 28'000.0, "cause chain sums mature-system colony raw stockpiles");
+    requireNear(iron.stockpile, 28'000.0 + 26.9 - 50.0 / 6.0, "cause chain sums mature-system colony raw stockpiles");
     const double expectedIronIncome = 10.0 + 3.6 + 13.3;
     requireNear(iron.miningIncomePerDay, expectedIronIncome, "cause chain includes mature-system mining income per day");
     const double expectedIronDemand = 50.0 / static_cast<double>(deep::processedMaterialCount());
     requireNear(iron.committedDemandPerDay, expectedIronDemand, "cause chain includes policy-weighted processing raw demand");
     requireNear(iron.netPerDay, expectedIronIncome - expectedIronDemand, "cause chain computes net raw mineral flow");
     require(!iron.stockpileRunoutDays.has_value(), "positive net flow has no stockpile runout");
-    require(iron.confirmedDepositQuantity > 0.0, "cause chain separates confirmed deposit quantity");
-    require(iron.uncertainDepositQuantity >= 0.0, "cause chain separates uncertain deposit quantity");
-    require(iron.causes.size() == 5, "cause chain contains deposit certainty plus flow explanation rows");
-    require(iron.causes.front().label == "Confirmed deposits", "first cause row explains confirmed reserves");
-    require(iron.causes.at(1).label == "Estimated deposits", "second cause row explains estimated reserves");
-    require(iron.causes.at(2).label == "Unknown potential", "third cause row explains unknown potential");
-    require(iron.causes.at(3).label == "Mining", "fourth cause row explains mining");
-    require(iron.causes.at(4).label == "Processing recipes", "fifth cause row explains processing demand");
-    requireNear(iron.causes.at(4).amountPerDay, -expectedIronDemand, "processing cause row reports demand as a negative contribution");
+    require(!iron.uncertaintyWarning.empty(), "cause chain identifies unmeasured reserve quantities");
+    require(iron.causes.size()==2, "cause chain contains actual flow categories, no reserve estimate");
+    require(iron.causes.front().label == "Mining", "first flow is observed mining");
+    require(iron.causes.at(1).label == "Processing recipes", "second flow is known processing demand");
+    requireNear(iron.causes.at(1).amountPerDay,-expectedIronDemand,"Demand remains a negative flow contribution");
 }
 
 void test_processed_material_forecast_cause_chains_report_shipyard_demand() {
@@ -387,7 +386,8 @@ void test_recovery_forecast_preserves_baseline_low_total_cutoff() {
 void test_mineral_forecast_cause_chains_include_processing_demand() {
     // Verifies raw minerals include processing demand even without active
     // shipyard orders, because processors now consume raw inputs daily.
-    const deep::SimulationService service;
+    deep::SimulationService service;
+    static_cast<void>(service.advanceDays(1));
     const deep::ForecastService forecasts{service};
     const auto chains = forecasts.mineralForecastCauseChains();
     const deep::MineralForecastCauseChain& iron = requireCauseChain(chains, deep::Mineral::Iron);
@@ -402,19 +402,10 @@ void test_mineral_forecast_cause_chains_include_processing_demand() {
 
 
 void test_mineral_forecast_distinguishes_estimated_and_unknown_supply() {
-    // Exploration intelligence needs forecasts to keep confirmed, estimated,
-    // and unknown reserves separate so survey results have visible impact.
-    const deep::SimulationService service;
-    const deep::ForecastService forecasts{service};
-    const auto chains = forecasts.mineralForecastCauseChains();
-    const deep::MineralForecastCauseChain& lithium = requireCauseChain(chains, deep::Mineral::Lithium);
-    const deep::MineralForecastCauseChain& rareEarth = requireCauseChain(chains, deep::Mineral::RareEarthElements);
-
-    require(lithium.estimatedDepositQuantity > 0.0, "partially surveyed frontier lithium contributes estimated supply");
-    require(lithium.confirmedDepositQuantity > 0.0, "partial confidence still contributes confirmed supply");
-    require(rareEarth.unknownPotentialQuantity > 0.0, "hidden rare-earth deposit contributes unknown potential");
-    require(rareEarth.uncertainDepositQuantity >= rareEarth.unknownPotentialQuantity,
-            "unknown potential remains part of the broader uncertain reserve total");
+    const deep::SimulationService service;const deep::ForecastService forecasts(service);
+    const auto rows=forecasts.mineralForecastCauseChains();
+    require(rows.size()==deep::mineralCount(),"All declared minerals retain inventory/flow projections");
+    for(const auto& row:rows)require(row.uncertaintyWarning.find("unmeasured")!=std::string::npos,"No physical reserve used as forecast authority");
 }
 
 
@@ -432,82 +423,33 @@ void test_mineral_forecast_warns_when_shortage_depends_on_uncertain_supply() {
     const deep::MineralForecastCauseChain& rareEarth = requireCauseChain(chains, deep::Mineral::RareEarthElements);
 
     require(rareEarth.stockpileRunoutDays.has_value(), "small stockpile under demand is critical immediately");
-    require(rareEarth.dependsMostlyOnEstimatedSupply, "rare-earth reserve base depends mostly on uncertain survey data");
+    require(rareEarth.uncertaintyWarning.find("unmeasured")!=std::string::npos,"Shortage advice does not invent geological reserves");
     require(!rareEarth.uncertaintyWarning.empty(), "critical uncertain supply emits a survey warning");
 }
 
-void test_deposit_forecasts_expose_confidence_and_uncertainty() {
-    // Deposit forecasts distinguish confirmed reserves from survey estimates so
-    // future exploration orders can explain what uncertainty they are reducing.
-    const deep::SimulationService service;
-    const deep::ForecastService forecasts{service};
-    const auto deposits = forecasts.depositExhaustionEstimates();
-
-    const auto frontierIt = std::find_if(deposits.begin(), deposits.end(), [](const deep::DepositExhaustionForecast& row) {
-        return row.bodyName == "Helios Far Survey Object" && row.mineral == deep::Mineral::Lithium;
-    });
-
-    require(frontierIt != deposits.end(), "frontier rare-earth deposit forecast exists");
-    requireNear(frontierIt->confidence, 0.15, "frontier deposit preserves low confidence");
-    require(frontierIt->surveyStateName == "Estimated", "low-confidence frontier deposit is marked estimated");
-    requireNear(frontierIt->confirmedDeposit, frontierIt->remainingDeposit * frontierIt->confidence,
-                "confirmed deposit equals confidence-weighted reserve");
-    requireNear(frontierIt->uncertainDeposit, frontierIt->remainingDeposit - frontierIt->confirmedDeposit,
-                "uncertain deposit is the unconfirmed reserve remainder");
+void test_geological_forecasts_expose_measurement_limits() {
+    const deep::SimulationService service;const deep::ForecastService forecasts(service);
+    const auto rows=forecasts.depositExhaustionEstimates();
+    require(rows.size()==service.state().bodies.size()*deep::mineralCount(),"Forecast subjects do not reveal physical deposit rows");
+    for(const auto& row:rows)require(!row.exhaustionDays && row.knowledgeLimit=="Reserve quantity unmeasured","No exact geological exhaustion without reserve measurements");
 }
 
 void test_resource_survey_updates_confirmed_and_estimated_forecasts() {
-    // Accepted survey commands should immediately change forecast certainty: the
-    // physical reserve was already in state, but its confirmed/estimated split
-    // must reflect the improved confidence.
-    deep::GameState state = deep::createHomeSystemScenario();
-    const deep::BodyId frontierId = bodyIdByName(state, "Helios Far Survey Object");
-    const deep::FleetId fleetId = addTestFleetAt(state, frontierId);
-    deep::SimulationService service{std::move(state)};
-
-    const auto beforeRows = deep::ForecastService{service}.depositExhaustionEstimates();
-    const auto beforeIt = std::find_if(beforeRows.begin(), beforeRows.end(), [](const deep::DepositExhaustionForecast& row) {
-        return row.bodyName == "Helios Far Survey Object" && row.mineral == deep::Mineral::RareEarthElements;
-    });
-    require(beforeIt != beforeRows.end(), "frontier rare-earth forecast exists before survey");
-    requireNear(beforeIt->confidence, 0.0, "rare-earth frontier deposit starts hidden");
-    requireNear(beforeIt->confirmedDeposit, 0.0, "hidden deposit has no confirmed reserve before survey");
-    requireNear(beforeIt->estimatedDeposit, 0.0, "hidden deposit has no displayed estimate before survey");
-
-    require(service.execute(deep::ResourceSurveyCommand{
-        .fleetId = fleetId,
-        .bodyId = frontierId
-    }).ok, "resource survey command is accepted before forecast update");
-
-    const auto afterRows = deep::ForecastService{service}.depositExhaustionEstimates();
-    const auto afterIt = std::find_if(afterRows.begin(), afterRows.end(), [](const deep::DepositExhaustionForecast& row) {
-        return row.bodyName == "Helios Far Survey Object" && row.mineral == deep::Mineral::RareEarthElements;
-    });
-    require(afterIt != afterRows.end(), "frontier rare-earth forecast exists after survey");
-    require(afterIt->confidence >= deep::kResourceSurveyMinimumRevealedConfidence,
-            "survey raises hidden deposit confidence into estimated range");
-    require(afterIt->confirmedDeposit > beforeIt->confirmedDeposit,
-            "survey increases confirmed reserve forecast");
-    require(afterIt->estimatedDeposit > beforeIt->estimatedDeposit,
-            "survey exposes estimated reserve forecast");
-    require(afterIt->uncertainDeposit < afterIt->remainingDeposit,
-            "survey reduces uncertain reserve share");
+    auto state=deep::createHomeSystemScenario();const auto body=bodyIdByName(state,"Helios Far Survey Object");
+    const auto fleet=addTestFleetAt(state,body);deep::SimulationService service(state);
+    const auto before=deep::ForecastService(service).depositExhaustionEstimates();
+    require(service.execute(deep::ResourceSurveyCommand{fleet,body}).ok,"Raw observations acquired");
+    const auto after=deep::ForecastService(service).depositExhaustionEstimates();
+    require(before.size()==after.size(),"Acquisition does not discover hidden row count");
+    for(std::size_t i=0;i<before.size();++i)require(before[i].exhaustionDays==after[i].exhaustionDays && before[i].knowledgeLimit==after[i].knowledgeLimit,"Indication profile cannot supply reserve mass or exhaustion");
 }
 
 void test_deposit_exhaustion_estimate_uses_current_income_rate() {
-    // Verifies deposit lifetime estimates are explainable capacity projections.
-    // This catches drift if Simulation mining formulas change later.
-    const deep::SimulationService service;
-    const deep::ForecastService forecasts{service};
-
-    const auto deposits = forecasts.depositExhaustionEstimates();
-
-    require(deposits.size() == 31, "home scenario has mature-system deposit exhaustion rows");
-    require(deposits.front().exhaustionDays.has_value(), "positive income yields exhaustion estimate");
-    require(*deposits.front().exhaustionDays == 100000, "iron deposit exhaustion is rounded up by days");
-    require(deposits.at(1).exhaustionDays.has_value(), "nickel deposit also has exhaustion estimate");
-    require(*deposits.at(1).exhaustionDays == 75000, "nickel exhaustion uses accessibility-adjusted income");
-    require(!deposits.front().explanation.empty(), "deposit exhaustion forecast includes explanation text");
+    // P4A does not measure reserves; physical mining remains covered by sim tests.
+    const deep::SimulationService service;const deep::ForecastService forecasts(service);
+    const auto rows=forecasts.depositExhaustionEstimates();
+    require(rows.size()==service.state().bodies.size()*deep::mineralCount(),"One row per declared subject, never secret deposits");
+    for(const auto& row:rows)require(!row.exhaustionDays && row.explanation.find("Insufficient evidence")!=std::string::npos,"No exact reserve lifetime can be inferred");
 }
 
 void test_shipyard_order_eta_uses_capacity_and_accumulated_progress() {
@@ -785,7 +727,7 @@ int main() {
         test_mineral_forecast_cause_chains_include_processing_demand();
         test_mineral_forecast_distinguishes_estimated_and_unknown_supply();
         test_mineral_forecast_warns_when_shortage_depends_on_uncertain_supply();
-        test_deposit_forecasts_expose_confidence_and_uncertainty();
+        test_geological_forecasts_expose_measurement_limits();
         test_resource_survey_updates_confirmed_and_estimated_forecasts();
         test_deposit_exhaustion_estimate_uses_current_income_rate();
         test_shipyard_order_eta_uses_capacity_and_accumulated_progress();

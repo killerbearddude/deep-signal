@@ -26,6 +26,13 @@ set(DEEP_SIGNAL_WARNINGS
 )
 
 add_library(deep_signal_sim
+    src/sim/ObservationRules.cpp
+    src/sim/ObservationAcquisition.cpp
+    src/sim/AssessmentRules.cpp
+    src/sim/ScienceValidation.cpp
+    src/sim/AnalysisProgramRules.cpp
+    src/sim/AnalysisProgramExecution.cpp
+    src/sim/SimulationAnalysis.cpp
     src/sim/GameStateValidation.cpp
     src/sim/ProcessingAllocationRules.cpp
     src/sim/ProgramControl.cpp
@@ -70,6 +77,7 @@ if(DEEP_SIGNAL_BUILD_SAVE)
         src/save/FreightPersistence.cpp
         src/save/MaintenancePersistence.cpp
         src/save/MaintenanceSchema.cpp
+        src/save/SciencePersistence.cpp
         src/save/Schema.cpp
         src/save/SaveGameRepository.cpp
     )
@@ -93,6 +101,7 @@ if(DEEP_SIGNAL_BUILD_APP)
         src/app/SelectionState.cpp
         src/app/SimulationQueries.cpp
         src/app/MaintenanceQueries.cpp
+        src/app/ScienceQueries.cpp
         src/app/SimulationService.cpp
     )
 
@@ -129,6 +138,7 @@ if(DEEP_SIGNAL_BUILD_UI)
         src/ui_imgui/FleetOrdersPanel.cpp
         src/ui_imgui/FreightProgramsPanel.cpp
         src/ui_imgui/MaintenanceProgramsPanel.cpp
+        src/ui_imgui/SciencePanel.cpp
         src/ui_imgui/ImGuiApp.cpp
         src/ui_imgui/InformationPanel.cpp
         src/ui_imgui/InformationNavigation.cpp
@@ -154,6 +164,29 @@ if(DEEP_SIGNAL_BUILD_UI)
 endif()
 
 if(DEEP_SIGNAL_BUILD_TESTS)
+    # Independent science fixtures exercise the truth/record interpretation boundary.
+    if(DEEP_SIGNAL_BUILD_APP)
+        add_executable(deep_signal_analysis_readiness_tests tests/analysis_readiness_tests.cpp)
+        target_link_libraries(deep_signal_analysis_readiness_tests PRIVATE deep_signal_app)
+        target_compile_options(deep_signal_analysis_readiness_tests PRIVATE ${DEEP_SIGNAL_WARNINGS})
+        add_test(NAME deep_signal_analysis_readiness_tests COMMAND deep_signal_analysis_readiness_tests)
+        add_executable(deep_signal_science_integration_tests tests/science_integration_tests.cpp)
+        target_link_libraries(deep_signal_science_integration_tests PRIVATE deep_signal_app)
+        target_compile_options(deep_signal_science_integration_tests PRIVATE ${DEEP_SIGNAL_WARNINGS})
+        add_test(NAME deep_signal_science_integration_tests COMMAND deep_signal_science_integration_tests)
+        add_executable(deep_signal_science_save_tests tests/science_save_tests.cpp)
+        target_link_libraries(deep_signal_science_save_tests PRIVATE deep_signal_app)
+        target_compile_options(deep_signal_science_save_tests PRIVATE ${DEEP_SIGNAL_WARNINGS})
+        add_test(NAME deep_signal_science_save_tests COMMAND deep_signal_science_save_tests)
+    endif()
+    add_executable(deep_signal_observation_rules_tests tests/observation_rules_tests.cpp)
+    target_link_libraries(deep_signal_observation_rules_tests PRIVATE deep_signal_sim)
+    target_compile_options(deep_signal_observation_rules_tests PRIVATE ${DEEP_SIGNAL_WARNINGS})
+    add_test(NAME deep_signal_observation_rules_tests COMMAND deep_signal_observation_rules_tests)
+    add_executable(deep_signal_analysis_execution_tests tests/analysis_execution_tests.cpp)
+    target_link_libraries(deep_signal_analysis_execution_tests PRIVATE deep_signal_sim)
+    target_compile_options(deep_signal_analysis_execution_tests PRIVATE ${DEEP_SIGNAL_WARNINGS})
+    add_test(NAME deep_signal_analysis_execution_tests COMMAND deep_signal_analysis_execution_tests)
     enable_testing()
 
     # Geometry stays testable without SDL/ImGui, including minimized windows and
@@ -257,6 +290,11 @@ if(DEEP_SIGNAL_BUILD_TESTS)
         target_link_libraries(deep_signal_freight_program_ui_tests PRIVATE deep_signal_app ${DEEP_SIGNAL_UI_DEPENDENCY_TARGET})
         target_compile_options(deep_signal_freight_program_ui_tests PRIVATE ${DEEP_SIGNAL_WARNINGS})
         add_test(NAME deep_signal_freight_program_ui_tests COMMAND deep_signal_freight_program_ui_tests)
+        add_executable(deep_signal_science_ui_tests tests/science_ui_tests.cpp
+            src/ui_imgui/SciencePanel.cpp src/ui_imgui/OperationalWindow.cpp src/ui_imgui/ShellLayout.cpp)
+        target_link_libraries(deep_signal_science_ui_tests PRIVATE deep_signal_app ${DEEP_SIGNAL_UI_DEPENDENCY_TARGET})
+        target_compile_options(deep_signal_science_ui_tests PRIVATE ${DEEP_SIGNAL_WARNINGS})
+        add_test(NAME deep_signal_science_ui_tests COMMAND deep_signal_science_ui_tests)
         add_executable(deep_signal_maintenance_ui_tests tests/maintenance_ui_tests.cpp
             src/ui_imgui/MaintenanceProgramsPanel.cpp src/ui_imgui/OperationalWindow.cpp src/ui_imgui/ShellLayout.cpp)
         target_link_libraries(deep_signal_maintenance_ui_tests PRIVATE deep_signal_app ${DEEP_SIGNAL_UI_DEPENDENCY_TARGET})
@@ -437,6 +475,7 @@ if(DEEP_SIGNAL_BUILD_TESTS)
             src/save/FreightPersistence.cpp
             src/save/MaintenancePersistence.cpp
             src/save/MaintenanceSchema.cpp
+        src/save/SciencePersistence.cpp
         )
         target_link_libraries(deep_signal_save_contract_tests PRIVATE deep_signal_sim SQLite::SQLite3)
         target_compile_options(deep_signal_save_contract_tests PRIVATE ${DEEP_SIGNAL_WARNINGS})

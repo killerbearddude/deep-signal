@@ -28,16 +28,6 @@ struct AdvanceResult {
     std::vector<SimEvent> events{};
 };
 
-// Applies one physically authorized resource survey to the target's still
-// uncertain deposits and returns its compact result payload. The caller must
-// validate fleet location and debit the prepared operating duty separately,
-// then emit the returned event
-// once; this helper does not dispatch commands or append audit history. A body
-// with no improvable deposits yields a valid zero-information result.
-[[nodiscard]] ResourceSurveyCompletedEvent applyResourceSurveyResult(GameState& state,
-                                                                     FleetId fleetId,
-                                                                     BodyId bodyId) noexcept;
-
 // Single-owner, single-threaded simulation engine. This class intentionally has
 // no UI, SDL, ImGui, SQLite, filesystem, or wall-clock dependencies.
 // No internal synchronization: callers serialize commands, ticks, and state reads.
@@ -100,6 +90,10 @@ private:
     CommandResult amendMaintenanceProgram(const AmendMaintenanceProgramCommand& command);
     CommandResult setMaintenanceLifecycle(MaintenanceProgramId id, MaintenanceProgramLifecycle target);
     CommandResult acknowledgeMaintenanceIssue(const AcknowledgeMaintenanceIssueCommand& command);
+    CommandResult createAnalysisProgram(const CreateAnalysisProgramCommand&);
+    CommandResult amendAnalysisProgram(const AmendAnalysisProgramCommand&);
+    CommandResult setAnalysisLifecycle(AnalysisProgramId, AnalysisLifecycle);
+    CommandResult acknowledgeAnalysisIssue(const AcknowledgeAnalysisIssueCommand&);
     CommandResult assignAppointment(const AssignAppointmentCommand& command);
     CommandResult setColonyProcessingPolicy(const SetColonyProcessingPolicyCommand& command);
 

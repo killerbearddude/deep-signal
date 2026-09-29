@@ -134,7 +134,6 @@ void compare(const deep::Body& a, const deep::Body& b, const std::string& path) 
 void compare(const deep::MineralDeposit& a, const deep::MineralDeposit& b,
              const std::string& path) {
     EXACT(bodyId); EXACT(mineral); FLOAT(remaining); FLOAT(accessibility);
-    FLOAT(confidence);
 }
 
 void compare(const deep::ProcessingAllocation& a, const deep::ProcessingAllocation& b,
@@ -242,8 +241,11 @@ void compare(const deep::FleetArrivedEvent& a, const deep::FleetArrivedEvent& b,
 
 void compare(const deep::ResourceSurveyCompletedEvent& a,
              const deep::ResourceSurveyCompletedEvent& b, const std::string& path) {
-    EXACT(fleetId); EXACT(bodyId); EXACT(depositsImproved);
-    FLOAT(averageConfidenceBefore); FLOAT(averageConfidenceAfter);
+    EXACT(fleetId); EXACT(bodyId); EXACT(observationBatchId);
+}
+
+void compare(const deep::AnalysisProgramAuditEvent& a,const deep::AnalysisProgramAuditEvent& b,const std::string& path) {
+    EXACT(programId); EXACT(kind); EXACT(jobId); EXACT(detail);
 }
 
 void compare(const deep::CommandRejectedEvent& a, const deep::CommandRejectedEvent& b,

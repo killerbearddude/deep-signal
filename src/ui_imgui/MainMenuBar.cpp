@@ -24,6 +24,7 @@ void applyWorkspace(Workspace workspace, PanelVisibility& visibility) {
     visibility.surveyPrograms = false;
     visibility.freightPrograms = false;
     visibility.maintenancePrograms = false;
+    visibility.science = false;
     visibility.shipyard = false;
     visibility.economyForecast = false;
     visibility.eventLog = false;
@@ -49,6 +50,7 @@ void applyWorkspace(Workspace workspace, PanelVisibility& visibility) {
         visibility.maintenancePrograms = true;
         break;
     case Workspace::Intelligence:
+        visibility.science = true;
         // Exploration intelligence and Resource Survey remain in these panels
         // until the later workspace consolidation patches.
         visibility.strategicMap = true;
@@ -121,6 +123,7 @@ float MainMenuBar::render(SimulationService& service, SaveLoadPanel& saveLoadPan
         ImGui::MenuItem("Survey Programs", nullptr, &visibility.surveyPrograms);
         ImGui::MenuItem("Freight / Supply Programs", nullptr, &visibility.freightPrograms);
         ImGui::MenuItem("Maintenance / Support Programs", nullptr, &visibility.maintenancePrograms);
+        ImGui::MenuItem("Evidence / Analysis",nullptr,&visibility.science);
         ImGui::MenuItem("Shipyard / Production", nullptr, &visibility.shipyard);
         ImGui::MenuItem("Economy Forecast", nullptr, &visibility.economyForecast);
         ImGui::MenuItem("Event Log", nullptr, &visibility.eventLog);

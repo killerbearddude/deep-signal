@@ -164,7 +164,7 @@ void unavailable() {
         // This DTO count also includes moving fleets whose departure body is
         // still referenced. The relationship section lists only idle fleets.
         fact("Fleets referenced", std::to_string(body->fleetCount));
-        fact("Deposits", std::to_string(body->mineralDepositCount));
+        fact("Observation batches", std::to_string(body->observationBatchCount));
         ImGui::EndTable();
     }
     return true;

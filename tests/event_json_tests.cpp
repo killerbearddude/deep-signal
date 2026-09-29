@@ -86,9 +86,7 @@ bool samePayload(const deep::SimEventPayload& lhs, const deep::SimEventPayload& 
         } else if constexpr (std::is_same_v<Left, deep::ResourceSurveyCompletedEvent>) {
             return left.fleetId == right.fleetId &&
                    left.bodyId == right.bodyId &&
-                   left.depositsImproved == right.depositsImproved &&
-                   almostEqual(left.averageConfidenceBefore, right.averageConfidenceBefore) &&
-                   almostEqual(left.averageConfidenceAfter, right.averageConfidenceAfter);
+                   left.observationBatchId == right.observationBatchId;
         } else if constexpr (std::is_same_v<Left, deep::SurveyProgramAuditEvent>) {
             return left.programId == right.programId && left.kind == right.kind &&
                    left.fleetId == right.fleetId && left.bodyId == right.bodyId &&
@@ -110,6 +108,8 @@ bool samePayload(const deep::SimEventPayload& lhs, const deep::SimEventPayload& 
         } else if constexpr (std::is_same_v<Left, deep::MaintenanceProgramAuditEvent>) {
             return left.programId == right.programId && left.kind == right.kind &&
                    left.jobNumber == right.jobNumber && left.detail == right.detail;
+        } else if constexpr (std::is_same_v<Left, deep::AnalysisProgramAuditEvent>) {
+            return left.programId==right.programId && left.kind==right.kind && left.jobId==right.jobId && left.detail==right.detail;
         } else if constexpr (std::is_same_v<Left, deep::CommandRejectedEvent>) {
             return left.reason == right.reason;
         }
@@ -209,16 +209,12 @@ void test_resource_survey_completed_round_trips() {
     requireRoundTrip(deep::ResourceSurveyCompletedEvent{
         .fleetId = deep::FleetId{18},
         .bodyId = deep::BodyId{19},
-        .depositsImproved = 3,
-        .averageConfidenceBefore = 0.25,
-        .averageConfidenceAfter = 0.75
+        .observationBatchId = deep::ObservationBatchId{1}
     }, "resource_survey_completed payload round-trips");
     requireRoundTrip(deep::ResourceSurveyCompletedEvent{
         .fleetId = deep::FleetId{18},
         .bodyId = deep::BodyId{19},
-        .depositsImproved = 0,
-        .averageConfidenceBefore = 0.0,
-        .averageConfidenceAfter = 0.0
+        .observationBatchId = deep::ObservationBatchId{1}
     }, "zero-information resource_survey_completed payload round-trips");
 }
 

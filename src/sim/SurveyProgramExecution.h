@@ -27,6 +27,9 @@ struct SurveyProgramExecutionHooks {
     // Non-owning phase budget supplied by Simulation; null only for read-only
     // helpers and legacy survey-only callers outside the mixed dispatcher.
     OpeningProgramContext* opening = nullptr;
+    // Simulation reserves both durable and returned event storage and checks ID
+    // headroom before coupled scientific mutations. Test-only callers may omit it.
+    std::function<void(std::size_t)> prepareEvents{};
 };
 
 // Releases a stationary program lease without moving its fleet or team. A

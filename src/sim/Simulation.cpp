@@ -1,4 +1,7 @@
+#include "sim/AnalysisProgramExecution.h"
 #include "sim/Simulation.h"
+#include "sim/ObservationAcquisition.h"
+#include "sim/ObservationRules.h"
 #include "sim/GameStateValidation.h"
 #include "sim/ProcessingAllocationRules.h"
 #include "sim/ShipDesignRules.h"
@@ -368,41 +371,6 @@ bool consumeFleetFuel(GameState& state, const Fleet& fleet, const double fuelCos
 
 } // namespace
 
-ResourceSurveyCompletedEvent applyResourceSurveyResult(GameState& state,
-                                                       const FleetId fleetId,
-                                                       const BodyId bodyId) noexcept {
-    int improvedDeposits = 0;
-    double confidenceBeforeTotal = 0.0;
-    double confidenceAfterTotal = 0.0;
-    for (MineralDeposit& deposit : state.mineralDeposits) {
-        if (deposit.bodyId != bodyId || isDepositKnown(deposit)) {
-            continue;
-        }
-
-        const double before = deposit.confidence;
-        const double after = surveyedDepositConfidence(deposit);
-        if (after <= before) {
-            continue;
-        }
-
-        deposit.confidence = after;
-        confidenceBeforeTotal += before;
-        confidenceAfterTotal += after;
-        ++improvedDeposits;
-    }
-
-    // A visit can complete without a geological update. Zero averages describe
-    // an empty changed-deposit set and avoid fabricating confidence information.
-    const double divisor = improvedDeposits > 0 ? static_cast<double>(improvedDeposits) : 1.0;
-    return ResourceSurveyCompletedEvent{
-        .fleetId = fleetId,
-        .bodyId = bodyId,
-        .depositsImproved = improvedDeposits,
-        .averageConfidenceBefore = confidenceBeforeTotal / divisor,
-        .averageConfidenceAfter = confidenceAfterTotal / divisor
-    };
-}
-
 Simulation::Simulation(GameState initialState)
     : state_{std::move(initialState)} {
     // External snapshots are an explicit trust boundary. Validate before the
@@ -479,6 +447,18 @@ CommandResult Simulation::execute(const SimCommand& command) {
             return setMaintenanceLifecycle(concreteCommand.programId,MaintenanceProgramLifecycle::Closed);
         } else if constexpr (std::is_same_v<Command, AcknowledgeMaintenanceIssueCommand>) {
             return acknowledgeMaintenanceIssue(concreteCommand);
+        } else if constexpr (std::is_same_v<Command, CreateAnalysisProgramCommand>) {
+            return createAnalysisProgram(concreteCommand);
+        } else if constexpr (std::is_same_v<Command, AmendAnalysisProgramCommand>) {
+            return amendAnalysisProgram(concreteCommand);
+        } else if constexpr (std::is_same_v<Command, SuspendAnalysisProgramCommand>) {
+            return setAnalysisLifecycle(concreteCommand.programId,AnalysisLifecycle::Suspended);
+        } else if constexpr (std::is_same_v<Command, ResumeAnalysisProgramCommand>) {
+            return setAnalysisLifecycle(concreteCommand.programId,AnalysisLifecycle::Authorized);
+        } else if constexpr (std::is_same_v<Command, CancelAnalysisProgramCommand>) {
+            return setAnalysisLifecycle(concreteCommand.programId,AnalysisLifecycle::Closed);
+        } else if constexpr (std::is_same_v<Command, AcknowledgeAnalysisIssueCommand>) {
+            return acknowledgeAnalysisIssue(concreteCommand);
         } else if constexpr (std::is_same_v<Command, AssignAppointmentCommand>) {
             return assignAppointment(concreteCommand);
         } else if constexpr (std::is_same_v<Command, SetColonyProcessingPolicyCommand>) {
@@ -522,7 +502,9 @@ AdvanceResult Simulation::advanceDaysDetailed(const int days) {
              std::any_of(state_.freightPrograms.begin(), state_.freightPrograms.end(),
                 [=](const auto& p) { return p.lifecycle != FreightProgramLifecycle::Closed && p.nextReportDay == nextDay; }) ||
              std::any_of(state_.maintenancePrograms.begin(), state_.maintenancePrograms.end(),
-                [=](const auto& p) { return p.lifecycle != MaintenanceProgramLifecycle::Closed && p.nextReportDay == nextDay; }))) {
+                [=](const auto& p) { return p.lifecycle != MaintenanceProgramLifecycle::Closed && p.nextReportDay == nextDay; }) ||
+             std::any_of(state_.analysisPrograms.begin(),state_.analysisPrograms.end(),
+                [=](const auto& p){return p.lifecycle!=AnalysisLifecycle::Closed && p.nextReportDay==nextDay;}))) {
             result.interrupted = true;
             result.stopReason = "Program reporting date limit reached";
             break;
@@ -801,17 +783,27 @@ CommandResult Simulation::resourceSurvey(const ResourceSurveyCommand& command) {
         return CommandResult::failure(reason);
     }
 
+    std::vector<InstrumentExposure> exposures;
+    for (const auto& contributor : survey.contributors)
+        accumulateObservationExposure(exposures,contributor,state_.date.day,5);
+    // All sampler/date allocations happen before the physical duty debit.
+    auto batch=prepareObservationBatch(state_,fleet->id,command.bodyId,exposures,{state_.date.day});
+    state_.observations.reserve(state_.observations.size()+1);
+    if(survey.changes.size()+1>static_cast<std::size_t>(std::numeric_limits<std::int64_t>::max()-state_.ids.nextEventId))
+        throw std::runtime_error("Observation audit identity limit reached");
+    state_.eventLog.reserve(state_.eventLog.size()+survey.changes.size()+1);
+    const auto batchId=batch.id;
     applySurveyDuty(state_, survey);
+    state_.observations.push_back(std::move(batch));
+    ++state_.ids.nextObservationBatchId;
     for (const auto& change : survey.changes) {
         appendEvent(EventSeverity::Info, EquipmentDutyUsedEvent{
             fleet->id, change.shipId, change.componentId, std::nullopt, 5.0,
             change.beforeUsedDuty, change.afterUsedDuty});
     }
-    const ResourceSurveyCompletedEvent result = applyResourceSurveyResult(state_, fleet->id, command.bodyId);
-    appendEvent(EventSeverity::Info, result);
-    return CommandResult::success(result.depositsImproved == 0
-        ? "Resource survey completed. No new information from this pass"
-        : "Resource survey completed");
+    appendEvent(EventSeverity::Info,ResourceSurveyCompletedEvent{
+        .fleetId=fleet->id,.bodyId=command.bodyId,.observationBatchId=batchId});
+    return CommandResult::success("Resource survey acquired raw observations; analysis is separate");
 }
 
 CommandResult Simulation::createSurveyProgram(const CreateSurveyProgramCommand& command) {
@@ -1293,7 +1285,13 @@ void Simulation::simulateOneDay(std::vector<SimEvent>& emitted) {
         .emit = [this, &emitted](const EventSeverity severity, SimEventPayload payload) {
             emitEvent(emitted, severity, std::move(payload));
         },
-        .opening = &opening
+        .opening = &opening,
+        .prepareEvents = [this,&emitted](std::size_t count) {
+            if(count>static_cast<std::size_t>(std::numeric_limits<std::int64_t>::max()-state_.ids.nextEventId))
+                throw std::runtime_error("Scientific audit identity limit reached");
+            state_.eventLog.reserve(state_.eventLog.size()+count);
+            emitted.reserve(emitted.size()+count);
+        }
     };
     const FreightProgramExecutionHooks freightHooks{
         .startProgramMove = [this, &emitted](FreightProgramId id, FleetId fleet, BodyId body, double& fuel) {
@@ -1310,8 +1308,10 @@ void Simulation::simulateOneDay(std::vector<SimEvent>& emitted) {
                 runSurveyProgramOpeningDay(state_, *findById(state_.surveyPrograms, id), opening, programHooks);
             } else if constexpr (std::is_same_v<decltype(id), FreightProgramId>) {
                 runFreightProgramOpeningDay(state_, *findById(state_.freightPrograms, id), opening, freightHooks);
-            } else {
+            } else if constexpr (std::is_same_v<decltype(id), MaintenanceProgramId>) {
                 runMaintenanceProgramOpeningDay(state_, *findById(state_.maintenancePrograms, id), opening, maintenanceHooks);
+            } else {
+                runAnalysisOpeningDay(state_,*findById(state_.analysisPrograms,id),opening,{programHooks.emit,programHooks.prepareEvents});
             }
         }, owner);
     }
@@ -1327,6 +1327,7 @@ void Simulation::simulateOneDay(std::vector<SimEvent>& emitted) {
     finishSurveyProgramsDay(state_, programHooks);
     finishFreightProgramsDay(state_, freightHooks);
     finishMaintenanceProgramsDay(state_, maintenanceHooks);
+    finishAnalysisDay(state_,{programHooks.emit,programHooks.prepareEvents});
 }
 
 void Simulation::simulateMining(std::vector<SimEvent>&) {
@@ -1337,8 +1338,8 @@ void Simulation::simulateMining(std::vector<SimEvent>&) {
             }
 
             // Each mine contributes one base unit per day to every local deposit,
-            // scaled by accessibility and capped by remaining material. Confidence
-            // affects displayed knowledge only; mining does not require a survey.
+            // scaled by accessibility and capped by remaining material. Observations
+            // affect player knowledge only; mining never requires investigation.
             const double potentialExtraction = colony.mines * deposit.accessibility;
             const double extracted = std::min(deposit.remaining, std::max(0.0, potentialExtraction));
             if (extracted <= 0.0) {

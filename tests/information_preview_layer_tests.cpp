@@ -149,7 +149,7 @@ void native_condensed_overviews_and_stable_identity() {
     contains(bodyText, body.strategicZoneName);
     contains(bodyText, "Colonies " + std::to_string(body.colonyCount));
     contains(bodyText, "Fleets referenced " + std::to_string(body.fleetCount));
-    contains(bodyText, "Deposits " + std::to_string(body.mineralDepositCount));
+    contains(bodyText, "Observation batches " + std::to_string(body.observationBatchCount));
     contains(bodyText, "RELATIONSHIPS");
     contains(bodyText, "Parent body");
     contains(bodyText, body.parentBodyName);

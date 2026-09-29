@@ -110,9 +110,9 @@ void EconomyForecastPanel::render(const ForecastService& forecasts, bool& visibl
     if (ImGui::BeginTable("EconomyForecastRawMineralTable", 10, kForecastTableFlags)) {
         ImGui::TableSetupColumn("Mineral");
         ImGui::TableSetupColumn("Stockpile");
-        ImGui::TableSetupColumn("Confirmed");
-        ImGui::TableSetupColumn("Estimated");
-        ImGui::TableSetupColumn("Unknown");
+        ImGui::TableSetupColumn("Reserve quantity");
+        ImGui::TableSetupColumn("Site suitability");
+        ImGui::TableSetupColumn("Evidence limit");
         ImGui::TableSetupColumn("Income/day");
         ImGui::TableSetupColumn("Demand/day");
         ImGui::TableSetupColumn("Net/day");
@@ -134,11 +134,11 @@ void EconomyForecastPanel::render(const ForecastService& forecasts, bool& visibl
             ImGui::TableSetColumnIndex(1);
             ImGui::Text("%.1f", chain.stockpile);
             ImGui::TableSetColumnIndex(2);
-            ImGui::Text("%.0f", chain.confirmedDepositQuantity);
+            ImGui::TextUnformatted("Unmeasured");
             ImGui::TableSetColumnIndex(3);
-            ImGui::Text("%.0f", chain.estimatedDepositQuantity);
+            ImGui::TextUnformatted("Unassessed");
             ImGui::TableSetColumnIndex(4);
-            ImGui::Text("%.0f", chain.unknownPotentialQuantity);
+            ImGui::TextUnformatted("No reserve estimate");
             ImGui::TableSetColumnIndex(5);
             ImGui::Text("%.1f", chain.miningIncomePerDay);
             ImGui::TableSetColumnIndex(6);

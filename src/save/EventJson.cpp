@@ -58,6 +58,8 @@ template <typename EnumT>
         return value >= 0 && value <= static_cast<std::int64_t>(SurveyProgramAuditKind::IssueAcknowledged);
     } else if constexpr (std::is_same_v<EnumT, FreightProgramAuditKind>) {
         return value >= 0 && value <= static_cast<std::int64_t>(FreightProgramAuditKind::IssueRaised);
+    } else if constexpr (std::is_same_v<EnumT, AnalysisAuditKind>) {
+        return value >= 0 && value <= static_cast<std::int64_t>(AnalysisAuditKind::IssueAcknowledged);
     } else if constexpr (std::is_same_v<EnumT, MaintenanceAuditKind>) {
         return value >= 0 && value <= static_cast<std::int64_t>(MaintenanceAuditKind::IssueAcknowledged);
     } else {
@@ -292,6 +294,8 @@ void requireFlatJsonObjectShape(const std::string_view json) {
             return "equipment_duty_used";
         } else if constexpr (std::is_same_v<Event, MaintenanceProgramAuditEvent>) {
             return "maintenance_program_audit";
+        } else if constexpr (std::is_same_v<Event, AnalysisProgramAuditEvent>) {
+            return "analysis_program_audit";
         } else if constexpr (std::is_same_v<Event, CommandRejectedEvent>) {
             return "command_rejected";
         }
@@ -336,11 +340,7 @@ void requireFlatJsonObjectShape(const std::string_view json) {
         } else if constexpr (std::is_same_v<Event, ResourceSurveyCompletedEvent>) {
             object["fleet_id"] = idValue(event.fleetId);
             object["body_id"] = idValue(event.bodyId);
-            object["deposits_improved"] = event.depositsImproved;
-            object["average_confidence_before"] = checkedFiniteDoubleFromPayload(
-                event.averageConfidenceBefore, "event.average_confidence_before");
-            object["average_confidence_after"] = checkedFiniteDoubleFromPayload(
-                event.averageConfidenceAfter, "event.average_confidence_after");
+            object["observation_batch_id"] = idValue(event.observationBatchId);
         } else if constexpr (std::is_same_v<Event, SurveyProgramAuditEvent>) {
             object["program_id"] = idValue(event.programId);
             object["kind"] = enumValue(event.kind);
@@ -372,6 +372,9 @@ void requireFlatJsonObjectShape(const std::string_view json) {
         } else if constexpr (std::is_same_v<Event, MaintenanceProgramAuditEvent>) {
             object["program_id"] = idValue(event.programId); object["kind"] = enumValue(event.kind);
             object["job_number"] = event.jobNumber; object["detail"] = event.detail;
+        } else if constexpr (std::is_same_v<Event, AnalysisProgramAuditEvent>) {
+            object["program_id"] = idValue(event.programId); object["kind"] = enumValue(event.kind);
+            object["job_id"] = event.jobId.value; object["detail"] = event.detail;
         } else if constexpr (std::is_same_v<Event, CommandRejectedEvent>) {
             object["reason"] = event.reason;
         }
@@ -416,11 +419,7 @@ void requireFlatJsonObjectShape(const std::string_view json) {
         } else if constexpr (std::is_same_v<Event, ResourceSurveyCompletedEvent>) {
             out << "\"fleet_id\":" << idValue(event.fleetId)
                 << ",\"body_id\":" << idValue(event.bodyId)
-                << ",\"deposits_improved\":" << event.depositsImproved
-                << ",\"average_confidence_before\":" << numberToJson(
-                    event.averageConfidenceBefore, "event.average_confidence_before")
-                << ",\"average_confidence_after\":" << numberToJson(
-                    event.averageConfidenceAfter, "event.average_confidence_after");
+                << ",\"observation_batch_id\":" << idValue(event.observationBatchId);
         } else if constexpr (std::is_same_v<Event, SurveyProgramAuditEvent>) {
             out << "\"program_id\":" << idValue(event.programId)
                 << ",\"kind\":" << enumValue(event.kind)
@@ -452,6 +451,9 @@ void requireFlatJsonObjectShape(const std::string_view json) {
         } else if constexpr (std::is_same_v<Event, MaintenanceProgramAuditEvent>) {
             out << "\"program_id\":" << idValue(event.programId) << ",\"kind\":" << enumValue(event.kind)
                 << ",\"job_number\":" << event.jobNumber << ",\"detail\":" << quoteJson(event.detail);
+        } else if constexpr (std::is_same_v<Event, AnalysisProgramAuditEvent>) {
+            out << "\"program_id\":" << idValue(event.programId) << ",\"kind\":" << enumValue(event.kind)
+                << ",\"job_id\":" << event.jobId.value << ",\"detail\":" << quoteJson(event.detail);
         } else if constexpr (std::is_same_v<Event, CommandRejectedEvent>) {
             out << "\"reason\":" << quoteJson(event.reason);
         }
@@ -555,9 +557,7 @@ void requireFlatJsonObjectShape(const std::string_view json) {
         return ResourceSurveyCompletedEvent{
             .fleetId = FleetId{requireInt64("fleet_id")},
             .bodyId = BodyId{requireInt64("body_id")},
-            .depositsImproved = checkedIntFromPayload(requireInt64("deposits_improved"), "event.deposits_improved"),
-            .averageConfidenceBefore = requireDouble("average_confidence_before"),
-            .averageConfidenceAfter = requireDouble("average_confidence_after")
+            .observationBatchId = ObservationBatchId{requireInt64("observation_batch_id")}
         };
     }
 
@@ -613,6 +613,11 @@ void requireFlatJsonObjectShape(const std::string_view json) {
         return MaintenanceProgramAuditEvent{MaintenanceProgramId{requireInt64("program_id")},
             enumFromValue<MaintenanceAuditKind>(requireInt64("kind")),
             checkedIntFromPayload(requireInt64("job_number"),"event.job_number"),requireString("detail")};
+    }
+    if (eventType == "analysis_program_audit") {
+        return AnalysisProgramAuditEvent{AnalysisProgramId{requireInt64("program_id")},
+            enumFromValue<AnalysisAuditKind>(requireInt64("kind")),
+            AnalysisJobId{requireInt64("job_id")},requireString("detail")};
     }
     if (eventType == "command_rejected") {
         return CommandRejectedEvent{.reason = requireString("reason")};
@@ -679,9 +684,7 @@ void requireFlatJsonObjectShape(const std::string_view json) {
         return ResourceSurveyCompletedEvent{
             .fleetId = FleetId{jsonInt64(payloadJson, "fleet_id")},
             .bodyId = BodyId{jsonInt64(payloadJson, "body_id")},
-            .depositsImproved = checkedIntFromPayload(jsonInt64(payloadJson, "deposits_improved"), "event.deposits_improved"),
-            .averageConfidenceBefore = jsonDouble(payloadJson, "average_confidence_before"),
-            .averageConfidenceAfter = jsonDouble(payloadJson, "average_confidence_after")
+            .observationBatchId = ObservationBatchId{jsonInt64(payloadJson, "observation_batch_id")}
         };
     }
 
@@ -737,6 +740,11 @@ void requireFlatJsonObjectShape(const std::string_view json) {
         return MaintenanceProgramAuditEvent{MaintenanceProgramId{jsonInt64(payloadJson,"program_id")},
             enumFromValue<MaintenanceAuditKind>(jsonInt64(payloadJson,"kind")),
             checkedIntFromPayload(jsonInt64(payloadJson,"job_number"),"event.job_number"),jsonString(payloadJson,"detail")};
+    }
+    if (eventType == "analysis_program_audit") {
+        return AnalysisProgramAuditEvent{AnalysisProgramId{jsonInt64(payloadJson,"program_id")},
+            enumFromValue<AnalysisAuditKind>(jsonInt64(payloadJson,"kind")),
+            AnalysisJobId{jsonInt64(payloadJson,"job_id")},jsonString(payloadJson,"detail")};
     }
     if (eventType == "command_rejected") {
         return CommandRejectedEvent{.reason = jsonString(payloadJson, "reason")};

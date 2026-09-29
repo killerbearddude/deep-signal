@@ -3,6 +3,7 @@
 #include "sim/Minerals.h"
 #include "sim/ScenarioFactory.h"
 #include "sim/Simulation.h"
+#include "sim/EquipmentServiceRules.h"
 #include "save/SaveGameRepository.h"
 
 // CLI smoke runner for the headless simulation.
@@ -57,7 +58,7 @@ struct EventPrinter {
     void operator()(const deep::ResourceSurveyCompletedEvent& event) const {
         std::cout << "  Resource survey completed: fleet=" << event.fleetId.value
                   << " body=" << event.bodyId.value
-                  << " deposits=" << event.depositsImproved << '\n';
+                  << " observation_batch=" << event.observationBatchId.value << '\n';
     }
 
     void operator()(const deep::SurveyProgramAuditEvent& event) const {
@@ -77,6 +78,10 @@ struct EventPrinter {
     }
     void operator()(const deep::MaintenanceProgramAuditEvent& event) const {
         std::cout << "  Maintenance program " << event.programId.value << " job=" << event.jobNumber << ": " << event.detail << '\n';
+    }
+
+    void operator()(const deep::AnalysisProgramAuditEvent& event) const {
+        std::cout << "  Analysis program " << event.programId.value << " job=" << event.jobId.value << ": " << event.detail << '\n';
     }
 
     void operator()(const deep::CommandRejectedEvent& event) const {
@@ -110,6 +115,47 @@ void printAdvance(const deep::Simulation& sim, const deep::AdvanceResult& result
 // fleet return non-zero; the final location is printed but not asserted. Use the
 // regression tests for arrival correctness; exit zero alone does not prove arrival.
 int main(int argc, char** argv) {
+    if (argc == 3 && (std::string_view{argv[1]} == "--write-evidence-fixture" ||
+                       std::string_view{argv[1]} == "--write-evidence-concurrent-fixture")) {
+        try {
+            // Authored physical assets only. Every observation and assessment
+            // below is earned through ordinary survey/analysis commands and days.
+            const bool separate=std::string_view{argv[1]}=="--write-evidence-concurrent-fixture";
+            auto state=deep::createDelegatedSurveyScenario();
+            state.colonies.back().analysisCapacity=1;
+            state.ships.front().fuel=1000;
+            auto revision=state.shipClasses.front();revision.id=deep::ShipClassId{state.ids.nextShipClassId++};
+            revision.name="Characterization Cutter";revision.basedOnClassId.reset();revision.revision=1;
+            for(auto& install:revision.components)if(install.componentId==deep::ShipComponentId{4})install.componentId=deep::ShipComponentId{7};
+            state.shipClasses.push_back(revision);
+            auto ship=state.ships.front();ship.id=deep::ShipId{state.ids.nextShipId++};ship.shipClassId=revision.id;
+            ship.name="Characterization instrument";ship.equipmentCondition.clear();
+            deep::initializeShipEquipmentCondition(state,ship);state.ships.push_back(ship);state.fleets.front().shipIds.push_back(ship.id);
+            state.mineralDeposits.push_back({state.colonies.back().bodyId,deep::Mineral::WaterIce,100,.4});
+            state.mineralDeposits.push_back({state.bodies.back().id,deep::Mineral::WaterIce,100,.4});
+            if(separate)state.surveyTeams.push_back({deep::SurveyTeamId{state.ids.nextSurveyTeamId++},"Home laboratory scientist",
+                deep::SurveyTeamLocationKind::Colony,state.colonies.back().id,std::nullopt});
+            deep::Simulation fixture(state);
+            const auto accept=[&](const deep::SimCommand& c){auto r=fixture.execute(c);if(!r.ok)throw std::runtime_error(r.message);};
+            accept(deep::ResourceSurveyCommand{state.fleets.front().id,state.colonies.back().bodyId});
+            accept(deep::CreateAnalysisProgramCommand{{"Initial local interpretation",state.colonies.back().id,
+                deep::FixedBatchInput{{deep::ObservationBatchId{1}}},state.surveyTeams.front().id,state.people.front().id,std::nullopt}});
+            fixture.advanceDays(3);
+            deep::SurveyProgramCharter field;field.name="Two transmitted field passes";field.homeColonyId=state.colonies.back().id;
+            field.requestedFleetId=state.fleets.front().id;field.requestedTeamId=state.surveyTeams.front().id;
+            field.requestedLeaderId=state.people.front().id;field.targets={{state.bodies.back().id,0,2}};
+            accept(deep::CreateSurveyProgramCommand{field});
+            accept(deep::CreateAnalysisProgramCommand{{"Standing field analysis",state.colonies.back().id,
+                deep::FollowSurveyInput{deep::SurveyProgramId{1}},state.surveyTeams.back().id,state.people.front().id,std::nullopt}});
+            for(int n=0;n<100 && fixture.state().observations.size()<2;++n) {
+                const auto r=fixture.advanceDaysDetailed(1);
+                if(r.interrupted)throw std::runtime_error(r.stopReason);
+            }
+            fixture.advanceDays(1); // Makes the first transmitted batch eligible.
+            deep::save::SaveGameRepository::save(argv[2],fixture.state());
+            std::cout<<"Wrote v16 earned evidence fixture: "<<argv[2]<<'\n';return 0;
+        } catch(const std::exception& e){std::cerr<<"Evidence fixture export failed: "<<e.what()<<'\n';return 1;}
+    }
     if (argc == 3 && std::string_view{argv[1]} == "--write-maintenance-fixture") {
         try {
             deep::Simulation fixture{deep::createMaintenanceSupplyScenario()};
@@ -170,7 +216,7 @@ int main(int argc, char** argv) {
         }
     }
     if (argc != 1) {
-        std::cerr << "Usage: deep_signal_cli [--write-freight-fixture PATH | --write-maintenance-fixture PATH]\n";
+        std::cerr << "Usage: deep_signal_cli [--write-freight-fixture PATH | --write-maintenance-fixture PATH | --write-evidence-fixture PATH | --write-evidence-concurrent-fixture PATH]\n";
         return 1;
     }
     deep::Simulation sim{deep::createHomeSystemScenario()};

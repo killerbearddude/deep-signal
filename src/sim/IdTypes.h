@@ -39,6 +39,11 @@ struct MaintenanceTeamTag;
 struct MaintenanceProgramTag;
 struct SurveyTeamTag;
 struct EventTag;
+struct MeasurementProfileTag;
+struct ObservationBatchTag;
+struct AnalysisProgramTag;
+struct AnalysisJobTag;
+struct AssessmentTag;
 
 using StarSystemId = Id<StarSystemTag>;
 using BodyId = Id<BodyTag>;
@@ -57,5 +62,10 @@ using MaintenanceTeamId = Id<MaintenanceTeamTag>;
 using MaintenanceProgramId = Id<MaintenanceProgramTag>;
 using SurveyTeamId = Id<SurveyTeamTag>;
 using EventId = Id<EventTag>;
+using MeasurementProfileId = Id<MeasurementProfileTag>;
+using ObservationBatchId = Id<ObservationBatchTag>;
+using AnalysisProgramId = Id<AnalysisProgramTag>;
+using AnalysisJobId = Id<AnalysisJobTag>;
+using AssessmentId = Id<AssessmentTag>;
 
 } // namespace deep

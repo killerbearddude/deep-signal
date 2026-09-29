@@ -3,7 +3,7 @@
 // Responsibility: project live simulation records into owned, display-ready
 // values for UI consumers. Queries resolve names, score candidates, and preview
 // routes; they do not issue commands, persist data, or own simulation entities.
-// Resource/fuel amounts use abstract simulation units. Confidence uses [0, 1],
+// Resource/fuel amounts use abstract simulation units. Scientific records retain method limits;
 // percentages use 100 for a full allocation/tank and signed percentage points for
 // modifiers. Map positions use kKilometersPerMapUnit scaling, not screen pixels.
 
@@ -170,6 +170,7 @@ struct ShipComponentSummary {
     double buildPoints = 0.0;
     std::optional<EquipmentServiceProfile> serviceProfile;
     std::vector<WorkshopFamilyRate> workshopRates;
+    std::optional<MeasurementProfile> measurementProfile;
 };
 
 struct ShipDesignDraftPreview {
@@ -320,7 +321,8 @@ struct SurveyTeamSummary {
     std::string name;
     SurveyTeamLocationKind locationKind = SurveyTeamLocationKind::Colony;
     std::string locationName;
-    std::optional<SurveyProgramId> controllingProgramId;
+    std::optional<ProgramController> controllingProgram;
+    std::string controllingProgramLabel;
 };
 
 struct SurveyProgramTargetSummary {
@@ -584,11 +586,9 @@ struct ResourceSurveyPreview {
     FleetId fleetId;
     BodyId bodyId;
     std::string bodyName;
-    std::size_t surveyableDepositCount = 0;
-    double averageConfidenceBefore = 0.0;
-    double projectedAverageConfidenceAfter = 0.0;
     bool canSurvey = false;
     std::string warningText;
+    bool operator==(const ResourceSurveyPreview&) const = default;
 };
 
 // Display-ready body/system overview row. Counts are resolved in the app layer
@@ -608,55 +608,28 @@ struct BodySystemSummary {
     double orbitalPeriodDays = 0.0;
     double displayRadius = 0.0;
     std::size_t colonyCount = 0;
-    std::size_t mineralDepositCount = 0;
-    std::size_t knownDepositCount = 0;
-    std::size_t estimatedDepositCount = 0;
-    std::size_t unknownDepositCount = 0;
-    double confirmedDepositQuantity = 0.0;
-    double estimatedDepositQuantity = 0.0;
-    double uncertainDepositQuantity = 0.0;
+    std::size_t observationBatchCount = 0;
+    std::size_t assessmentRevisionCount = 0;
     std::size_t fleetCount = 0;
+    bool operator==(const BodySystemSummary&) const = default;
 };
 
-// Display-ready mineral deposit row. Confidence partitions physical remaining
-// quantity into confirmed and uncertain supply; estimated quantity is hidden for
-// unknown deposits. A survey improves confidence without creating new reserves.
+// One declared mineral channel, independent of hidden deposit existence. These
+// owned records summarize published assessments; raw observations stay separate.
 struct BodyDepositSummary {
     BodyId bodyId;
     std::string bodyName;
     Mineral mineral = Mineral::Iron;
     std::string mineralName;
-    double confidence = 1.0;
-    DepositSurveyState surveyState = DepositSurveyState::Known;
-    std::string surveyStateName;
-    double confirmedQuantity = 0.0;
-    double estimatedQuantity = 0.0;
-    double uncertainQuantity = 0.0;
-    double accessibility = 1.0;
+    std::string indication = "Unknown; no analyzed observations";
+    std::string accessibility = "Unmeasured";
+    std::optional<std::int64_t> asOfDay;
+    std::optional<std::int64_t> accessibilityAsOfDay;
     bool shortageRelevant = false;
     std::string strategicRelevance;
+    bool operator==(const BodyDepositSummary&) const = default;
 };
-
-// One low-confidence reserve row in the exploration intelligence summary. These
-// rows answer "where should we survey next?" without introducing survey AI.
-struct ExplorationDepositIntelligenceRow {
-    BodyId bodyId;
-    std::string bodyName;
-    Mineral mineral = Mineral::Iron;
-    std::string mineralName;
-    DepositSurveyState surveyState = DepositSurveyState::Unknown;
-    std::string surveyStateName;
-    double confidence = 0.0;
-    double confirmedQuantity = 0.0;
-    double estimatedQuantity = 0.0;
-    double unknownPotentialQuantity = 0.0;
-    double accessibility = 1.0;
-    bool shortageRelevant = false;
-    std::string strategicRelevance;
-};
-
-// Compact audit row for completed surveys. It intentionally references the
-// existing survey-completed event rather than adding save/schema state.
+using ExplorationDepositIntelligenceRow = BodyDepositSummary;
 struct RecentSurveyResultSummary {
     EventId eventId;
     std::int64_t day = 0;
@@ -664,18 +637,43 @@ struct RecentSurveyResultSummary {
     std::string fleetName;
     BodyId bodyId;
     std::string bodyName;
-    int depositsImproved = 0;
-    double averageConfidenceBefore = 0.0;
-    double averageConfidenceAfter = 0.0;
+    ObservationBatchId observationBatchId;
     std::string summary;
+    bool operator==(const RecentSurveyResultSummary&) const = default;
 };
-
-// Exploration intelligence is a read-only briefing over deposit confidence and
-// survey events. It does not choose missions or mutate survey state.
 struct ExplorationIntelligenceSummary {
-    std::vector<ExplorationDepositIntelligenceRow> lowConfidenceDeposits;
+    std::vector<ExplorationDepositIntelligenceRow> declaredChannels;
     std::vector<RecentSurveyResultSummary> recentSurveyResults;
     std::vector<std::string> warnings;
+    bool operator==(const ExplorationIntelligenceSummary&) const = default;
+};
+
+// Owned evidence and analytical work, safe to retain across later service calls.
+struct EvidenceDossier {
+    BodyId bodyId;
+    std::vector<ObservationBatch> observations;
+    std::vector<AnalysisFinding> findings;
+    std::vector<AssessmentRevision> assessments;
+};
+struct AnalysisProgramSummary {
+    AnalysisProgram program;
+    std::string condition;
+    std::string sourceStatus;
+    std::string laboratory;
+    std::string requestedTeam;
+    std::string actualTeam;
+    std::string teamLocation;
+    std::string teamOwner;
+    double laboratoryCapacity=0;
+    double workPerformed=0;
+    double activeWorkRemaining=0;
+    std::optional<double> remainingAllowance;
+    std::optional<int> currentJobEta;
+};
+struct AnalysisDraftPreview {
+    bool valid=false;
+    std::string error;
+    std::string condition;
 };
 
 // Map-ready body row with rail positions projected at the current game day.
@@ -776,6 +774,12 @@ public:
     // Returns a single fleet summary when the ID exists in the active snapshot.
     [[nodiscard]] std::optional<FleetSummary> fleet(FleetId id) const;
 
+    // Scientific projections never sample deposits or perform analyst work.
+    [[nodiscard]] EvidenceDossier evidenceDossier(BodyId) const;
+    [[nodiscard]] std::vector<ObservationBatch> acquiredObservations() const;
+    [[nodiscard]] std::vector<MeasurementProfile> measurementProfiles() const;
+    [[nodiscard]] std::vector<AnalysisProgramSummary> analysisPrograms() const;
+    [[nodiscard]] AnalysisDraftPreview analysisDraftPreview(const AnalysisCharter&) const;
     [[nodiscard]] std::vector<SurveyTeamSummary> surveyTeams() const;
     [[nodiscard]] std::vector<SurveyProgramSummary> surveyPrograms() const;
     [[nodiscard]] SurveyProgramCharterPreview previewSurveyProgramCharter(
@@ -827,15 +831,14 @@ public:
     // return nullopt; ordinary precondition failures return a warning in the DTO.
     [[nodiscard]] std::optional<ResourceSurveyPreview> resourceSurveyPreview(FleetId fleetId, BodyId bodyId) const;
 
-    // Returns one overview row per body with colony, deposit, and fleet counts.
+    // Returns one public-body row with colony, acquired-record and fleet counts.
     [[nodiscard]] std::vector<BodySystemSummary> bodySystemOverview() const;
 
-    // Returns display-ready deposit rows for a body. Unknown rows intentionally
-    // hide estimated quantity until a resource survey improves confidence.
+    // Returns all declared mineral channels, with published assessment summaries.
+    // Unknown is not zero; raw acquired observations are separately inspectable.
     [[nodiscard]] std::vector<BodyDepositSummary> bodyDeposits(BodyId bodyId) const;
 
-    // Returns survey intelligence over low-confidence deposits and recent survey
-    // events so UI panels can explain what exploration changed.
+    // Returns declared knowledge channels and recent acquisition audit links.
     [[nodiscard]] ExplorationIntelligenceSummary explorationIntelligence() const;
 
     // Returns one map row per body with current-day projected rail coordinates.

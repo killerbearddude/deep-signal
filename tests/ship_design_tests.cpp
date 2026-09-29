@@ -237,8 +237,8 @@ void testSurveyUsesInstalledPoweredEquipment() {
         state.shipClasses.front().components = components;
         if (mode == 1) state.shipClasses.front().role = deep::ShipRole::Escort;
         const auto target = std::find_if(state.mineralDeposits.begin(), state.mineralDeposits.end(),
-            [](const deep::MineralDeposit& deposit) { return !deep::isDepositKnown(deposit); });
-        require(target != state.mineralDeposits.end(), "scenario provides low-confidence target");
+            [](const deep::MineralDeposit& deposit) { return deposit.bodyId.value > 0; });
+        require(target != state.mineralDeposits.end(), "scenario provides a physical target");
         const deep::ShipId shipId{state.ids.nextShipId++};
         const deep::FleetId fleetId{state.ids.nextFleetId++};
         state.ships.push_back(deep::Ship{.id = shipId, .shipClassId = state.shipClasses.front().id,

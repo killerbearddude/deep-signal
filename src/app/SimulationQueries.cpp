@@ -112,19 +112,6 @@ template <typename T, typename IdT>
     return std::string{toString(mineral)};
 }
 
-[[nodiscard]] std::string depositSurveyStateName(const DepositSurveyState state) {
-    switch (state) {
-    case DepositSurveyState::Unknown:
-        return "Unknown";
-    case DepositSurveyState::Estimated:
-        return "Estimated";
-    case DepositSurveyState::Known:
-        return "Known";
-    }
-
-    return "Unknown";
-}
-
 [[nodiscard]] const MineralForecastCauseChain* mineralForecastFor(
     const std::vector<MineralForecastCauseChain>& forecasts,
     const Mineral mineral) noexcept {
@@ -137,40 +124,6 @@ template <typename T, typename IdT>
 [[nodiscard]] bool isMaterialShortageRelevant(const MineralForecastCauseChain* forecast) noexcept {
     return forecast != nullptr &&
            (forecast->netPerDay < -kMineralComparisonEpsilon || forecast->stockpileRunoutDays.has_value());
-}
-
-[[nodiscard]] std::string depositStrategicRelevance(
-    const MineralDeposit& deposit,
-    const std::vector<MineralForecastCauseChain>& forecasts) {
-    const MineralForecastCauseChain* forecast = mineralForecastFor(forecasts, deposit.mineral);
-    const bool shortageRelevant = isMaterialShortageRelevant(forecast);
-    const DepositSurveyState state = depositSurveyState(deposit);
-
-    if (shortageRelevant) {
-        std::ostringstream out;
-        out << "Survey priority: " << mineralDisplayName(deposit.mineral)
-            << " is under forecast pressure";
-        if (forecast != nullptr && forecast->stockpileRunoutDays.has_value()) {
-            out << " with stockpile runout in " << *forecast->stockpileRunoutDays << " day(s)";
-        }
-        if (state == DepositSurveyState::Known) {
-            out << "; this is confirmed supply.";
-        } else {
-            out << "; surveying this body can clarify whether the reserve helps the shortage.";
-        }
-        return out.str();
-    }
-
-    switch (state) {
-    case DepositSurveyState::Unknown:
-        return "Unsurveyed potential: survey before treating this reserve as actionable supply.";
-    case DepositSurveyState::Estimated:
-        return "Estimated reserve: additional survey can convert more of this estimate into confirmed supply.";
-    case DepositSurveyState::Known:
-        return "Confirmed reserve: no additional resource survey value for this deposit in v1.";
-    }
-
-    return {};
 }
 
 [[nodiscard]] std::string fleetName(const GameState& state, const FleetId id) {
@@ -923,6 +876,8 @@ void addProcessingWeight(ProcessingShares& weights, const ProcessedMaterial mate
             return "equipment_duty";
         } else if constexpr (std::is_same_v<Event, MaintenanceProgramAuditEvent>) {
             return "maintenance_program";
+        } else if constexpr (std::is_same_v<Event, AnalysisProgramAuditEvent>) {
+            return "analysis_program";
         } else if constexpr (std::is_same_v<Event, CommandRejectedEvent>) {
             return "command_rejected";
         }
@@ -956,13 +911,7 @@ void addProcessingWeight(ProcessingShares& weights, const ProcessedMaterial mate
         } else if constexpr (std::is_same_v<Event, ResourceSurveyCompletedEvent>) {
             out << "Fleet " << idText(event.fleetId.value)
                 << " surveyed body " << idText(event.bodyId.value) << "; ";
-            if (event.depositsImproved == 0) {
-                out << "No new information from this pass";
-            } else {
-                out << "improved " << event.depositsImproved << " deposit(s)"
-                    << " from " << (event.averageConfidenceBefore * 100.0) << "% to "
-                    << (event.averageConfidenceAfter * 100.0) << "% average confidence";
-            }
+            out << "acquired raw observation batch " << event.observationBatchId.value << "; analysis is separate";
         } else if constexpr (std::is_same_v<Event, SurveyProgramAuditEvent>) {
             out << "Survey program " << idText(event.programId.value) << ": " << event.detail;
         } else if constexpr (std::is_same_v<Event, FreightProgramAuditEvent>) {
@@ -971,6 +920,8 @@ void addProcessingWeight(ProcessingShares& weights, const ProcessedMaterial mate
             out << "Ship " << event.shipId.value << " instrument " << event.componentId.value << " used " << event.duty << " survey duty";
         } else if constexpr (std::is_same_v<Event, MaintenanceProgramAuditEvent>) {
             out << "Maintenance program " << event.programId.value << ": " << event.detail;
+        } else if constexpr (std::is_same_v<Event, AnalysisProgramAuditEvent>) {
+            out << "Analysis program " << event.programId.value << ": " << event.detail;
         } else if constexpr (std::is_same_v<Event, CommandRejectedEvent>) {
             out << event.reason;
         }
@@ -1181,7 +1132,9 @@ std::vector<ShipComponentSummary> SimulationQueries::shipComponents() const {
             .cargoCapacity = component.cargoCapacity,
             .cargoHandlingPerDay = component.cargoHandlingPerDay,
             .buildCost = component.buildCost, .buildPoints = component.buildPoints,
-            .serviceProfile = component.serviceProfile, .workshopRates = component.workshopRates
+            .serviceProfile = component.serviceProfile, .workshopRates = component.workshopRates,
+            .measurementProfile = component.measurementProfileId ?
+                std::optional{*findById(service_.state().measurementProfiles,*component.measurementProfileId)} : std::nullopt
         });
     }
     return rows;
@@ -1529,29 +1482,13 @@ std::optional<ResourceSurveyPreview> SimulationQueries::resourceSurveyPreview(co
         .fleetId = fleetId,
         .bodyId = bodyId,
         .bodyName = body->name,
-        .surveyableDepositCount = 0,
-        .averageConfidenceBefore = 0.0,
-        .projectedAverageConfidenceAfter = 0.0,
         .canSurvey = false,
         .warningText = {}
     };
 
-    for (const MineralDeposit& deposit : state.mineralDeposits) {
-        if (deposit.bodyId != bodyId || isDepositKnown(deposit)) {
-            continue;
-        }
-        preview.averageConfidenceBefore += deposit.confidence;
-        preview.projectedAverageConfidenceAfter += surveyedDepositConfidence(deposit);
-        ++preview.surveyableDepositCount;
-    }
-
-    if (preview.surveyableDepositCount > 0U) {
-        const double count = static_cast<double>(preview.surveyableDepositCount);
-        preview.averageConfidenceBefore /= count;
-        preview.projectedAverageConfidenceAfter /= count;
-    }
-
-    if (fleet->activeOrder.type != FleetOrderType::None || fleet->destinationBodyId.has_value()) {
+    if (const auto owner=controllingProgram(state,fleetId)) {
+        preview.warningText="Fleet is controlled by "+programControllerLabel(state,*owner);
+    } else if (fleet->activeOrder.type != FleetOrderType::None || fleet->destinationBodyId.has_value()) {
         preview.warningText = "Fleet must be stationary to survey.";
     } else if (fleet->currentBodyId != bodyId) {
         preview.warningText = "Fleet must be at the selected body.";
@@ -1560,11 +1497,7 @@ std::optional<ResourceSurveyPreview> SimulationQueries::resourceSurveyPreview(co
         preview.warningText = capability.condition + ".";
     } else {
         preview.canSurvey = true;
-        if (preview.surveyableDepositCount == 0U) {
-            // A physically valid survey can finish without changing confidence.
-            // This advice is informational; the button remains enabled.
-            preview.warningText = "No confidence improvement is projected for this pass.";
-        }
+        preview.warningText = "Acquires raw observations; reserve quantity and site suitability remain unmeasured.";
     }
 
     return preview;
@@ -1582,33 +1515,6 @@ std::vector<BodySystemSummary> SimulationQueries::bodySystemOverview() const {
         const auto fleetAtBody = [body](const Fleet& fleet) {
             return fleet.currentBodyId == body.id;
         };
-
-        std::size_t knownDepositCount = 0;
-        std::size_t estimatedDepositCount = 0;
-        std::size_t unknownDepositCount = 0;
-        double confirmedDepositTotal = 0.0;
-        double estimatedDepositTotal = 0.0;
-        double uncertainDepositTotal = 0.0;
-        for (const MineralDeposit& deposit : state.mineralDeposits) {
-            if (deposit.bodyId != body.id) {
-                continue;
-            }
-
-            switch (depositSurveyState(deposit)) {
-            case DepositSurveyState::Known:
-                ++knownDepositCount;
-                break;
-            case DepositSurveyState::Estimated:
-                ++estimatedDepositCount;
-                break;
-            case DepositSurveyState::Unknown:
-                ++unknownDepositCount;
-                break;
-            }
-            confirmedDepositTotal += confirmedDepositQuantity(deposit);
-            estimatedDepositTotal += estimatedDepositQuantity(deposit);
-            uncertainDepositTotal += uncertainDepositQuantity(deposit);
-        }
 
         // Counts are derived here rather than in the UI so the Bodies/System
         // panel remains a read-only projection over stable app DTOs.
@@ -1628,13 +1534,8 @@ std::vector<BodySystemSummary> SimulationQueries::bodySystemOverview() const {
             .orbitalPeriodDays = body.orbitalPeriodDays,
             .displayRadius = body.displayRadius,
             .colonyCount = static_cast<std::size_t>(std::count_if(state.colonies.begin(), state.colonies.end(), onBody)),
-            .mineralDepositCount = static_cast<std::size_t>(std::count_if(state.mineralDeposits.begin(), state.mineralDeposits.end(), onBody)),
-            .knownDepositCount = knownDepositCount,
-            .estimatedDepositCount = estimatedDepositCount,
-            .unknownDepositCount = unknownDepositCount,
-            .confirmedDepositQuantity = confirmedDepositTotal,
-            .estimatedDepositQuantity = estimatedDepositTotal,
-            .uncertainDepositQuantity = uncertainDepositTotal,
+            .observationBatchCount = static_cast<std::size_t>(std::count_if(state.observations.begin(),state.observations.end(),onBody)),
+            .assessmentRevisionCount = static_cast<std::size_t>(std::count_if(state.assessments.begin(),state.assessments.end(),onBody)),
             .fleetCount = static_cast<std::size_t>(std::count_if(state.fleets.begin(), state.fleets.end(), fleetAtBody))
         });
     }
@@ -1642,128 +1543,50 @@ std::vector<BodySystemSummary> SimulationQueries::bodySystemOverview() const {
     return summaries;
 }
 
-std::vector<BodyDepositSummary> SimulationQueries::bodyDeposits(const BodyId bodyId) const {
-    const GameState& state = service_.state();
-    const std::vector<MineralForecastCauseChain> mineralForecasts = ForecastService{service_}.mineralForecastCauseChains();
-    std::vector<BodyDepositSummary> summaries;
-
-    for (const MineralDeposit& deposit : state.mineralDeposits) {
-        if (deposit.bodyId != bodyId) {
-            continue;
+std::vector<BodyDepositSummary> SimulationQueries::bodyDeposits(BodyId bodyId) const {
+    const auto& state=service_.state();
+    if (!bodyById(state,bodyId)) return {};
+    const auto forecasts=ForecastService{service_}.mineralForecastCauseChains();
+    const AssessmentRevision* latest=nullptr;
+    for (const auto& a : state.assessments) if (a.bodyId==bodyId) latest=&a;
+    std::vector<BodyDepositSummary> rows;
+    for (std::size_t i=0;i<mineralCount();++i) {
+        BodyDepositSummary row;
+        row.bodyId=bodyId; row.bodyName=bodyName(state,bodyId);
+        row.mineral=static_cast<Mineral>(i); row.mineralName=mineralDisplayName(row.mineral);
+        row.shortageRelevant=isMaterialShortageRelevant(mineralForecastFor(forecasts,row.mineral));
+        row.strategicRelevance=row.shortageRelevant ? "Known stock/flow pressure; geological reserves unmeasured" : "Reserve quantity unmeasured; site suitability unassessed";
+        if (latest) {
+            const auto& c=latest->claims.at(i); row.asOfDay=c.indicationDay; row.accessibilityAsOfDay=c.accessibilityDay;
+            if(c.indication==IndicationAssessment::Indicated) row.indication="Indicated; retain method-specific limits";
+            else if(c.indication==IndicationAssessment::NotDetectedWithinReportedLimits)
+                row.indication=c.earlierIndication?"Earlier indication; latest pass did not detect within its limits":"Not detected within reported limits; absence not established";
+            switch(c.accessibility) {
+            case AccessibilityAssessment::Unmeasured: break;
+            case AccessibilityAssessment::Low: row.accessibility="Low [0, 0.25)"; break;
+            case AccessibilityAssessment::Moderate: row.accessibility="Moderate [0.25, 0.75)"; break;
+            case AccessibilityAssessment::High: row.accessibility="High [0.75, unbounded)"; break;
+            case AccessibilityAssessment::Mixed: row.accessibility="Mixed recorded classes"; break;
+            }
         }
-
-        const DepositSurveyState stateName = depositSurveyState(deposit);
-        summaries.push_back(BodyDepositSummary{
-            .bodyId = deposit.bodyId,
-            .bodyName = bodyName(state, deposit.bodyId),
-            .mineral = deposit.mineral,
-            .mineralName = mineralDisplayName(deposit.mineral),
-            .confidence = deposit.confidence,
-            .surveyState = stateName,
-            .surveyStateName = depositSurveyStateName(stateName),
-            .confirmedQuantity = confirmedDepositQuantity(deposit),
-            .estimatedQuantity = estimatedDepositQuantity(deposit),
-            .uncertainQuantity = uncertainDepositQuantity(deposit),
-            .accessibility = deposit.accessibility,
-            .shortageRelevant = isMaterialShortageRelevant(mineralForecastFor(mineralForecasts, deposit.mineral)),
-            .strategicRelevance = depositStrategicRelevance(deposit, mineralForecasts)
-        });
+        rows.push_back(std::move(row));
     }
-
-    return summaries;
+    return rows;
 }
 
 ExplorationIntelligenceSummary SimulationQueries::explorationIntelligence() const {
-    const GameState& state = service_.state();
-    const std::vector<MineralForecastCauseChain> mineralForecasts = ForecastService{service_}.mineralForecastCauseChains();
-
-    ExplorationIntelligenceSummary summary;
-
-    for (const MineralDeposit& deposit : state.mineralDeposits) {
-        if (isDepositKnown(deposit)) {
-            continue;
-        }
-
-        const DepositSurveyState stateName = depositSurveyState(deposit);
-        const MineralForecastCauseChain* forecast = mineralForecastFor(mineralForecasts, deposit.mineral);
-        summary.lowConfidenceDeposits.push_back(ExplorationDepositIntelligenceRow{
-            .bodyId = deposit.bodyId,
-            .bodyName = bodyName(state, deposit.bodyId),
-            .mineral = deposit.mineral,
-            .mineralName = mineralDisplayName(deposit.mineral),
-            .surveyState = stateName,
-            .surveyStateName = depositSurveyStateName(stateName),
-            .confidence = deposit.confidence,
-            .confirmedQuantity = confirmedDepositQuantity(deposit),
-            .estimatedQuantity = estimatedDepositQuantity(deposit),
-            .unknownPotentialQuantity = stateName == DepositSurveyState::Unknown ? deposit.remaining : 0.0,
-            .accessibility = deposit.accessibility,
-            .shortageRelevant = isMaterialShortageRelevant(forecast),
-            .strategicRelevance = depositStrategicRelevance(deposit, mineralForecasts)
-        });
+    ExplorationIntelligenceSummary result;
+    for(const auto& body : service_.state().bodies) {
+        auto channels=bodyDeposits(body.id);
+        result.declaredChannels.insert(result.declaredChannels.end(),channels.begin(),channels.end());
     }
-
-    std::sort(summary.lowConfidenceDeposits.begin(),
-              summary.lowConfidenceDeposits.end(),
-              [](const ExplorationDepositIntelligenceRow& lhs, const ExplorationDepositIntelligenceRow& rhs) {
-                  if (lhs.shortageRelevant != rhs.shortageRelevant) {
-                      return lhs.shortageRelevant && !rhs.shortageRelevant;
-                  }
-                  if (lhs.confidence != rhs.confidence) {
-                      return lhs.confidence < rhs.confidence;
-                  }
-                  if (lhs.bodyName != rhs.bodyName) {
-                      return lhs.bodyName < rhs.bodyName;
-                  }
-                  return static_cast<std::size_t>(lhs.mineral) < static_cast<std::size_t>(rhs.mineral);
-              });
-
-    for (const SimEvent& event : state.eventLog) {
-        const auto* survey = std::get_if<ResourceSurveyCompletedEvent>(&event.payload);
-        if (survey == nullptr) {
-            continue;
-        }
-
-        std::ostringstream out;
-        out << bodyName(state, survey->bodyId) << ": ";
-        if (survey->depositsImproved == 0) {
-            out << "No new information from this pass";
-        } else {
-            out << "improved " << survey->depositsImproved
-                << " deposit(s) from " << (survey->averageConfidenceBefore * 100.0)
-                << "% to " << (survey->averageConfidenceAfter * 100.0) << "% average confidence.";
-        }
-
-        summary.recentSurveyResults.push_back(RecentSurveyResultSummary{
-            .eventId = event.id,
-            .day = event.day,
-            .fleetId = survey->fleetId,
-            .fleetName = fleetName(state, survey->fleetId),
-            .bodyId = survey->bodyId,
-            .bodyName = bodyName(state, survey->bodyId),
-            .depositsImproved = survey->depositsImproved,
-            .averageConfidenceBefore = survey->averageConfidenceBefore,
-            .averageConfidenceAfter = survey->averageConfidenceAfter,
-            .summary = out.str()
-        });
-    }
-
-    std::sort(summary.recentSurveyResults.begin(),
-              summary.recentSurveyResults.end(),
-              [](const RecentSurveyResultSummary& lhs, const RecentSurveyResultSummary& rhs) {
-                  if (lhs.day != rhs.day) {
-                      return lhs.day > rhs.day;
-                  }
-                  return lhs.eventId.value > rhs.eventId.value;
-              });
-
-    for (const MineralForecastCauseChain& forecast : mineralForecasts) {
-        if (!forecast.uncertaintyWarning.empty()) {
-            summary.warnings.push_back(forecast.uncertaintyWarning);
-        }
-    }
-
-    return summary;
+    for(const auto& event : service_.state().eventLog)
+        if(const auto* survey=std::get_if<ResourceSurveyCompletedEvent>(&event.payload))
+            result.recentSurveyResults.push_back({event.id,event.day,survey->fleetId,
+                fleetName(service_.state(),survey->fleetId),survey->bodyId,bodyName(service_.state(),survey->bodyId),
+                survey->observationBatchId,"Raw observation acquired; formal analysis is separate"});
+    result.warnings.push_back("Non-detection does not establish absence. Reserve quantity and site suitability remain unmeasured.");
+    return result;
 }
 
 std::vector<StrategicBodySummary> SimulationQueries::strategicBodies() const {
@@ -1870,16 +1693,15 @@ std::vector<SurveyTeamSummary> SimulationQueries::surveyTeams() const {
     std::vector<SurveyTeamSummary> rows;
     rows.reserve(state.surveyTeams.size());
     for (const SurveyTeam& team : state.surveyTeams) {
-        const auto controlling = std::find_if(state.surveyPrograms.begin(), state.surveyPrograms.end(),
-            [&team](const SurveyProgram& program) { return program.leasedTeamId == team.id; });
+        const auto controlling=controllingScientificTeam(state,team.id);
         const std::string location = surveyTeamLocationName(state, team);
         rows.push_back(SurveyTeamSummary{
             .id = team.id,
             .name = team.name,
             .locationKind = team.locationKind,
             .locationName = location,
-            .controllingProgramId = controlling == state.surveyPrograms.end()
-                ? std::optional<SurveyProgramId>{} : std::optional<SurveyProgramId>{controlling->id}
+            .controllingProgram = controlling,
+            .controllingProgramLabel = controlling ? programControllerLabel(state,*controlling) : "Unleased"
         });
     }
     return rows;
@@ -2118,11 +1940,9 @@ SurveyProgramCharterPreview SimulationQueries::previewSurveyProgramCharter(
                 preview.waitingReasons.push_back("Requested team and fleet are not co-located for embarkation");
             }
         }
-        const auto owner = std::find_if(state.surveyPrograms.begin(), state.surveyPrograms.end(),
-            [&charter, amendingProgramId](const SurveyProgram& program) {
-                return program.id != amendingProgramId && program.leasedTeamId == charter.requestedTeamId;
-            });
-        if (owner != state.surveyPrograms.end()) preview.waitingReasons.push_back("Requested team is controlled by another program");
+        const auto owner=controllingScientificTeam(state,*charter.requestedTeamId);
+        if(owner && (!amendingProgramId || *owner!=ProgramController{*amendingProgramId}))
+            preview.waitingReasons.insert(preview.waitingReasons.begin(),"Requested scientist team is controlled by "+programControllerLabel(state,*owner));
     }
     SurveyPlanningInputs planning;
     if (charter.requestedLeaderId) {

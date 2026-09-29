@@ -830,79 +830,30 @@ void test_fleet_commander_reduces_move_fuel_cost_within_cap() {
                 "fleet commander capped modifier reduces planned transit fuel cost");
 }
 
-void test_resource_survey_increases_deposit_confidence() {
-    // Verifies that a fleet stationed at a survey target can turn uncertain
-    // resource intelligence into higher-confidence reserve estimates.
-    deep::GameState state = deep::createHomeSystemScenario();
-    const deep::BodyId frontierId = bodyIdByName(state, "Helios Far Survey Object");
-    const deep::FleetId fleetId = addTestFleetAt(state, frontierId);
-    deep::Simulation sim{std::move(state)};
-
-    double beforeConfidenceTotal = 0.0;
-    for (const deep::MineralDeposit& deposit : sim.state().mineralDeposits) {
-        if (deposit.bodyId == frontierId) {
-            beforeConfidenceTotal += deposit.confidence;
-        }
+void test_resource_survey_acquires_physical_truth_independent_records() {
+    // Acquisition creates immutable limited records without changing the physical world.
+    auto state=deep::createHomeSystemScenario();
+    const auto body=bodyIdByName(state,"Helios Far Survey Object");
+    const auto fleet=addTestFleetAt(state,body);
+    const auto physical=state.mineralDeposits;
+    deep::Simulation sim(state);
+    require(sim.execute(deep::ResourceSurveyCommand{fleet,body}).ok,"Local survey accepted");
+    require(sim.state().observations.size()==1 && sim.state().assessments.empty(),"Raw batch without instant assessment");
+    for(std::size_t i=0;i<physical.size();++i){
+        requireNear(sim.state().mineralDeposits[i].remaining,physical[i].remaining,"Acquisition preserves reserves");
+        requireNear(sim.state().mineralDeposits[i].accessibility,physical[i].accessibility,"Acquisition preserves physical accessibility");
     }
-
-    const auto result = sim.execute(deep::ResourceSurveyCommand{
-        .fleetId = fleetId,
-        .bodyId = frontierId
-    });
-
-    require(result.ok, "resource survey command is accepted at the fleet's current body");
-    double afterConfidenceTotal = 0.0;
-    bool revealedHiddenDeposit = false;
-    for (const deep::MineralDeposit& deposit : sim.state().mineralDeposits) {
-        if (deposit.bodyId != frontierId) {
-            continue;
-        }
-        afterConfidenceTotal += deposit.confidence;
-        if (deposit.confidence >= deep::kResourceSurveyMinimumRevealedConfidence) {
-            revealedHiddenDeposit = true;
-        }
-    }
-
-    require(afterConfidenceTotal > beforeConfidenceTotal, "survey increases total target-body confidence");
-    require(revealedHiddenDeposit, "survey reveals hidden deposits as estimated reserves");
-    require(std::holds_alternative<deep::ResourceSurveyCompletedEvent>(sim.state().eventLog.back().payload),
-            "accepted survey emits a resource-survey completion event");
+    require(std::holds_alternative<deep::ResourceSurveyCompletedEvent>(sim.state().eventLog.back().payload),"Acquired batch has audit");
 }
 
 void test_resource_survey_completes_on_fully_known_body_without_new_information() {
-    // A requested pass is valid even when existing records are already known.
-    // It must preserve confidence and report an explicit zero-information result.
-    deep::GameState state = deep::createHomeSystemScenario();
-    const deep::BodyId terraId = bodyIdByName(state, "Terra");
-    const deep::FleetId fleetId = addTestFleetAt(state, terraId);
-    deep::Simulation sim{std::move(state)};
-
-    std::vector<double> before;
-    for (const deep::MineralDeposit& deposit : sim.state().mineralDeposits) {
-        if (deposit.bodyId == terraId) {
-            before.push_back(deposit.confidence);
-        }
-    }
-
-    const auto result = sim.execute(deep::ResourceSurveyCommand{
-        .fleetId = fleetId,
-        .bodyId = terraId
-    });
-
-    require(result.ok, "surveying a fully known body completes");
-    require(result.message.find("No new information from this pass") != std::string::npos,
-            "command result describes the zero-information completion");
-    std::size_t index = 0;
-    for (const deep::MineralDeposit& deposit : sim.state().mineralDeposits) {
-        if (deposit.bodyId == terraId) {
-            requireNear(deposit.confidence, before.at(index++), "fully known deposit confidence is unchanged");
-        }
-    }
-    const auto* completed = std::get_if<deep::ResourceSurveyCompletedEvent>(&sim.state().eventLog.back().payload);
-    require(completed != nullptr && completed->depositsImproved == 0,
-            "fully known body records one zero-information survey result");
-    requireNear(completed->averageConfidenceBefore, 0.0, "empty result has zero before average");
-    requireNear(completed->averageConfidenceAfter, 0.0, "empty result has zero after average");
+    // Repeated acquisition remains valid and never escalates scientific certainty.
+    auto state=deep::createHomeSystemScenario();const auto body=bodyIdByName(state,"Terra");
+    const auto fleet=addTestFleetAt(state,body);deep::Simulation sim(state);
+    require(sim.execute(deep::ResourceSurveyCommand{fleet,body}).ok,"First pass accepted");
+    require(sim.execute(deep::ResourceSurveyCommand{fleet,body}).ok,"Repeated pass accepted");
+    require(sim.state().observations.size()==2 && sim.state().assessments.empty(),"Repeated passes remain raw dated records");
+    require(sim.state().observations[0].instruments[0].channels==sim.state().observations[1].instruments[0].channels,"Identical inputs yield repeated readings");
 }
 
 void test_resource_survey_completes_on_body_without_deposits() {
@@ -917,10 +868,9 @@ void test_resource_survey_completes_on_body_without_deposits() {
     const auto result = sim.execute(deep::ResourceSurveyCommand{.fleetId = fleetId, .bodyId = terraId});
     require(result.ok, "surveying a body without deposits completes");
     const auto* completed = std::get_if<deep::ResourceSurveyCompletedEvent>(&sim.state().eventLog.back().payload);
-    require(completed != nullptr && completed->depositsImproved == 0,
-            "barren visit records one zero-information survey result");
-    requireNear(completed->averageConfidenceBefore, 0.0, "barren visit has zero before average");
-    requireNear(completed->averageConfidenceAfter, 0.0, "barren visit has zero after average");
+    require(completed && completed->observationBatchId==sim.state().observations.front().id,"Empty-world pass links an acquired batch");
+    for(const auto& c:sim.state().observations.front().instruments.front().channels)
+        require(c.indication==deep::ResourceIndication::NotDetectedWithinLimit,"Absent deposit yields limited non-detection, not proof of absence");
 }
 
 void test_resource_survey_rejects_invalid_targets() {
@@ -961,7 +911,7 @@ void test_resource_survey_rejects_fleet_not_at_body() {
     require(!result.ok, "survey rejects fleets that are not at the target body");
     for (const deep::MineralDeposit& deposit : sim.state().mineralDeposits) {
         if (deposit.bodyId == frontierId && deposit.mineral == deep::Mineral::RareEarthElements) {
-            requireNear(deposit.confidence, 0.0, "rejected remote survey leaves hidden deposit hidden");
+            require(sim.state().observations.empty(), "rejected remote survey acquires no observations");
         }
     }
 }
@@ -1218,7 +1168,7 @@ int main() {
         test_fleet_transit_curve_bends_on_expected_display_side();
         test_fleet_movement_rejects_insufficient_fuel();
         test_fleet_commander_reduces_move_fuel_cost_within_cap();
-        test_resource_survey_increases_deposit_confidence();
+        test_resource_survey_acquires_physical_truth_independent_records();
         test_resource_survey_completes_on_fully_known_body_without_new_information();
         test_resource_survey_completes_on_body_without_deposits();
         test_resource_survey_rejects_invalid_targets();

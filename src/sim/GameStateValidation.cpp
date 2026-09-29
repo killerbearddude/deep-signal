@@ -1,3 +1,4 @@
+#include "sim/ScienceValidation.h"
 #include "sim/GameStateValidation.h"
 #include "sim/ShipDesignRules.h"
 #include "sim/SurveyProgramValidation.h"
@@ -409,21 +410,7 @@ void validateEventPayload(const GameState& state, const SimEventPayload& payload
         } else if constexpr (std::is_same_v<Event, ResourceSurveyCompletedEvent>) {
             requireValidReference(containsId(state.fleets, event.fleetId), event.fleetId, "event fleet");
             requireValidReference(containsId(state.bodies, event.bodyId), event.bodyId, "event survey body");
-            requireState(event.depositsImproved >= 0, "survey event improved-deposit count must be non-negative");
-            requireState(isFinite(event.averageConfidenceBefore) && event.averageConfidenceBefore >= 0.0 &&
-                             event.averageConfidenceBefore <= 1.0,
-                         "survey event average before confidence must be between zero and one");
-            requireState(isFinite(event.averageConfidenceAfter) && event.averageConfidenceAfter >= 0.0 &&
-                             event.averageConfidenceAfter <= 1.0,
-                         "survey event average after confidence must be between zero and one");
-            requireState(event.averageConfidenceAfter >= event.averageConfidenceBefore,
-                         "survey event confidence must not decrease");
-            // A completed pass can find nothing new, but empty-set averages must
-            // be explicit zeros so persisted events do not imply hidden gains.
-            if (event.depositsImproved == 0) {
-                requireState(event.averageConfidenceBefore == 0.0 && event.averageConfidenceAfter == 0.0,
-                             "zero-information survey event must have zero confidence averages");
-            }
+            requireValidReference(containsId(state.observations,event.observationBatchId),event.observationBatchId,"event observation batch");
         } else if constexpr (std::is_same_v<Event, SurveyProgramAuditEvent>) {
             requireValidReference(containsId(state.surveyPrograms, event.programId), event.programId,
                                   "event survey program");
@@ -464,6 +451,16 @@ void validateEventPayload(const GameState& state, const SimEventPayload& payload
             requireValidReference(containsId(state.maintenancePrograms,event.programId),event.programId,"maintenance audit program");
             requireState(event.kind>=MaintenanceAuditKind::Authorized&&event.kind<=MaintenanceAuditKind::IssueAcknowledged&&
                          event.jobNumber>=0&&!event.detail.empty(),"Maintenance audit kind/job/detail invalid");
+        } else if constexpr (std::is_same_v<Event, AnalysisProgramAuditEvent>) {
+            requireValidReference(containsId(state.analysisPrograms,event.programId),event.programId,"event analysis program");
+            requireState(event.kind>=AnalysisAuditKind::Authorized && event.kind<=AnalysisAuditKind::IssueAcknowledged &&
+                event.jobId.value>=0 && !event.detail.empty(),"Invalid analysis audit");
+            if(event.jobId) {
+                bool found=false;
+                for(const auto& p:state.analysisPrograms)if(p.id==event.programId)
+                    for(const auto& j:p.jobs)if(j.id==event.jobId)found=true;
+                requireState(found,"Analysis audit job does not belong to program");
+            }
         } else if constexpr (std::is_same_v<Event, CommandRejectedEvent>) {
             requireState(!event.reason.empty(), "command-rejected event reason must be non-empty");
         }
@@ -473,6 +470,7 @@ void validateEventPayload(const GameState& state, const SimEventPayload& payload
 } // namespace
 
 void validateGameState(const GameState& state) {
+    validateScienceState(state);
     requireState(state.date.day >= 0, "current day must be non-negative");
 
     validateIdsAndCounter<StarSystem, StarSystemId>(state.starSystems, state.ids.nextStarSystemId, "star system");
@@ -564,8 +562,6 @@ void validateGameState(const GameState& state) {
                      "deposit remaining must be finite and non-negative");
         requireState(isFinite(deposit.accessibility) && deposit.accessibility >= 0.0,
                      "deposit accessibility must be finite and non-negative");
-        requireState(isFinite(deposit.confidence) && deposit.confidence >= 0.0 && deposit.confidence <= 1.0,
-                     "deposit confidence must be finite and between zero and one");
         const std::string key = std::to_string(deposit.bodyId.value) + ":" +
                                 std::to_string(static_cast<std::size_t>(deposit.mineral));
         requireState(depositKeys.insert(key).second, "duplicate mineral deposit rows are invalid");

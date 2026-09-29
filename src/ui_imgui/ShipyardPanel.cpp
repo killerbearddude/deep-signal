@@ -235,6 +235,11 @@ void ShipyardPanel::renderDesignEditor(const SimulationQueries& queries, Simulat
             catalog[i].propellantCapacity, catalog[i].surveyCapability, catalog[i].buildPoints);
         ImGui::TextDisabled("Cargo %.1f normalized units | Handling %.1f units/day when powered",
             catalog[i].cargoCapacity, catalog[i].cargoHandlingPerDay);
+        if(catalog[i].measurementProfile) {
+            const auto& method=*catalog[i].measurementProfile;
+            ImGui::Text("%s v%d: threshold %.1f normalized signal; accessibility %s",method.name.c_str(),
+                method.methodVersion,method.detectionThreshold,method.measuresAccessibility?"coarse class":"unmeasured");
+        }
         if (catalog[i].serviceProfile) {
             const auto& profile = *catalog[i].serviceProfile;
             ImGui::TextDisabled("Survey duty capacity %.1f/unit | family #%lld | %.3f team-workdays/restored duty/unit",

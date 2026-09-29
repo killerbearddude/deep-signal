@@ -94,12 +94,16 @@ SurveyDutyEvaluation prepareSurveyDuty(const GameState& state, const Fleet& flee
                 result.changes.push_back({ship->id, component->id, row->usedDuty, after});
             }
             result.usableCapability += capability;
+            if (component->measurementProfileId)
+                result.contributors.push_back({ship->id,cls->id,component->id,
+                    *component->measurementProfileId,0,{}});
         }
     }
     if (!std::isfinite(result.nominalCapability) || !std::isfinite(result.poweredCapability) ||
         !std::isfinite(result.usableCapability)) {
         result.usableCapability = 0.0;
         result.changes.clear();
+        result.contributors.clear();
         result.condition = "Survey capability totals exceed numeric limits";
     } else if (result.nominalCapability <= 0.0)
         result.condition = "Fleet has no installed survey capability";

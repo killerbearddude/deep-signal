@@ -1002,13 +1002,13 @@ void test_body_system_overview_exposes_counts() {
     require(bodies.front().ownerInstitutionName == "Strategic Continuity Office",
             "body overview resolves colony owner institution where available");
     require(bodies.front().colonyCount == 1, "Terra body overview counts the colony");
-    require(bodies.front().mineralDepositCount == 7, "Terra body overview counts mineral deposits");
+    require(bodies.front().observationBatchCount == 0, "Terra body overview counts mineral deposits");
     require(bodies.front().fleetCount == 1, "Terra body overview counts the newly completed fleet");
     require(bodies.at(1).name == "Mars", "second body overview row resolves Mars");
     require(bodies.at(1).strategicZoneName == "Military Industrial", "Mars body overview resolves military-industrial zone");
     require(bodies.at(1).ownerInstitutionName == "Naval Construction Board", "Mars body overview resolves yard owner");
     require(bodies.at(1).colonyCount == 1, "Mars body overview counts the naval yard colony");
-    require(bodies.at(1).mineralDepositCount == 4, "Mars body overview counts mineral deposits");
+    require(bodies.at(1).observationBatchCount == 0, "Mars body overview counts mineral deposits");
     require(bodies.at(1).fleetCount == 0, "Mars body overview has no fleets before movement");
     require(bodies.at(7).strategicZoneName == "Deep Survey Frontier",
             "remote body overview exposes the survey-frontier zone");
@@ -1056,130 +1056,50 @@ void test_strategic_map_summaries_resolve_positions() {
             "fleet marker resolves current body rail position");
 }
 
-void test_body_deposit_queries_expose_confidence_status() {
-    // Body deposit rows separate confirmed and estimated reserves so UI panels
-    // can show exploration uncertainty without reaching into raw GameState.
-    const deep::SimulationService service;
-    const deep::SimulationQueries queries{service};
-    const auto bodies = queries.bodySystemOverview();
-
-    const auto frontierBody = std::find_if(bodies.begin(), bodies.end(), [](const deep::BodySystemSummary& body) {
-        return body.name == "Helios Far Survey Object";
-    });
-    require(frontierBody != bodies.end(), "frontier body appears in body overview");
-    require(frontierBody->estimatedDepositCount == 2, "frontier body counts estimated deposits");
-    require(frontierBody->unknownDepositCount == 1, "frontier body counts hidden unknown deposits");
-    require(frontierBody->knownDepositCount == 0, "frontier body has no fully known deposits");
-    require(frontierBody->confirmedDepositQuantity < frontierBody->estimatedDepositQuantity,
-            "frontier overview separates confirmed supply from reserve estimates");
-
-    const auto deposits = queries.bodyDeposits(frontierBody->id);
-    require(deposits.size() == 3, "frontier body exposes deposit detail rows");
-    require(deposits.front().surveyStateName == "Estimated", "low-confidence deposits are displayed as estimates");
-    require(deposits.front().confidence > 0.0 && deposits.front().confidence < 1.0,
-            "deposit detail exposes partial confidence");
-    require(deposits.front().confirmedQuantity < deposits.front().estimatedQuantity,
-            "deposit detail separates confirmed and estimated quantities");
-    require(!deposits.front().strategicRelevance.empty(),
-            "deposit detail explains survey or shortage relevance");
+void test_body_channels_expose_only_acquired_knowledge() {
+    // Every public body has the same declared channels until real records exist.
+    const deep::SimulationService service;const deep::SimulationQueries queries(service);
+    for(const auto& body:queries.bodySystemOverview()){
+        require(body.observationBatchCount==0 && body.assessmentRevisionCount==0,"Empty scientific store exposes no secret counts");
+        const auto rows=queries.bodyDeposits(body.id);
+        require(rows.size()==deep::mineralCount(),"Declared channels independent of deposit rows");
+        for(const auto& row:rows)require(!row.asOfDay && row.accessibility=="Unmeasured" && !row.strategicRelevance.empty(),"Unknown has no physical date or exact accessibility");
+    }
 }
 
 void test_exploration_intelligence_lists_survey_targets() {
-    // The exploration summary is the app-layer bridge from deposit confidence to
-    // strategy: it lists uncertain reserves before any future request/AI system.
-    const deep::SimulationService service;
-    const deep::SimulationQueries queries{service};
-    const deep::ExplorationIntelligenceSummary intelligence = queries.explorationIntelligence();
-
-    require(!intelligence.lowConfidenceDeposits.empty(), "exploration intelligence lists low-confidence deposits");
-    require(intelligence.lowConfidenceDeposits.front().confidence <= intelligence.lowConfidenceDeposits.back().confidence,
-            "survey targets are sorted by low confidence first when relevance ties allow it");
-
-    const auto frontierRareEarth = std::find_if(
-        intelligence.lowConfidenceDeposits.begin(),
-        intelligence.lowConfidenceDeposits.end(),
-        [](const deep::ExplorationDepositIntelligenceRow& row) {
-            return row.bodyName == "Helios Far Survey Object" && row.mineral == deep::Mineral::RareEarthElements;
-        });
-    require(frontierRareEarth != intelligence.lowConfidenceDeposits.end(),
-            "exploration intelligence includes hidden frontier rare-earth potential");
-    require(frontierRareEarth->surveyStateName == "Unknown", "hidden deposit is marked unknown in the intelligence summary");
-    require(frontierRareEarth->unknownPotentialQuantity > 0.0, "unknown deposit exposes potential instead of confirmed supply");
-    require(!frontierRareEarth->strategicRelevance.empty(), "survey target includes strategic relevance text");
+    const deep::SimulationService service;const deep::SimulationQueries queries(service);
+    const auto intelligence=queries.explorationIntelligence();
+    require(intelligence.declaredChannels.size()==queries.bodySystemOverview().size()*deep::mineralCount(),"Intelligence uses public subjects and declared channels");
+    require(!intelligence.warnings.empty(),"Limitations remain explicit");
+    for(const auto& row:intelligence.declaredChannels)require(!row.asOfDay && row.indication.find("Unknown")!=std::string::npos,"No fabricated initial knowledge");
 }
 
 void test_resource_survey_preview_and_queries_update_after_survey() {
-    // Verifies the Fleet Orders panel can preview survey eligibility through the
-    // app layer and that body deposit query rows reflect the accepted command.
-    deep::GameState state = deep::createHomeSystemScenario();
-    const deep::BodyId frontierId = bodyIdByName(state, "Helios Far Survey Object");
-    const deep::FleetId fleetId = addTestFleetAt(state, frontierId);
-    deep::SimulationService service{std::move(state)};
-    deep::SimulationQueries queries{service};
-
-    const std::optional<deep::ResourceSurveyPreview> before = queries.resourceSurveyPreview(fleetId, frontierId);
-    require(before.has_value(), "survey preview exists for valid fleet/body IDs");
-    require(before->canSurvey, "survey preview allows fleet at low-confidence body");
-    require(before->surveyableDepositCount == 3, "survey preview counts all non-known deposits");
-    require(before->projectedAverageConfidenceAfter > before->averageConfidenceBefore,
-            "survey preview explains the projected confidence gain");
-
-    require(service.execute(deep::ResourceSurveyCommand{
-        .fleetId = fleetId,
-        .bodyId = frontierId
-    }).ok, "resource survey command is accepted through service");
-
-    const auto deposits = queries.bodyDeposits(frontierId);
-    const auto hiddenDeposit = std::find_if(deposits.begin(), deposits.end(), [](const deep::BodyDepositSummary& deposit) {
-        return deposit.mineral == deep::Mineral::RareEarthElements;
-    });
-    require(hiddenDeposit != deposits.end(), "surveyed body still exposes rare-earth deposit row");
-    require(hiddenDeposit->surveyStateName == "Estimated", "formerly hidden deposit becomes an estimate after survey");
-    require(hiddenDeposit->confidence >= deep::kResourceSurveyMinimumRevealedConfidence,
-            "surveyed hidden deposit receives visible confidence");
-
-    const auto overview = queries.bodySystemOverview();
-    const auto body = std::find_if(overview.begin(), overview.end(), [frontierId](const deep::BodySystemSummary& row) {
-        return row.id == frontierId;
-    });
-    require(body != overview.end(), "surveyed frontier body remains in body overview");
-    require(body->unknownDepositCount == 0, "survey clears unknown deposit count for the target body");
-    require(body->estimatedDepositCount == 3, "surveyed deposits remain visible estimates until fully known");
-
-    const deep::ExplorationIntelligenceSummary intelligence = queries.explorationIntelligence();
-    require(!intelligence.recentSurveyResults.empty(), "exploration intelligence reports recent survey results");
-    require(intelligence.recentSurveyResults.front().bodyName == "Helios Far Survey Object",
-            "recent survey result resolves body name");
-    require(intelligence.recentSurveyResults.front().depositsImproved == 3,
-            "recent survey result reports changed deposit count");
+    auto state=deep::createHomeSystemScenario();const auto body=bodyIdByName(state,"Helios Far Survey Object");
+    const auto fleet=addTestFleetAt(state,body);deep::SimulationService service(state);deep::SimulationQueries queries(service);
+    const auto before=queries.resourceSurveyPreview(fleet,body);
+    require(before && before->canSurvey,"Preview permits physical survey");
+    require(service.execute(deep::ResourceSurveyCommand{fleet,body}).ok,"Service acquisition accepted");
+    const auto dossier=queries.evidenceDossier(body);
+    require(dossier.observations.size()==1 && dossier.assessments.empty(),"Acquired data exposed without instant analysis");
+    const auto overview=queries.bodySystemOverview();
+    const auto row=std::find_if(overview.begin(),overview.end(),[&](const auto& r){return r.id==body;});
+    require(row!=overview.end() && row->observationBatchCount==1 && row->assessmentRevisionCount==0,"Body count is acquired evidence only");
+    const auto recent=queries.explorationIntelligence().recentSurveyResults;
+    require(recent.size()==1 && recent.front().bodyName=="Helios Far Survey Object" && recent.front().observationBatchId==dossier.observations.front().id,"Audit resolves actual batch/body");
 }
 
 void test_resource_survey_preview_allows_zero_information_result() {
-    // Preview and command must agree when equipment and location are valid but
-    // there is no confidence gain. Display text must not claim the body barren.
-    deep::GameState state = deep::createHomeSystemScenario();
-    const deep::BodyId terraId = bodyIdByName(state, "Terra");
-    const deep::FleetId fleetId = addTestFleetAt(state, terraId);
-    deep::SimulationService service{std::move(state)};
-    deep::SimulationQueries queries{service};
-
-    const auto preview = queries.resourceSurveyPreview(fleetId, terraId);
-    require(preview.has_value() && preview->canSurvey,
-            "fully known body remains physically eligible for a survey pass");
-    require(preview->surveyableDepositCount == 0U,
-            "preview reports zero projected confidence improvements");
-    require(preview->warningText.find("No confidence improvement is projected") != std::string::npos,
-            "preview explains a zero-information result without blocking the command");
-
-    require(service.execute(deep::ResourceSurveyCommand{.fleetId = fleetId, .bodyId = terraId}).ok,
-            "zero-information survey executes through the application service");
-    const auto events = queries.recentEvents(1);
-    require(events.size() == 1U && events.front().message.find("No new information from this pass") != std::string::npos,
-            "event query states the zero-information result plainly");
-    const auto intelligence = queries.explorationIntelligence();
-    require(!intelligence.recentSurveyResults.empty() &&
-                intelligence.recentSurveyResults.front().summary.find("No new information from this pass") != std::string::npos,
-            "exploration result uses the same zero-information wording");
+    auto state=deep::createHomeSystemScenario();const auto body=bodyIdByName(state,"Terra");
+    const auto fleet=addTestFleetAt(state,body);state.mineralDeposits.clear();
+    deep::SimulationService service(state);deep::SimulationQueries queries(service);
+    const auto preview=queries.resourceSurveyPreview(fleet,body);
+    require(preview && preview->canSurvey,"Empty physical world does not reject action intent");
+    require(preview->warningText.find("raw observations")!=std::string::npos,"Preview describes acquisition without truth forecast");
+    require(service.execute(deep::ResourceSurveyCommand{fleet,body}).ok,"All-negative acquisition accepted");
+    require(queries.recentEvents(1).front().message.find("raw observation")!=std::string::npos,"Audit does not claim barren world");
+    require(queries.explorationIntelligence().recentSurveyResults.front().summary.find("analysis is separate")!=std::string::npos,"Raw data not described as assessment");
 }
 
 void test_ship_design_queries_and_survey_preview_agree_with_commands() {
@@ -1374,7 +1294,7 @@ int main() {
         test_body_system_overview_exposes_counts();
         test_strategic_map_summaries_resolve_positions();
         test_sustained_burn_route_visualization_is_shallow_projected_intercept();
-        test_body_deposit_queries_expose_confidence_status();
+        test_body_channels_expose_only_acquired_knowledge();
         test_exploration_intelligence_lists_survey_targets();
         test_resource_survey_preview_and_queries_update_after_survey();
         test_resource_survey_preview_allows_zero_information_result();

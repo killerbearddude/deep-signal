@@ -347,20 +347,10 @@ void test_invalid_appointment_records_are_rejected() {
     });
 }
 
-void test_invalid_deposit_confidence_is_rejected() {
-    // Deposit confidence is a trust-boundary value because it controls whether
-    // a deposit is shown as known, estimated, or unknown in forecast/UI output.
-    expectInvalidState("deposit confidence below zero", [](deep::GameState& state) {
-        state.mineralDeposits.front().confidence = -0.01;
-    });
-
-    expectInvalidState("deposit confidence above one", [](deep::GameState& state) {
-        state.mineralDeposits.front().confidence = 1.01;
-    });
-
-    expectInvalidState("non-finite deposit quantity", [](deep::GameState& state) {
-        state.mineralDeposits.front().remaining = std::numeric_limits<double>::infinity();
-    });
+void test_invalid_physical_and_measurement_data_is_rejected() {
+    // Physical values and measurement limits are independent trust boundaries.
+    expectInvalidState("negative physical accessibility",[](deep::GameState& state){state.mineralDeposits.front().accessibility=-.01;});
+    expectInvalidState("invalid measurement threshold",[](deep::GameState& state){state.measurementProfiles.front().detectionThreshold=0;});
 }
 
 void test_ship_missing_from_owning_fleet_is_rejected() {
@@ -479,22 +469,10 @@ void test_completed_order_with_build_progress_is_rejected() {
 }
 
 void test_zero_information_resource_survey_event_is_valid() {
-    // A completed barren or already-known visit has no changed deposits; its
-    // persisted audit payload must remain loadable with explicit zero averages.
-    deep::GameState state = makeCompletedPrototypeState();
-    state.eventLog.push_back(deep::SimEvent{
-        .id = deep::EventId{state.ids.nextEventId++},
-        .day = state.date.day,
-        .severity = deep::EventSeverity::Info,
-        .payload = deep::ResourceSurveyCompletedEvent{
-            .fleetId = state.fleets.front().id,
-            .bodyId = state.fleets.front().currentBodyId,
-            .depositsImproved = 0,
-            .averageConfidenceBefore = 0.0,
-            .averageConfidenceAfter = 0.0
-        }
-    });
-    deep::validateGameState(state);
+    auto state=makeCompletedPrototypeState();state.mineralDeposits.clear();
+    deep::Simulation sim(state);
+    require(sim.execute(deep::ResourceSurveyCommand{state.fleets.front().id,state.fleets.front().currentBodyId}).ok,"Real negative observation acquired");
+    deep::validateGameState(sim.state());
 }
 
 void test_invalid_resource_survey_event_is_rejected() {
@@ -508,9 +486,7 @@ void test_invalid_resource_survey_event_is_rejected() {
             .payload = deep::ResourceSurveyCompletedEvent{
                 .fleetId = state.fleets.front().id,
                 .bodyId = state.fleets.front().currentBodyId,
-                .depositsImproved = 0,
-                .averageConfidenceBefore = 0.25,
-                .averageConfidenceAfter = 0.75
+                .observationBatchId=deep::ObservationBatchId{99999}
             }
         });
     });
@@ -522,9 +498,7 @@ void test_invalid_resource_survey_event_is_rejected() {
             .payload = deep::ResourceSurveyCompletedEvent{
                 .fleetId = state.fleets.front().id,
                 .bodyId = state.fleets.front().currentBodyId,
-                .depositsImproved = -1,
-                .averageConfidenceBefore = 0.0,
-                .averageConfidenceAfter = 0.0
+                .observationBatchId=deep::ObservationBatchId{99999}
             }
         });
     });
@@ -554,7 +528,7 @@ int main() {
         test_invalid_institution_references_are_rejected();
         test_invalid_personnel_records_are_rejected();
         test_invalid_appointment_records_are_rejected();
-        test_invalid_deposit_confidence_is_rejected();
+        test_invalid_physical_and_measurement_data_is_rejected();
         test_ship_missing_from_owning_fleet_is_rejected();
         test_fleet_listing_nonexistent_ship_is_rejected();
         test_ship_claimed_by_multiple_fleets_is_rejected();
