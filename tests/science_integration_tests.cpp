@@ -375,9 +375,10 @@ GameState mixed_operations(bool analyze) {
     for (int i = 0; i < 2; ++i) {
         FreightProgramCharter freight;
         freight.name = "Real parts";
-        freight.sourceColonyId = s.colonies.back().id;
-        freight.destinationColonyId = home;
-        freight.material = i == 0 ? ProcessedMaterial::Electronics : ProcessedMaterial::IndustrialComposites;
+        freight.source = s.colonies.back().id;
+        freight.destination = home;
+        freight.operatingBaseColonyId=std::get<ColonyId>(freight.source);
+        freight.commodity = i == 0 ? ProcessedMaterial::Electronics : ProcessedMaterial::IndustrialComposites;
         freight.totalQuantity = 20;
         freight.requestedFleetId = s.fleets[static_cast<std::size_t>(i) + 2].id;
         freight.requestedLeaderId = s.people.front().id;

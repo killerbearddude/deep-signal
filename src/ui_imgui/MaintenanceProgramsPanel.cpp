@@ -80,9 +80,9 @@ void MaintenanceProgramsPanel::render(const SimulationQueries& queries, Simulati
                     row.team.workdaysPerDay);
         for (const auto& family : row.qualifiedFamilyNames)
             ImGui::BulletText("Qualified: %s", family.c_str());
-        if (row.controllingProgramId)
-            ImGui::Text("Leased to maintenance #%lld",
-                        static_cast<long long>(row.controllingProgramId->value));
+        if (row.controller)
+            ImGui::Text("Leased to %s",
+                        row.controllerName.c_str());
     }
     ImGui::TextWrapped("Last action: %s", notice_.c_str());
     ImGui::End();

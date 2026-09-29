@@ -51,5 +51,6 @@ struct FleetSurveyEvaluation {
 [[nodiscard]] std::vector<ShipComponentInstall> referenceSurveyCutterComponents();
 [[nodiscard]] std::vector<ShipComponentInstall> referenceFreighterComponents();
 [[nodiscard]] std::vector<ShipComponentInstall> referenceTenderComponents();
+[[nodiscard]] std::vector<ShipComponentInstall> referenceBuilderComponents();
 
 } // namespace deep

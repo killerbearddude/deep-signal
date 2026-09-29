@@ -1,6 +1,10 @@
+// Pure public-state freight planning: typed inventory floors, dated operating-base
+// cycles, bounded shared handling estimates and structured waiting causes.
 #include "sim/FreightProgramRules.h"
 
 #include "sim/ProgramControl.h"
+#include "sim/StockAccess.h"
+#include "sim/SiteOperationRules.h"
 #include "sim/ShipDesignRules.h"
 #include "sim/TransitPlanning.h"
 
@@ -20,14 +24,13 @@ bool stationary(const Fleet& fleet) {
 bool nonnegative(double n) {
     return std::isfinite(n) && n >= 0.0;
 }
-double stockAvailable(const GameState& state, const FreightProgram& program, ProcessedMaterial material,
-                      const OpeningProgramContext* context) {
-    const Colony* source = find(state.colonies, program.charter.sourceColonyId);
-    if (!source)
+double stockAvailable(const GameState& state, const FreightProgram& program, const StockLocation& location,
+                      const Commodity& commodity, const OpeningProgramContext* context) {
+    if (!stockLocationExists(state, location))
         return 0.0;
-    const double floor = freightEffectiveFloor(program, material);
-    return context ? context->available(state, source->id, material, floor)
-                   : std::max(0.0, source->processedStockpile.get(material) - floor);
+    const double floor = freightEffectiveFloor(program, location, commodity);
+    return context ? context->available(state, location, commodity, floor)
+                   : std::max(0.0, stockQuantity(state, location, commodity) - floor);
 }
 std::optional<std::int64_t> workDays(double quantity, double rate) {
     if (quantity == 0.0)
@@ -43,6 +46,61 @@ std::optional<std::int64_t> addDays(std::int64_t day, std::int64_t count) {
     if (day < 0 || count < 0 || day > std::numeric_limits<std::int64_t>::max() - count)
         return std::nullopt;
     return day + count;
+}
+// Roster-greedy shared handling is not max(hull days, total/site rate).
+// Jump across unchanged full days; a literal boundary day redistributes freed
+// throughput to later hulls. Every iteration finishes at least one hull, so the
+// cost is bounded by roster size rather than the number of simulated days.
+std::optional<std::int64_t> handlingDays(const std::vector<FreightHullCapability>& hulls,
+                                         const std::vector<FreightManifestRow>& manifest, double shared) {
+    std::vector<double> left, rates;
+    for (const auto& row : manifest) {
+        auto h =
+            std::find_if(hulls.begin(), hulls.end(), [&](const auto& x) { return x.shipId == row.shipId; });
+        if (h == hulls.end() || !nonnegative(row.plannedQuantity))
+            return std::nullopt;
+        left.push_back(row.plannedQuantity);
+        rates.push_back(h->operationalHandlingPerDay);
+    }
+    std::int64_t elapsed = 0;
+    for (std::size_t boundary = 0; boundary <= left.size(); ++boundary) {
+        bool any = false;
+        double pool = shared;
+        std::vector<double> allocation(left.size());
+        double jump = std::numeric_limits<double>::infinity();
+        for (std::size_t i = 0; i < left.size(); ++i)
+            if (left[i] > 0.0) {
+                any = true;
+                allocation[i] = std::min(rates[i], pool);
+                pool -= allocation[i];
+                if (allocation[i] > 0.0)
+                    jump = std::min(jump, std::max(0.0, std::ceil(left[i] / allocation[i]) - 1.0));
+            }
+        if (!any)
+            return elapsed;
+        if (!std::isfinite(jump) || jump >= static_cast<double>(std::numeric_limits<std::int64_t>::max()))
+            return std::nullopt;
+        const auto next = addDays(elapsed, static_cast<std::int64_t>(jump));
+        if (!next || *next == std::numeric_limits<std::int64_t>::max())
+            return std::nullopt;
+        elapsed = *next + 1;
+        for (std::size_t i = 0; i < left.size(); ++i)
+            left[i] = std::max(0.0, left[i] - allocation[i] * jump);
+        pool = shared;
+        for (std::size_t i = 0; i < left.size(); ++i) {
+            const double q = std::min({left[i], rates[i], pool});
+            left[i] -= q;
+            pool -= q;
+        }
+    }
+    return std::nullopt;
+}
+double locationHandling(const GameState& state, const StockLocation& location, const Commodity& commodity,
+                        std::int64_t day, const OpeningProgramContext* context = nullptr) {
+    const auto* site = std::get_if<SiteId>(&location);
+    if (!site || !std::holds_alternative<Mineral>(commodity))
+        return std::numeric_limits<double>::infinity();
+    return context ? context->availableSiteRawHandling(*site) : siteRawHandlingPreview(state, *site, day);
 }
 double tankCapacity(const GameState& state, const Fleet& fleet) {
     double total = 0.0;
@@ -155,32 +213,42 @@ bool freightFuelDebitRepresentable(const GameState& state, const Fleet& fleet, d
     }
     return remaining <= kFuelComparisonEpsilon && freightNearlyEqual(actualDebit, cost);
 }
-double freightEffectiveFloor(const FreightProgram& program, ProcessedMaterial material) noexcept {
-    if (material == ProcessedMaterial::Propellant) {
-        return program.charter.material == ProcessedMaterial::Propellant
-                   ? std::max(program.charter.policy.sourceCargoFloor,
-                              program.charter.policy.sourcePropellantFloor)
-                   : program.charter.policy.sourcePropellantFloor;
-    }
-    return program.charter.policy.sourceCargoFloor;
+bool freightIsCollection(const FreightProgram& p) noexcept {
+    return p.charter.destination == StockLocation{p.charter.operatingBaseColonyId};
+}
+double freightEffectiveFloor(const FreightProgram& program, const StockLocation& location,
+                             const Commodity& commodity) noexcept {
+    double floor = location == program.charter.source && commodity == program.charter.commodity
+                       ? program.charter.policy.sourceCargoFloor
+                       : 0.0;
+    if (location == StockLocation{program.charter.operatingBaseColonyId} &&
+        commodity == Commodity{ProcessedMaterial::Propellant})
+        floor = std::max(floor, program.charter.policy.basePropellantFloor);
+    return floor;
 }
 std::optional<std::string> validateFreightProgramCharter(const GameState& state,
                                                          const FreightProgramCharter& c,
                                                          bool allowZeroQuantity) {
     if (c.name.empty() || c.name.find_first_not_of(" \t\n\r") == std::string::npos)
         return "Freight program name must be nonempty";
-    if (!find(state.colonies, c.sourceColonyId) || !find(state.colonies, c.destinationColonyId) ||
-        c.sourceColonyId == c.destinationColonyId)
-        return "Freight source and destination must be distinct existing colonies";
-    if (static_cast<std::size_t>(c.material) >= processedMaterialCount())
-        return "Freight material is invalid";
+    if (!stockLocationExists(state, c.source) || !stockLocationExists(state, c.destination) ||
+        c.source == c.destination)
+        return "Freight endpoints must be distinct existing stock locations";
+    if (std::holds_alternative<SiteId>(c.source) && std::holds_alternative<SiteId>(c.destination))
+        return "Site to site freight is not supported";
+    if (!find(state.colonies, c.operatingBaseColonyId) ||
+        (c.source != StockLocation{c.operatingBaseColonyId} &&
+         c.destination != StockLocation{c.operatingBaseColonyId}))
+        return "Freight operating base must be a colony endpoint";
+    if (!validCommodity(c.commodity))
+        return "Freight commodity is invalid";
     if (!nonnegative(c.totalQuantity) || (!allowZeroQuantity && c.totalQuantity == 0.0))
         return "Delivery quantity must be finite and positive";
     if (c.requestedFleetId && !find(state.fleets, *c.requestedFleetId))
         return "Requested freight fleet does not exist";
     if (c.requestedLeaderId && !find(state.people, *c.requestedLeaderId))
         return "Requested freight leader does not exist";
-    if (!nonnegative(c.policy.sourceCargoFloor) || !nonnegative(c.policy.sourcePropellantFloor) ||
+    if (!nonnegative(c.policy.sourceCargoFloor) || !nonnegative(c.policy.basePropellantFloor) ||
         !nonnegative(c.policy.returnContingencyFraction) ||
         (c.policy.maxAdditionalPropellant && !nonnegative(*c.policy.maxAdditionalPropellant)))
         return "Freight policy values must be finite and nonnegative";
@@ -200,16 +268,18 @@ void applyFreightAmendment(FreightProgramCharter& c, const FreightProgramAmendme
 FreightShipmentPlan evaluateFreightManifest(const GameState& state, const FreightProgram& program,
                                             const Fleet& fleet,
                                             const std::vector<FreightManifestRow>& manifest,
-                                            std::int64_t departureDay) {
+                                            std::int64_t departureDay, bool collectionFromBase) {
     FreightShipmentPlan result;
     result.manifest = manifest;
     result.departureDay = departureDay;
-    const Colony* source = find(state.colonies, program.charter.sourceColonyId);
-    const Colony* destination = find(state.colonies, program.charter.destinationColonyId);
-    if (!source || !destination) {
+    if (!stockLocationExists(state, program.charter.source) ||
+        !stockLocationExists(state, program.charter.destination)) {
+        result.cause = FreightReadinessCause::Route;
         result.waitingReason = "Route endpoints are unavailable";
         return result;
     }
+    const BodyId source = stockLocationBody(state, program.charter.source);
+    const BodyId destination = stockLocationBody(state, program.charter.destination);
     const auto hulls = freightHullCapabilities(state, fleet);
     for (const auto& row : manifest) {
         const auto hull =
@@ -217,11 +287,13 @@ FreightShipmentPlan evaluateFreightManifest(const GameState& state, const Freigh
         if (hull == hulls.end() || !nonnegative(row.plannedQuantity) ||
             (row.plannedQuantity > hull->capacity &&
              !freightNearlyEqual(row.plannedQuantity, hull->capacity))) {
+            result.cause = FreightReadinessCause::Capacity;
             result.waitingReason = "Manifest exceeds the carrying hull's cargo capacity";
             return result;
         }
         const auto days = workDays(row.plannedQuantity, hull->operationalHandlingPerDay);
         if (!days) {
+            result.cause = FreightReadinessCause::Handling;
             result.waitingReason = "Cargo handling unavailable on a carrying hull (power or handling rate)";
             return result;
         }
@@ -229,39 +301,75 @@ FreightShipmentPlan evaluateFreightManifest(const GameState& state, const Freigh
         result.unloadingDays = std::max(result.unloadingDays, *days);
     }
     if (!freightPositive(result.quantity)) {
+        result.cause = FreightReadinessCause::CargoStock;
         result.waitingReason = "No positive cargo manifest";
         return result;
     }
-    if (source->bodyId == destination->bodyId) {
+    const auto unloadDays = handlingDays(
+        hulls, manifest,
+        locationHandling(state, program.charter.destination, program.charter.commodity, departureDay));
+    if (!unloadDays) {
+        result.cause = FreightReadinessCause::Handling;
+        result.waitingReason = "Destination raw or hull handling is unavailable";
+        return result;
+    }
+    result.unloadingDays = *unloadDays;
+    if (source == destination) {
         result.returnDepartureDay = departureDay;
         result.ready = true;
         return result;
     }
-    const auto outward = planFleetTransit(state, source->bodyId, destination->bodyId, departureDay);
+    const bool collection = freightIsCollection(program);
+    const BodyId firstFrom = collection && collectionFromBase ? destination : source;
+    const BodyId firstTo = collection && collectionFromBase ? source : destination;
+    const auto outward = planFleetTransit(state, firstFrom, firstTo, departureDay);
     if (outward.type != FleetOrderType::MoveToBody || outward.arrivalDay <= departureDay) {
+        result.cause = FreightReadinessCause::Route;
         result.waitingReason = "Outbound route has no representable timetable";
         return result;
     }
-    auto backDay = addDays(outward.arrivalDay, result.unloadingDays);
-    if (backDay)
-        backDay = addDays(*backDay, 1);
-    if (!backDay) {
-        result.waitingReason = "Return timetable exceeds date limits";
-        return result;
+    const double outwardCost = adjustedFleetMoveFuelCost(state, fleet, firstFrom, firstTo, departureDay);
+    if (collection && !collectionFromBase) {
+        // Once remote, only the actual loaded home leg remains. No remote fuel
+        // transfer or invented final empty return is included in this envelope.
+        result.returnDepartureDay = departureDay;
+        result.requiredFuel = outwardCost;
+    } else {
+        std::int64_t work = result.unloadingDays;
+        if (collection) {
+            const auto days = handlingDays(
+                hulls, manifest,
+                locationHandling(state, program.charter.source, program.charter.commodity, departureDay));
+            if (!days) {
+                result.cause = FreightReadinessCause::Handling;
+                result.waitingReason = "Source raw or hull handling is unavailable";
+                return result;
+            }
+            work = *days;
+            result.loadingDays = work;
+        }
+        auto backDay = addDays(outward.arrivalDay, work);
+        if (backDay)
+            backDay = addDays(*backDay, 1);
+        if (!backDay) {
+            result.cause = FreightReadinessCause::Route;
+            result.waitingReason = "Return timetable exceeds date limits";
+            return result;
+        }
+        result.returnDepartureDay = *backDay;
+        const double returnCost = adjustedFleetMoveFuelCost(state, fleet, firstTo, firstFrom, *backDay);
+        result.requiredFuel =
+            outwardCost + returnCost * (1.0 + program.charter.policy.returnContingencyFraction);
     }
-    result.returnDepartureDay = *backDay;
-    const double outwardCost =
-        adjustedFleetMoveFuelCost(state, fleet, source->bodyId, destination->bodyId, departureDay);
-    const double returnCost =
-        adjustedFleetMoveFuelCost(state, fleet, destination->bodyId, source->bodyId, *backDay);
-    result.requiredFuel = outwardCost + returnCost * (1.0 + program.charter.policy.returnContingencyFraction);
     if (!nonnegative(result.requiredFuel)) {
+        result.cause = FreightReadinessCause::Route;
         result.waitingReason = "Route fuel budget is not representable";
         return result;
     }
     result.additionalFuel = std::max(0.0, result.requiredFuel - freightFleetFuel(state, fleet));
     if (result.requiredFuel > tankCapacity(state, fleet) &&
         !freightNearlyEqual(result.requiredFuel, tankCapacity(state, fleet))) {
+        result.cause = FreightReadinessCause::FuelCapacity;
         result.waitingReason = "Tank capacity cannot support the outbound and dated return envelope";
         return result;
     }
@@ -276,6 +384,7 @@ FreightShipmentPlan planFreightShipment(const GameState& state, const FreightPro
         openingDay = state.date.day;
     FreightShipmentPlan failure;
     if (!program.charter.requestedLeaderId) {
+        failure.cause = FreightReadinessCause::Participants;
         failure.waitingReason = "Waiting for a named freight leader";
         return failure;
     }
@@ -285,69 +394,81 @@ FreightShipmentPlan planFreightShipment(const GameState& state, const FreightPro
         if (hull.operationalHandlingPerDay > 0.0)
             capacity += hull.capacity;
     if (!freightPositive(capacity)) {
+        failure.cause = FreightReadinessCause::Capacity;
         failure.waitingReason = "Waiting for powered cargo capacity and handling equipment";
         return failure;
     }
-    const double cargoAvailable = stockAvailable(state, program, program.charter.material, context);
+    const double cargoAvailable =
+        stockAvailable(state, program, program.charter.source, program.charter.commodity, context);
     double candidate = std::min({capacity, cargoAvailable, freightUnpickedQuantity(state, program)});
     if (!freightPositive(candidate)) {
+        failure.cause = FreightReadinessCause::CargoStock;
         failure.waitingReason = "Waiting for source cargo stock above the protected floor";
         return failure;
     }
-    const double fuelAvailable = stockAvailable(state, program, ProcessedMaterial::Propellant, context);
+    const double fuelAvailable = stockAvailable(state, program, program.charter.operatingBaseColonyId,
+                                                ProcessedMaterial::Propellant, context);
     // A fixed evaluation bound prevents a daily tick from becoming an optimizer.
     // The fuel-adjusted candidate solves the common shared-Propellant scarcity
     // case directly; the remaining halves cover shorter handling timetables.
     for (int attempt = 0; attempt < 14 && freightPositive(candidate); ++attempt) {
         const auto manifest = allocate(hulls, candidate);
-        std::int64_t loadingDays = 0;
-        for (std::size_t i = 0; i < manifest.size(); ++i) {
-            const auto days = workDays(manifest[i].plannedQuantity, hulls[i].operationalHandlingPerDay);
-            if (!days) {
-                failure.waitingReason = "Loading timetable exceeds numeric limits";
-                return failure;
-            }
-            loadingDays = std::max(loadingDays, *days);
+        const auto loading = handlingDays(
+            hulls, manifest,
+            locationHandling(state, program.charter.source, program.charter.commodity, openingDay, context));
+        if (!loading) {
+            failure.cause = FreightReadinessCause::Handling;
+            failure.waitingReason = "Source raw or hull handling is unavailable";
+            return failure;
         }
-        auto departure = addDays(openingDay, loadingDays);
+        const std::int64_t loadingDays = *loading;
+        auto departure = addDays(openingDay, freightIsCollection(program) ? 0 : loadingDays);
         if (!departure) {
+            failure.cause = FreightReadinessCause::Route;
             failure.waitingReason = "Loading timetable exceeds date limits";
             return failure;
         }
-        auto plan = evaluateFreightManifest(state, program, fleet, manifest, *departure);
+        auto plan = evaluateFreightManifest(state, program, fleet, manifest, *departure,
+                                            freightIsCollection(program));
         if (plan.additionalFuel > 0.0) {
             departure = addDays(*departure, 1);
             if (!departure) {
+                failure.cause = FreightReadinessCause::Route;
                 failure.waitingReason = "Refueling timetable exceeds date limits";
                 return failure;
             }
-            plan = evaluateFreightManifest(state, program, fleet, manifest, *departure);
+            plan = evaluateFreightManifest(state, program, fleet, manifest, *departure,
+                                           freightIsCollection(program));
         }
         plan.loadingDays = loadingDays;
         bool supported = plan.ready;
         if (supported && plan.additionalFuel > freightFuelAllowanceRemaining(program) &&
             !freightNearlyEqual(plan.additionalFuel, freightFuelAllowanceRemaining(program))) {
             supported = false;
+            plan.cause = FreightReadinessCause::FuelAllowance;
             plan.waitingReason = "Operating-fuel allowance cannot support the next shipment";
         }
         if (supported && plan.additionalFuel > fuelAvailable &&
             !freightNearlyEqual(plan.additionalFuel, fuelAvailable)) {
             supported = false;
-            plan.waitingReason = "Waiting for source operating Propellant above the protected floor";
+            plan.cause = FreightReadinessCause::FuelStock;
+            plan.waitingReason = "Waiting for base operating Propellant above the protected floor";
         }
-        if (supported && program.charter.material == ProcessedMaterial::Propellant &&
-            plan.quantity + plan.additionalFuel > cargoAvailable &&
+        if (supported && program.charter.commodity == Commodity{ProcessedMaterial::Propellant} &&
+            !freightIsCollection(program) && plan.quantity + plan.additionalFuel > cargoAvailable &&
             !freightNearlyEqual(plan.quantity + plan.additionalFuel, cargoAvailable)) {
             supported = false;
+            plan.cause = FreightReadinessCause::FuelStock;
             plan.waitingReason = "Shared Propellant stock must cover operating fuel before payload";
         }
         if (supported) {
-            const Colony* source = find(state.colonies, program.charter.sourceColonyId);
-            const double cargoStock = source->processedStockpile.get(program.charter.material);
-            const double fuelStock = source->processedStockpile.get(ProcessedMaterial::Propellant);
+            const double cargoStock = stockQuantity(state, program.charter.source, program.charter.commodity);
+            const double fuelStock =
+                stockQuantity(state, program.charter.operatingBaseColonyId, ProcessedMaterial::Propellant);
             if (cargoStock - plan.quantity == cargoStock ||
                 (plan.additionalFuel > 0.0 && fuelStock - plan.additionalFuel == fuelStock)) {
                 supported = false;
+                plan.cause = FreightReadinessCause::Precision;
                 plan.waitingReason = "Transfer amount is below the source stock's representable precision";
             }
         }
@@ -356,8 +477,8 @@ FreightShipmentPlan planFreightShipment(const GameState& state, const FreightPro
         failure = plan;
         failure.ready = false;
         const double reduced = std::max(0.0, cargoAvailable - plan.additionalFuel);
-        candidate = attempt == 0 && program.charter.material == ProcessedMaterial::Propellant &&
-                            reduced < candidate && reduced > 0.0
+        candidate = attempt == 0 && program.charter.commodity == Commodity{ProcessedMaterial::Propellant} &&
+                            !freightIsCollection(program) && reduced < candidate && reduced > 0.0
                         ? reduced
                         : candidate * 0.5;
     }
@@ -368,94 +489,94 @@ FreightShipmentPlan planFreightShipment(const GameState& state, const FreightPro
     return failure;
 }
 
-std::string freightProgramExecutionCondition(const GameState& state, const FreightProgram& p) {
+FreightReadiness freightProgramReadiness(const GameState& state, const FreightProgram& p) {
+    using C = FreightReadinessCause;
+    const auto previewDay =
+        state.date.day == std::numeric_limits<std::int64_t>::max() ? state.date.day : state.date.day + 1;
     if (p.lifecycle == FreightProgramLifecycle::Closed)
-        return p.closure == FreightProgramClosure::Completed ? "Completed; delivered and returned to source"
-                                                             : "Cancelled; cargo custody settled";
-    const double aboard = freightCargoAboard(state, p.id);
+        return {C::None, p.closure == FreightProgramClosure::Completed
+                             ? "Completed; cargo delivered and fleet settled at operating base"
+                             : "Cancelled; cargo custody settled"};
     if (p.lifecycle == FreightProgramLifecycle::Suspended)
-        return aboard > 0.0 ? "Suspended; fleet retained while cargo is aboard. Resume or cancel future "
-                              "pickups to settle the load."
-                            : "Suspended; empty stationary assets may be released";
-    const auto fleetId =
+        return {C::None, "Suspended; physical cargo and paid transit retained"};
+    const auto id =
         p.leasedFleetId ? p.leasedFleetId : (p.taskFleetId ? p.taskFleetId : p.charter.requestedFleetId);
-    if (!fleetId)
-        return "Waiting for a requested freight fleet";
-    const Fleet* fleet = find(state.fleets, *fleetId);
+    const Fleet* fleet = id ? find(state.fleets, *id) : nullptr;
     if (!fleet)
-        return "Waiting for an existing freight fleet";
-    if (!p.leasedFleetId && controllingProgram(state, *fleetId))
-        return "Waiting for fleet controlled by another program";
-    if (!p.leasedFleetId && (!stationary(*fleet) || !fleet->queuedOrders.empty()))
-        return "Waiting for busy fleet to finish its existing orders";
+        return {C::Participants, "Waiting for requested freight fleet"};
+    if (!p.leasedFleetId && controllingProgram(state, *id))
+        return {C::Participants, "Waiting for fleet controlled by another program"};
     if (!stationary(*fleet))
-        return "In transit on the committed physical leg";
-    const Colony* source = find(state.colonies, p.charter.sourceColonyId);
-    if (!source)
-        return "Waiting for source colony";
+        return {C::None, "In transit on the committed physical leg"};
+    if (!p.leasedFleetId && !fleet->queuedOrders.empty())
+        return {C::Participants, "Waiting for existing fleet orders"};
+    const auto base = StockLocation{p.charter.operatingBaseColonyId};
+    const BodyId baseBody = stockLocationBody(state, base),
+                 source = stockLocationBody(state, p.charter.source);
+    const double aboard = freightCargoAboard(state, p.id);
     if (p.task == FreightProgramTask::Unloading || p.task == FreightProgramTask::ReturningCargo) {
+        const auto location =
+            p.task == FreightProgramTask::ReturningCargo ? p.charter.source : p.charter.destination;
         for (const auto& hull : freightHullCapabilities(state, *fleet))
             if (hull.onboardQuantity > 0.0 && hull.operationalHandlingPerDay <= 0.0)
-                return "Cargo disposition blocked by an unpowered or zero-rate carrying hull";
-        return p.task == FreightProgramTask::ReturningCargo
-                   ? "Returning unshipped cargo to source stock over handling days"
-                   : "Unloading committed cargo to destination stock over handling days";
+                return {C::Handling, "Cargo disposition blocked by carrying hull power or handling"};
+        if (locationHandling(state, location, p.charter.commodity, previewDay) <= 0.0)
+            return {C::Handling, "Cargo retained; site raw handling is unsupported"};
+        if (const auto* site = std::get_if<SiteId>(&location);
+            site && std::holds_alternative<Mineral>(p.charter.commodity) &&
+            siteRawRoom(state, *site, previewDay) <= 0.0)
+            return {C::SiteRoom, "Cargo retained; site raw storage is full"};
+        return {C::None, p.task == FreightProgramTask::ReturningCargo
+                             ? "Returning undispatched cargo to original source"
+                             : "Unloading committed cargo at destination"};
     }
     if (p.task == FreightProgramTask::Return || p.task == FreightProgramTask::Reposition ||
-        fleet->currentBodyId != source->bodyId) {
+        (!p.shipment && fleet->currentBodyId != baseBody)) {
         const double cost =
-            adjustedFleetMoveFuelCost(state, *fleet, fleet->currentBodyId, source->bodyId, state.date.day);
+            adjustedFleetMoveFuelCost(state, *fleet, fleet->currentBodyId, baseBody, state.date.day);
         if (!std::isfinite(cost) || freightFleetFuel(state, *fleet) < cost)
-            return "Return or reposition leg blocked by actual engine fuel or route conditions";
-        if (!freightFuelDebitRepresentable(state, *fleet, cost))
-            return "Engine fuel debit is below representable precision or would lose a residual";
-        return "Ready to return empty to the source";
+            return {C::FuelStock, "Return or reposition to operating base needs actual engine fuel"};
+        if (cost > 0.0 && !freightFuelDebitRepresentable(state, *fleet, cost))
+            return {C::Precision, "Engine fuel debit cannot preserve representable inventory"};
+        return {C::None, "Ready to return or reposition to operating base"};
     }
-    if (p.shipment) {
-        std::vector<FreightManifestRow> actual;
-        bool remainingHandling = false;
-        for (const auto& hull : freightHullCapabilities(state, *fleet)) {
-            actual.push_back({hull.shipId, hull.onboardQuantity});
-            const auto row =
-                std::find_if(p.shipment->manifest.begin(), p.shipment->manifest.end(),
-                             [&](const auto& candidate) { return candidate.shipId == hull.shipId; });
-            if (row != p.shipment->manifest.end() && row->plannedQuantity > hull.onboardQuantity &&
-                hull.operationalHandlingPerDay > 0.0)
-                remainingHandling = true;
-            if (hull.onboardQuantity > 0.0 && hull.operationalHandlingPerDay <= 0.0)
-                return "Cargo handling unavailable on a carrying hull (power or handling rate)";
+    if (p.shipment && p.task == FreightProgramTask::Loading && fleet->currentBodyId == source) {
+        for(const auto& hull:freightHullCapabilities(state,*fleet)) {
+            const auto row=std::find_if(p.shipment->manifest.begin(),p.shipment->manifest.end(),[&](const auto& r){return r.shipId==hull.shipId;});
+            if(row!=p.shipment->manifest.end() && row->plannedQuantity>0.0 && hull.operationalHandlingPerDay<=0.0)
+                return {C::Handling,"Committed carrying hull is unpowered or has no handling rate"};
         }
-        const auto& manifest = aboard > 0.0 ? actual : p.shipment->manifest;
-        const auto plan = evaluateFreightManifest(state, p, *fleet, manifest, state.date.day);
+        if (locationHandling(state, p.charter.source, p.charter.commodity, previewDay) <= 0.0)
+            return {C::Handling, "Waiting for supported site raw handling"};
+        if (aboard < freightShipmentPlannedQuantity(*p.shipment) &&
+            stockAvailable(state, p, p.charter.source, p.charter.commodity, nullptr) <= 0.0 &&
+            (freightIsCollection(p) || aboard <= 0.0))
+            return {C::CargoStock, "Waiting for source stock; committed manifest and partial cargo retained"};
+        if (aboard < freightShipmentPlannedQuantity(*p.shipment))
+            return {C::None, "Loading committed cargo over per-hull handling days"};
+        const auto plan = evaluateFreightManifest(state, p, *fleet, p.shipment->manifest, state.date.day);
         if (!plan.ready)
-            return plan.waitingReason;
+            return {plan.cause, plan.waitingReason};
         if (plan.additionalFuel > freightFuelAllowanceRemaining(p) &&
             !freightNearlyEqual(plan.additionalFuel, freightFuelAllowanceRemaining(p)))
-            return "Operating-fuel allowance cannot support the committed shipment";
-        const double fuelAvailable =
-            std::max(0.0, source->processedStockpile.get(ProcessedMaterial::Propellant) -
-                              freightEffectiveFloor(p, ProcessedMaterial::Propellant));
-        if (plan.additionalFuel > fuelAvailable && !freightNearlyEqual(plan.additionalFuel, fuelAvailable))
-            return "Waiting for source operating Propellant above the protected floor";
-        if (plan.additionalFuel > 0.0 && !freightNearlyEqual(plan.additionalFuel, 0.0))
-            return "Preparing additional operating fuel before the next cargo action";
-        const double cargoAvailable = std::max(0.0, source->processedStockpile.get(p.charter.material) -
-                                                        freightEffectiveFloor(p, p.charter.material));
-        if (aboard <= 0.0 && cargoAvailable <= 0.0)
-            return "Waiting for source cargo stock above the protected floor";
-        if (aboard <= 0.0 && !remainingHandling)
-            return "Waiting for powered handling on the committed cargo hulls";
-        if (aboard >= freightShipmentPlannedQuantity(*p.shipment) || cargoAvailable <= 0.0) {
-            const Colony* destination = find(state.colonies, p.charter.destinationColonyId);
-            const double cost =
-                adjustedFleetMoveFuelCost(state, *fleet, source->bodyId, destination->bodyId, state.date.day);
-            if (!freightFuelDebitRepresentable(state, *fleet, cost))
-                return "Engine fuel debit is below representable precision or would lose a residual";
-            return "Ready to dispatch the actual loaded manifest";
-        }
-        return "Loading committed cargo over per-hull handling days";
+            return {C::FuelAllowance, "Operating-fuel allowance cannot support committed shipment"};
+        if (plan.additionalFuel > stockAvailable(state, p, base, ProcessedMaterial::Propellant, nullptr) &&
+            !freightNearlyEqual(plan.additionalFuel,
+                                stockAvailable(state, p, base, ProcessedMaterial::Propellant, nullptr)))
+            return {C::FuelStock, "Base operating Propellant no longer supports committed shipment"};
+        if (plan.additionalFuel > 0.0 && freightIsCollection(p))
+            return {C::FuelStock,
+                    "Loaded return waits for actual engine fuel; remote stocks cannot refill engines"};
+        const double cost = adjustedFleetMoveFuelCost(
+            state, *fleet, source, stockLocationBody(state, p.charter.destination), state.date.day);
+        if (plan.additionalFuel == 0.0 && cost > 0.0 && !freightFuelDebitRepresentable(state, *fleet, cost))
+            return {C::Precision, "Engine fuel debit cannot conserve representable tank inventory"};
+        return {C::None, "Ready to dispatch committed cargo"};
     }
     const auto plan = planFreightShipment(state, p, *fleet);
-    return plan.ready ? "Ready for source-supported freight shipment" : plan.waitingReason;
+    return {plan.cause, plan.ready ? "Ready for base-supported freight cycle" : plan.waitingReason};
+}
+std::string freightProgramExecutionCondition(const GameState& state, const FreightProgram& p) {
+    return freightProgramReadiness(state, p).message;
 }
 } // namespace deep

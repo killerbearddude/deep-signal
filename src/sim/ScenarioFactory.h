@@ -30,4 +30,7 @@ namespace deep {
 // each able to deliver one recipe ingredient after explicit authorization.
 [[nodiscard]] GameState createMaintenanceSupplyScenario();
 
+// Fixed public body and finite home industry for the earned P4B inspection loop.
+// No sites, programs, built hulls or knowledge are pre-created.
+[[nodiscard]] GameState createSiteDevelopmentScenario(bool usefulIce = true);
 } // namespace deep

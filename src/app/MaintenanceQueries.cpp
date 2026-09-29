@@ -86,9 +86,8 @@ std::vector<MaintenanceTeamSummary> SimulationQueries::maintenanceTeams() const 
                                          : (team.fleetId ? name(state.fleets, *team.fleetId) : "Unavailable");
         for (auto id : team.qualifiedFamilies)
             row.qualifiedFamilyNames.push_back(name(state.equipmentFamilies, id));
-        for (const auto& p : state.maintenancePrograms)
-            if (p.leasedTeamId == team.id)
-                row.controllingProgramId = p.id;
+        row.controller=controllingEngineeringTeam(state,team.id);
+        if(row.controller)row.controllerName=programControllerLabel(state,*row.controller);
         result.push_back(std::move(row));
     }
     return result;

@@ -6,6 +6,7 @@
 // P3B-01/03/15/19/24/27/36: owned app projections expose actual hull custody and
 // mutable authority without turning previews into transfers or admission gates.
 
+#include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
@@ -22,9 +23,10 @@ void require(const bool value, const std::string_view message) {
 deep::FreightProgramCharter charterFor(const deep::GameState& state) {
     deep::FreightProgramCharter charter;
     charter.name = "App delivery";
-    charter.sourceColonyId = state.colonies.at(state.colonies.size() - 2).id;
-    charter.destinationColonyId = state.colonies.back().id;
-    charter.material = deep::ProcessedMaterial::StructuralAlloys;
+    charter.source = state.colonies.at(state.colonies.size() - 2).id;
+    charter.operatingBaseColonyId = std::get<deep::ColonyId>(charter.source);
+    charter.destination = state.colonies.back().id;
+    charter.commodity = deep::ProcessedMaterial::StructuralAlloys;
     charter.totalQuantity = 500.0;
     charter.requestedFleetId = state.fleets.back().id;
     charter.requestedLeaderId = state.people.front().id;
@@ -40,7 +42,7 @@ void ownedPreviewsAndUnreadyAuthoring() {
     const auto classes = queries.shipClasses();
     require(classes.front().design.cargoCapacity == 0.0 && classes.front().design.buildPoints == 500.0,
             "Survey Cutter totals remain unchanged");
-    const auto design = queries.previewShipDesign(classes.back().components).design;
+    const auto design = queries.previewShipDesign(std::find_if(classes.begin(),classes.end(),[&](const auto& cls){return cls.id==service.state().ships.back().shipClassId;})->components).design;
     require(design.cargoCapacity == 200.0 && design.cargoHandlingPerDay == 50.0 && design.buildPoints == 550.0,
             "reference design preview has independently expected cargo/rate/work totals");
     auto charter = charterFor(service.state());
@@ -76,7 +78,7 @@ void ownedPreviewsAndUnreadyAuthoring() {
     require(service.execute(deep::AmendFreightProgramCommand{oldRows.front().id, amended}).ok, "valid amendment accepted");
     require(queries.freightPrograms().front().charter.name == amended.name && oldRows.front().charter.name == charter.name,
             "returned DTO owns charter data across mutation");
-    revisedCharter.destinationColonyId = revisedCharter.sourceColonyId;
+    revisedCharter.destination = revisedCharter.source;
     require(!queries.previewFreightProgramCharter(revisedCharter, oldRows.front().id).structurallyValid,
             "amendment preview rejects a changed fixed contract route");
 }
@@ -155,7 +157,7 @@ void historicalReportPoliciesRemainOwnedSnapshots() {
     auto charter = charterFor(service.state());
     charter.requestedFleetId.reset();
     charter.policy.sourceCargoFloor = 4.0;
-    charter.policy.sourcePropellantFloor = 8.0;
+    charter.policy.basePropellantFloor = 8.0;
     charter.policy.maxAdditionalPropellant = 30.0;
     charter.policy.returnContingencyFraction = 0.15;
     require(service.execute(deep::CreateFreightProgramCommand{charter}).ok, "historical policy fixture accepted");
@@ -163,12 +165,12 @@ void historicalReportPoliciesRemainOwnedSnapshots() {
     const auto oldRows = queries.freightPrograms();
     require(oldRows.front().reports.size() == 1, "first report is projected");
     const auto originalPolicy = oldRows.front().reports.front().report.policy;
-    require(originalPolicy.sourceCargoFloor == 4.0 && originalPolicy.sourcePropellantFloor == 8.0 &&
+    require(originalPolicy.sourceCargoFloor == 4.0 && originalPolicy.basePropellantFloor == 8.0 &&
             originalPolicy.maxAdditionalPropellant == 30.0 && originalPolicy.returnContingencyFraction == 0.15,
             "report captures all four policy values at its own boundary");
     auto amendment = deep::freightAmendmentFromCharter(charter);
     amendment.policy.sourceCargoFloor = 7.0;
-    amendment.policy.sourcePropellantFloor = 11.0;
+    amendment.policy.basePropellantFloor = 11.0;
     amendment.policy.maxAdditionalPropellant.reset();
     amendment.policy.returnContingencyFraction = 0.25;
     require(service.execute(deep::AmendFreightProgramCommand{oldRows.front().id, amendment}).ok, "later limits may amend");
@@ -177,10 +179,10 @@ void historicalReportPoliciesRemainOwnedSnapshots() {
     require(current.reports.size() == 2, "both historical reports remain visible");
     const auto& first = current.reports.front().report.policy;
     const auto& second = current.reports.back().report.policy;
-    require(first.sourceCargoFloor == 4.0 && first.sourcePropellantFloor == 8.0 &&
+    require(first.sourceCargoFloor == 4.0 && first.basePropellantFloor == 8.0 &&
             first.maxAdditionalPropellant == 30.0 && first.returnContingencyFraction == 0.15,
             "later charter amendment leaves the first report's limits intact");
-    require(second.sourceCargoFloor == 7.0 && second.sourcePropellantFloor == 11.0 &&
+    require(second.sourceCargoFloor == 7.0 && second.basePropellantFloor == 11.0 &&
             !second.maxAdditionalPropellant && second.returnContingencyFraction == 0.25,
             "new report snapshots changed limits including unlimited allowance");
     require(oldRows.front().reports.size() == 1 && oldRows.front().charterRevision == 1 &&

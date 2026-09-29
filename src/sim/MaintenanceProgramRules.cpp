@@ -314,10 +314,8 @@ std::string maintenanceExecutionCondition(const GameState& state, const Maintena
         owner && *owner != ProgramController{p.id}) {
         return "Waiting: requested tender is controlled by " + programControllerLabel(state, *owner);
     }
-    for (const auto& other : state.maintenancePrograms)
-        if (other.id != p.id && other.leasedTeamId == team->id) {
-            return "Waiting: engineering team is committed to another maintenance program";
-        }
+    if (const auto owner=controllingEngineeringTeam(state,team->id); owner && *owner!=ProgramController{p.id})
+        return "Waiting: engineering team is controlled by "+programControllerLabel(state,*owner);
     if (!stationary(*tender))
         return "Waiting: tender has existing transit or queued movement";
     if (tender->currentBodyId != colony->bodyId)

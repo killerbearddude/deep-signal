@@ -1,6 +1,9 @@
+// Validates typed freight intent, paid trajectories, physical cargo and immutable
+// transfer/report history without repairing or manufacturing inventory.
 #include "sim/FreightProgramValidation.h"
 
 #include "sim/FreightProgramRules.h"
+#include "sim/StockAccess.h"
 #include "sim/ShipDesignRules.h"
 #include "sim/SurveyProgramRules.h"
 
@@ -54,7 +57,7 @@ void validateFreightProgramState(const GameState& state) {
         check(p.lifecycle >= FreightProgramLifecycle::Authorized &&
                   p.lifecycle <= FreightProgramLifecycle::Closed &&
                   p.closure >= FreightProgramClosure::None && p.closure <= FreightProgramClosure::Cancelled &&
-                  p.task >= FreightProgramTask::None && p.task <= FreightProgramTask::ReturningCargo,
+                  p.task >= FreightProgramTask::None && p.task <= FreightProgramTask::Collecting,
               "freight lifecycle/task is invalid");
         check(p.nextShipmentNumber > 0, "freight shipment counter must be positive");
         if (p.lifecycle == FreightProgramLifecycle::Authorized)
@@ -98,9 +101,9 @@ void validateFreightProgramState(const GameState& state) {
                       s.committedDay <= state.date.day && fleet && find(state.people, s.leaderId) &&
                       p.taskFleetId == s.fleetId,
                   "freight shipment identity or participants are invalid");
-            check(s.sourceColonyId == p.charter.sourceColonyId &&
-                      s.destinationColonyId == p.charter.destinationColonyId &&
-                      s.material == p.charter.material,
+            check(s.source == p.charter.source && s.destination == p.charter.destination &&
+                      s.commodity == p.charter.commodity &&
+                      s.operatingBaseColonyId == p.charter.operatingBaseColonyId,
                   "freight shipment changed its fixed contract identity");
             check(s.manifest.size() == fleet->shipIds.size(), "freight committed roster size changed");
             double planned = 0.0;
@@ -125,17 +128,25 @@ void validateFreightProgramState(const GameState& state) {
             check(aboard == 0.0, "freight return/reposition cannot carry an unsettled cargo lot");
         if (p.leasedFleetId) {
             const Fleet& fleet = *find(state.fleets, *p.leasedFleetId);
-            const BodyId source = find(state.colonies, p.charter.sourceColonyId)->bodyId;
-            const BodyId destination = find(state.colonies, p.charter.destinationColonyId)->bodyId;
+            const BodyId source = stockLocationBody(state, p.charter.source);
+            const BodyId destination = stockLocationBody(state, p.charter.destination);
             if (fleet.activeOrder.type == FleetOrderType::MoveToBody) {
                 const bool outward = p.task == FreightProgramTask::Outbound;
+                const bool collecting = p.task == FreightProgramTask::Collecting;
                 const bool returning =
                     p.task == FreightProgramTask::Return || p.task == FreightProgramTask::Reposition ||
                     ((p.task == FreightProgramTask::Loading || p.task == FreightProgramTask::Preparing ||
                       p.task == FreightProgramTask::ReturningCargo) &&
                      aboard == 0.0);
-                check(outward || returning, "freight task cannot own this active movement leg");
-                check(fleet.destinationBodyId == (outward ? destination : source),
+                check(outward || returning || collecting, "freight task cannot own this active movement leg");
+                check(fleet.destinationBodyId ==
+                          (outward      ? destination
+                           : collecting ? source
+                           : (p.task == FreightProgramTask::Return ||
+                              p.task == FreightProgramTask::Reposition ||
+                              (p.task == FreightProgramTask::Preparing && freightIsCollection(p)))
+                               ? stockLocationBody(state, p.charter.operatingBaseColonyId)
+                               : source),
                       "freight active trajectory targets the wrong contract endpoint");
             } else {
                 if (p.task == FreightProgramTask::Unloading || p.task == FreightProgramTask::Outbound)
@@ -160,15 +171,17 @@ void validateFreightProgramState(const GameState& state) {
                       r.day >= previousDay && r.day <= state.date.day && freightPositive(r.amount),
                   "freight receipt identity, ordering, date or amount is invalid");
             check(find(state.fleets, r.fleetId) && find(state.people, r.leaderId) &&
-                      find(state.colonies, r.colonyId),
+                      stockLocationExists(state, r.location),
                   "freight receipt participant/location is dangling");
             check(r.kind >= FreightTransferKind::Load && r.kind <= FreightTransferKind::OperatingFuel,
                   "freight receipt transfer kind is invalid");
-            const ColonyId expected = r.kind == FreightTransferKind::Delivery ? p.charter.destinationColonyId
-                                                                              : p.charter.sourceColonyId;
-            check(r.colonyId == expected && r.material == (r.kind == FreightTransferKind::OperatingFuel
-                                                               ? ProcessedMaterial::Propellant
-                                                               : p.charter.material),
+            const StockLocation expected = r.kind == FreightTransferKind::OperatingFuel
+                                               ? StockLocation{p.charter.operatingBaseColonyId}
+                                           : r.kind == FreightTransferKind::Delivery ? p.charter.destination
+                                                                                     : p.charter.source;
+            check(r.location == expected && r.commodity == (r.kind == FreightTransferKind::OperatingFuel
+                                                                ? Commodity{ProcessedMaterial::Propellant}
+                                                                : p.charter.commodity),
                   "freight receipt contradicts contract location/material");
             auto& a = shipments[r.shipmentNumber];
             if (!a.participants) {
@@ -221,8 +234,13 @@ void validateFreightProgramState(const GameState& state) {
                       "freight audit date predates its program or exceeds the world date");
                 if (e->fleetId)
                     check(find(state.fleets, *e->fleetId), "freight audit fleet is dangling");
-                if (e->colonyId)
-                    check(find(state.colonies, *e->colonyId), "freight audit colony is dangling");
+                if (e->location)
+                    check(stockLocationExists(state, *e->location), "freight audit colony is dangling");
+                if (e->commodity)
+                    check(validCommodity(*e->commodity), "freight audit commodity is invalid");
+                if (e->kind == FreightProgramAuditKind::Transfer)
+                    check(e->location && e->commodity,
+                          "positive freight transfer lacks typed custody identity");
                 if (e->leaderId)
                     check(find(state.people, *e->leaderId), "freight audit leader is dangling");
                 if (e->kind == FreightProgramAuditKind::Departure)
@@ -242,7 +260,7 @@ void validateFreightProgramState(const GameState& state) {
                           "freight closure audit is duplicated or disagrees with closed date");
                     closedAudit = true;
                     if (p.closure == FreightProgramClosure::Completed)
-                        check(e->colonyId == p.charter.sourceColonyId,
+                        check(e->location == std::optional<StockLocation>{p.charter.operatingBaseColonyId},
                               "completed freight closure lacks physical source disposition");
                 }
             }
@@ -292,7 +310,7 @@ void validateFreightProgramState(const GameState& state) {
             check(nonnegative(r.cargoAboard) && nonnegative(r.targetQuantity) &&
                       nonnegative(r.cumulativeDelivered) && nonnegative(r.committedQuantity),
                   "freight report snapshot is nonfinite or negative");
-            check(nonnegative(r.policy.sourceCargoFloor) && nonnegative(r.policy.sourcePropellantFloor) &&
+            check(nonnegative(r.policy.sourceCargoFloor) && nonnegative(r.policy.basePropellantFloor) &&
                       nonnegative(r.policy.returnContingencyFraction) &&
                       (!r.policy.maxAdditionalPropellant || nonnegative(*r.policy.maxAdditionalPropellant)),
                   "freight report policy snapshot is nonfinite or negative");
@@ -346,7 +364,7 @@ void validateFreightProgramState(const GameState& state) {
             const FreightProgram* p = find(state.freightPrograms, lot.programId);
             const ShipClass* cls = find(state.shipClasses, ship.shipClassId);
             check(p && p->shipment && cls && lot.shipmentNumber == p->shipment->number &&
-                      lot.material == p->shipment->material && freightPositive(lot.quantity),
+                      lot.commodity == p->shipment->commodity && freightPositive(lot.quantity),
                   "ship cargo has invalid program/shipment/material/quantity");
             check(ship.fleetId == p->shipment->fleetId && p->leasedFleetId == ship.fleetId,
                   "ship cargo left its custody fleet");

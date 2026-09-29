@@ -10,6 +10,7 @@
 #include "sim/FreightProgram.h"
 #include "sim/MaintenanceProgram.h"
 #include "sim/AnalysisProgram.h"
+#include "sim/SiteDevelopmentCommands.h"
 
 #include <cstdint>
 #include <optional>
@@ -127,6 +128,10 @@ struct AcknowledgeMaintenanceIssueCommand { MaintenanceProgramId programId; std:
 
 
 // Analysis authorization records intent; only daily lab work publishes findings.
+struct AmendSiteOperatingPolicyCommand { SiteId siteId; SiteOperatingPolicy policy; };
+struct SuspendSiteOperationCommand { SiteId siteId; };
+struct ResumeSiteOperationCommand { SiteId siteId; };
+struct AcknowledgeSiteOperatingIssueCommand { SiteId siteId; SiteOperatingIssueCause cause; std::int64_t episodeStartedDay=0; };
 struct CreateAnalysisProgramCommand { AnalysisCharter charter; };
 struct AmendAnalysisProgramCommand { AnalysisProgramId programId; AnalysisAmendment amendment; };
 struct SuspendAnalysisProgramCommand { AnalysisProgramId programId; };
@@ -183,6 +188,16 @@ using SimCommand = std::variant<
     ResumeMaintenanceProgramCommand,
     CancelMaintenanceProgramCommand,
     AcknowledgeMaintenanceIssueCommand,
+    AmendSiteOperatingPolicyCommand,
+    SuspendSiteOperationCommand,
+    ResumeSiteOperationCommand,
+    AcknowledgeSiteOperatingIssueCommand,
+    CreateSiteDevelopmentCommand,
+    AmendSiteDevelopmentCommand,
+    SuspendSiteDevelopmentCommand,
+    ResumeSiteDevelopmentCommand,
+    CancelSiteDevelopmentCommand,
+    AcknowledgeSiteDevelopmentIssueCommand,
     CreateAnalysisProgramCommand,
     AmendAnalysisProgramCommand,
     SuspendAnalysisProgramCommand,

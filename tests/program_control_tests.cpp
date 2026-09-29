@@ -23,9 +23,10 @@ void near(double a, double b, const char* message) { require(std::abs(a-b)<1e-7,
 FreightProgramCharter freight(const GameState& state, ProcessedMaterial material = ProcessedMaterial::StructuralAlloys) {
     FreightProgramCharter charter;
     charter.name = "Independent supply proof";
-    charter.sourceColonyId = state.colonies.at(state.colonies.size()-2).id;
-    charter.destinationColonyId = state.colonies.back().id;
-    charter.material = material;
+    charter.source = state.colonies.at(state.colonies.size()-2).id;
+    charter.operatingBaseColonyId = std::get<deep::ColonyId>(charter.source);
+    charter.destination = state.colonies.back().id;
+    charter.commodity = material;
     charter.totalQuantity = 500.0;
     charter.requestedFleetId = state.fleets.back().id;
     charter.requestedLeaderId = state.people.front().id;
@@ -175,7 +176,7 @@ void test_survey_condition_and_report_name_freight_owner() {
         const auto sourceId = state.colonies.at(state.colonies.size() - 2).id;
         const auto fleetId = state.fleets.back().id;
         state.surveyTeams.front().colonyId = sourceId;
-        state.shipClasses.back().components.push_back({ShipComponentId{4}, 1});
+        std::find_if(state.shipClasses.begin(),state.shipClasses.end(),[&](const auto& cls){return cls.id==state.ships.back().shipClassId;})->components.push_back({ShipComponentId{4}, 1});
         // This authored dual-capability hull now has a managed instrument row.
         initializeShipEquipmentCondition(state, state.ships.back());
         state.ships.back().fuel = 1000.0;
@@ -237,7 +238,7 @@ void test_older_freight_and_mixed_bulk_equivalence() {
     require(arbitration.execute(CreateFreightProgramCommand{fc}).ok,"older unready freight created");
     arbitration.advanceDays(1);
     auto sc = receivingSurvey(state);
-    sc.homeColonyId = fc.sourceColonyId;
+    sc.homeColonyId = std::get<ColonyId>(fc.source);
     sc.requestedFleetId = fc.requestedFleetId;
     require(arbitration.execute(CreateSurveyProgramCommand{sc}).ok,"later survey created");
     auto amended = freightAmendmentFromCharter(fc);
@@ -350,7 +351,7 @@ void test_replacement_fleet_waits_for_committed_return() {
     auto state=createDelegatedFreightScenario();
     const auto sourceBody=state.colonies.at(state.colonies.size()-2).bodyId;
     state.fleets.front().currentBodyId=sourceBody;
-    state.ships.front().shipClassId=state.shipClasses.back().id;
+    state.ships.front().shipClassId=state.ships.back().shipClassId;
     // The detached replacement fixture is a newly authored sensorless hull.
     state.ships.front().equipmentCondition.clear();
     initializeShipEquipmentCondition(state, state.ships.front());

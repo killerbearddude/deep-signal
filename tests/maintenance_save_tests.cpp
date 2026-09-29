@@ -389,10 +389,10 @@ void multiple_groups_and_mixed_delivery_checkpoints() {
     for (int i = 0; i < 2; ++i) {
         FreightProgramCharter f;
         f.name = "Parts continuation";
-        f.sourceColonyId = s.colonies.back().id;
-        f.destinationColonyId = home;
+        f.source = s.colonies.back().id; f.operatingBaseColonyId = s.colonies.back().id;
+        f.destination = home;
         f.totalQuantity = 20;
-        f.material = i == 0 ? ProcessedMaterial::Electronics : ProcessedMaterial::IndustrialComposites;
+        f.commodity = i == 0 ? ProcessedMaterial::Electronics : ProcessedMaterial::IndustrialComposites;
         f.requestedFleetId = s.fleets.at(static_cast<std::size_t>(i) + 2).id;
         f.requestedLeaderId = s.people.front().id;
         require(supply.execute(CreateFreightProgramCommand{f}).ok, "supply freight accepted");

@@ -1,3 +1,4 @@
+#include "app/SiteDevelopmentFixture.h"
 #include "sim/Commands.h"
 #include "sim/Events.h"
 #include "sim/Minerals.h"
@@ -84,6 +85,12 @@ struct EventPrinter {
         std::cout << "  Analysis program " << event.programId.value << " job=" << event.jobId.value << ": " << event.detail << '\n';
     }
 
+    void operator()(const deep::SiteDevelopmentAuditEvent& event) const {
+        std::cout << "  Site development " << event.programId.value << ": " << event.detail << '\n';
+    }
+    void operator()(const deep::SiteOperatingAuditEvent& event) const {
+        std::cout << "  Site " << event.siteId.value << ": " << event.detail << '\n';
+    }
     void operator()(const deep::CommandRejectedEvent& event) const {
         std::cout << "  Command rejected: " << event.reason << '\n';
     }
@@ -104,7 +111,7 @@ void printAdvance(const deep::Simulation& sim, const deep::AdvanceResult& result
     printEvents(result.events);
     std::cout << "Advanced " << result.advancedDays << " of " << result.requestedDays << " days\n";
     if (result.interrupted) {
-        if (result.issueProgramId) std::cout << deep::programControllerLabel(sim.state(), *result.issueProgramId) << ": ";
+        if (result.issueSource) std::cout << deep::decisionSourceLabel(sim.state(), *result.issueSource) << ": ";
         std::cout << result.stopReason << '\n';
     }
 }
@@ -115,6 +122,14 @@ void printAdvance(const deep::Simulation& sim, const deep::AdvanceResult& result
 // fleet return non-zero; the final location is printed but not asserted. Use the
 // regression tests for arrival correctness; exit zero alone does not prove arrival.
 int main(int argc, char** argv) {
+    if(argc==3&&(std::string_view{argv[1]}=="--write-site-development-fixture"||std::string_view{argv[1]}=="--write-site-development-zero-fixture")) {
+        try {
+            const auto state=deep::earnSiteDevelopmentFixture(90,std::string_view{argv[1]}=="--write-site-development-fixture");
+            deep::save::SaveGameRepository::save(argv[2],state);
+            std::cout<<"Saved earned site development fixture at day "<<state.date.day<<" to "<<argv[2]<<'\n';
+            return 0;
+        }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}
+    }
     if (argc == 3 && (std::string_view{argv[1]} == "--write-evidence-fixture" ||
                        std::string_view{argv[1]} == "--write-evidence-concurrent-fixture")) {
         try {
@@ -175,8 +190,9 @@ int main(int argc, char** argv) {
             for(int i=0;i<2;++i) {
                 deep::FreightProgramCharter freight;
                 freight.name=i==0?"Supply Electronics":"Supply Composites";
-                freight.sourceColonyId=s.colonies.back().id; freight.destinationColonyId=home;
-                freight.material=i==0?deep::ProcessedMaterial::Electronics:deep::ProcessedMaterial::IndustrialComposites;
+                freight.source=s.colonies.back().id; freight.destination=home;
+                freight.operatingBaseColonyId=std::get<deep::ColonyId>(freight.source);
+                freight.commodity=i==0?deep::ProcessedMaterial::Electronics:deep::ProcessedMaterial::IndustrialComposites;
                 freight.totalQuantity=20.0; freight.requestedFleetId=s.fleets.at(static_cast<std::size_t>(i)+2).id;
                 freight.requestedLeaderId=s.people.front().id;
                 if(!fixture.execute(deep::CreateFreightProgramCommand{freight}).ok) throw std::runtime_error("Parts freight authorization failed");
@@ -198,9 +214,10 @@ int main(int argc, char** argv) {
             survey.targets = {{state.bodies.back().id, 0, 2}};
             deep::FreightProgramCharter freight;
             freight.name = "Deliver 500 Propellant to receiving survey base";
-            freight.sourceColonyId = state.colonies.at(state.colonies.size()-2).id;
-            freight.destinationColonyId = state.colonies.back().id;
-            freight.material = deep::ProcessedMaterial::Propellant;
+            freight.source = state.colonies.at(state.colonies.size()-2).id;
+            freight.destination = state.colonies.back().id;
+            freight.operatingBaseColonyId=std::get<deep::ColonyId>(freight.source);
+            freight.commodity = deep::ProcessedMaterial::Propellant;
             freight.totalQuantity = 500.0;
             freight.requestedFleetId = state.fleets.back().id;
             freight.requestedLeaderId = state.people.front().id;

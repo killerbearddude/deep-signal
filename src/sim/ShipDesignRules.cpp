@@ -161,7 +161,11 @@ std::vector<ShipComponentDefinition> standardShipComponentCatalog() {
         ShipComponentDefinition{.id = ShipComponentId{9}, .name = "Specialist Instrument Workshop",
             .kind = ShipComponentKind::Workshop, .mass = 100.0, .volume = 200.0, .powerDemand = 30.0,
             .buildCost = cost(40.0, 20.0, 0.0, 20.0), .buildPoints = 100.0,
-            .workshopRates = {{EquipmentFamilyId{2}, 1.0}}}
+            .workshopRates = {{EquipmentFamilyId{2}, 1.0}}},
+        ShipComponentDefinition{.id = ShipComponentId{10}, .name = "Field Construction Workshop",
+            .kind = ShipComponentKind::Workshop, .mass = 100.0, .volume = 150.0, .powerDemand = 30.0,
+            .buildCost = cost(60.0,20.0,0.0,10.0), .buildPoints = 100.0,
+            .workshopRates = {{EquipmentFamilyId{3},1.0}}}
     };
 }
 
@@ -180,4 +184,8 @@ std::vector<ShipComponentInstall> referenceTenderComponents() {
             {ShipComponentId{5}, 1}, {ShipComponentId{8}, 1}};
 }
 
+std::vector<ShipComponentInstall> referenceBuilderComponents() {
+    return {{ShipComponentId{1},1},{ShipComponentId{2},1},{ShipComponentId{3},1},
+        {ShipComponentId{5},1},{ShipComponentId{10},1}};
+}
 } // namespace deep

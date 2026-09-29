@@ -1,3 +1,6 @@
+#include "sim/SiteDevelopmentValidation.h"
+#include "sim/SiteOperationValidation.h"
+#include "sim/StockAccess.h"
 #include "sim/ScienceValidation.h"
 #include "sim/GameStateValidation.h"
 #include "sim/ShipDesignRules.h"
@@ -18,6 +21,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <set>
 #include <type_traits>
 #include <unordered_map>
 #include <unordered_set>
@@ -108,6 +112,7 @@ void requireState(const bool condition, const std::string_view message) {
     case ShipRole::Survey:
     case ShipRole::Freighter:
     case ShipRole::Escort:
+    case ShipRole::Builder:
         return true;
     }
     return false;
@@ -431,7 +436,8 @@ void validateEventPayload(const GameState& state, const SimEventPayload& payload
             requireState(event.kind >= FreightProgramAuditKind::Authorized && event.kind <= FreightProgramAuditKind::IssueRaised,
                          "freight audit kind must be valid");
             if (event.fleetId) requireValidReference(containsId(state.fleets, *event.fleetId), *event.fleetId, "event freight fleet");
-            if (event.colonyId) requireValidReference(containsId(state.colonies, *event.colonyId), *event.colonyId, "event freight colony");
+            if (event.location) requireState(stockLocationExists(state,*event.location),"event freight stock location must exist");
+            if (event.commodity) requireState(validCommodity(*event.commodity),"event freight commodity must be valid");
             if (event.leaderId) requireValidReference(containsId(state.people, *event.leaderId), *event.leaderId, "event freight leader");
             requireState(event.charterRevision > 0 && event.shipmentNumber >= 0 && isFinite(event.amount) && event.amount >= 0.0,
                          "freight audit numbers must be valid");
@@ -461,6 +467,25 @@ void validateEventPayload(const GameState& state, const SimEventPayload& payload
                     for(const auto& j:p.jobs)if(j.id==event.jobId)found=true;
                 requireState(found,"Analysis audit job does not belong to program");
             }
+        } else if constexpr (std::is_same_v<Event, SiteDevelopmentAuditEvent>) {
+            const auto* program=findById(state.siteDevelopmentPrograms,event.programId);
+            requireState(program && program->charter.siteId==event.siteId,"Development audit program/site mismatch");
+            requireState(event.kind>=SiteDevelopmentAuditKind::Authorized && event.kind<=SiteDevelopmentAuditKind::IssueAcknowledged,
+                         "Development audit kind invalid");
+            requireState(event.charterRevision>0 && event.charterRevision<=program->charterRevision &&
+                         event.packageRow>=-1 && (event.packageRow==-1 || static_cast<std::size_t>(event.packageRow)<program->rows.size()) &&
+                         isFinite(event.amount) && event.amount>=0 && !event.detail.empty(),"Development audit values invalid");
+            if(event.fleetId) requireState(containsId(state.fleets,*event.fleetId),"Development audit fleet missing");
+            if(event.teamId) requireState(containsId(state.maintenanceTeams,*event.teamId),"Development audit engineering team missing");
+            if(event.workshopShipId) requireState(containsId(state.ships,*event.workshopShipId),"Development audit workshop hull missing");
+            if(event.leaderId) requireState(containsId(state.people,*event.leaderId),"Development audit leader missing");
+        } else if constexpr (std::is_same_v<Event, SiteOperatingAuditEvent>) {
+            const auto* site=findById(state.resourceSites,event.siteId);
+            requireState(site && event.operatingRevision>0 && event.operatingRevision<=site->operatingRevision,"Site audit identity/revision invalid");
+            requireState(event.kind>=SiteOperatingAuditKind::PolicyAuthorized && event.kind<=SiteOperatingAuditKind::IssueAcknowledged &&
+                         event.cause>=SiteOperatingIssueCause::None && event.cause<=SiteOperatingIssueCause::DutyAllowance &&
+                         event.episodeStartedDay>=0 && event.episodeStartedDay<=state.date.day &&
+                         isFinite(event.amount) && event.amount>=0 && !event.detail.empty(),"Site audit values invalid");
         } else if constexpr (std::is_same_v<Event, CommandRejectedEvent>) {
             requireState(!event.reason.empty(), "command-rejected event reason must be non-empty");
         }
@@ -492,6 +517,11 @@ void validateGameState(const GameState& state) {
     validateIdsAndCounter<FreightProgram, FreightProgramId>(state.freightPrograms,
                                                           state.ids.nextFreightProgramId, "freight program");
     validateIdsAndCounter<SimEvent, EventId>(state.eventLog, state.ids.nextEventId, "event");
+    validateIdsAndCounter<ResourceSite, SiteId>(state.resourceSites,state.ids.nextSiteId,"resource site");
+    validateIdsAndCounter<SiteDevelopmentProgram, SiteDevelopmentProgramId>(state.siteDevelopmentPrograms,state.ids.nextSiteDevelopmentProgramId,"site development");
+    validateSiteModuleCatalog(state.siteModuleCatalog);
+    if(state.siteConstructionFamilyId)
+        requireState(containsId(state.equipmentFamilies,*state.siteConstructionFamilyId),"Site Construction binding references missing family");
 
     for (const StarSystem& system : state.starSystems) {
         requireState(!system.name.empty(), "star system name must be non-empty");
@@ -546,6 +576,9 @@ void validateGameState(const GameState& state) {
         requireState(!colony.name.empty(), "colony name must be non-empty");
         validateMineralSet(colony.stockpile, "colony raw stockpile");
         validateProcessedMaterialSet(colony.processedStockpile, "colony processed stockpile");
+        // Actual cumulative output is durable accounting, separate from authored
+        // stock. A malformed save must not publish negative or nonfinite totals.
+        validateProcessedMaterialSet(colony.processedProductionTotals, "colony cumulative processing output");
         requireState(isFinite(colony.mines) && colony.mines >= 0.0, "colony mines must be finite and non-negative");
         requireState(isFinite(colony.processorCapacity) && colony.processorCapacity >= 0.0,
                      "processor capacity must be finite and non-negative");
@@ -688,6 +721,30 @@ void validateGameState(const GameState& state) {
     validateFreightProgramState(state);
     validateEquipmentState(state);
     validateMaintenanceState(state);
+    validateSiteDevelopmentState(state);
+    validateSiteOperationState(state);
+    // Shared physical owners must be unique across purpose-specific programs,
+    // including field development and stationary instrument maintenance.
+    std::unordered_set<std::int64_t> fleetLeases, engineeringLeases;
+    const auto claimFleet=[&](auto id) { if(id) requireState(fleetLeases.insert(id->value).second,"Fleet has multiple canonical program leases"); };
+    const auto claimEngineer=[&](auto id) { if(id) requireState(engineeringLeases.insert(id->value).second,"Engineering team has multiple canonical program leases"); };
+    for(const auto& p:state.surveyPrograms) claimFleet(p.leasedFleetId);
+    for(const auto& p:state.freightPrograms) claimFleet(p.leasedFleetId);
+    for(const auto& p:state.maintenancePrograms) {claimFleet(p.leasedTenderId);claimEngineer(p.leasedTeamId);}
+    for(const auto& p:state.siteDevelopmentPrograms) {claimFleet(p.leasedBuilderId);claimEngineer(p.leasedTeamId);}
+    // Opening occupancy protects one team's and one hull's whole action, even
+    // when a fractional work step did not exhaust their theoretical throughput.
+    std::set<std::pair<std::int64_t,std::int64_t>> engineerDays, workshopDays;
+    const auto claimWork=[&](std::int64_t day,MaintenanceTeamId team,ShipId hull) {
+        requireState(engineerDays.emplace(day,team.value).second && workshopDays.emplace(day,hull.value).second,
+                     "Engineering team/workshop worked for two programs on one opening");
+    };
+    for(const auto& p:state.maintenancePrograms) for(const auto& r:p.receipts) {
+        const auto job=std::find_if(p.jobs.begin(),p.jobs.end(),[&](const auto& j){return j.number==r.jobNumber;});
+        requireState(job!=p.jobs.end(),"Engineering work references missing service job");
+        claimWork(r.day,job->teamId,r.workshopShipId);
+    }
+    for(const auto& p:state.siteDevelopmentPrograms) for(const auto& r:p.workReceipts) claimWork(r.day,r.teamId,r.workshopShipId);
 
     std::int64_t previousEventId = 0;
     std::int64_t previousEventDay = 0;

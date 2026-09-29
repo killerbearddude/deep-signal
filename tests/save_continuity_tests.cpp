@@ -78,6 +78,7 @@ void compare(const deep::IdCounters& a, const deep::IdCounters& b, const std::st
     EXACT(nextShipyardOrderId); EXACT(nextShipId); EXACT(nextFleetId);
     EXACT(nextShipComponentId);
     EXACT(nextEventId);
+    EXACT(nextSiteId); EXACT(nextSiteDevelopmentProgramId);
 }
 
 void compare(const deep::MineralSet& a, const deep::MineralSet& b, const std::string& path) {
@@ -145,6 +146,7 @@ void compare(const deep::Colony& a, const deep::Colony& b, const std::string& pa
     EXACT(id); EXACT(bodyId); EXACT(name);
     compare(a.stockpile, b.stockpile, path + ".stockpile");
     compare(a.processedStockpile, b.processedStockpile, path + ".processedStockpile");
+    compare(a.processedProductionTotals, b.processedProductionTotals, path + ".processedProductionTotals");
     FLOAT(mines); FLOAT(processorCapacity); FLOAT(shipyardCapacity);
     EXACT(processingPolicy);
     sequence(a.manualProcessingAllocations, b.manualProcessingAllocations,
@@ -246,6 +248,13 @@ void compare(const deep::ResourceSurveyCompletedEvent& a,
 
 void compare(const deep::AnalysisProgramAuditEvent& a,const deep::AnalysisProgramAuditEvent& b,const std::string& path) {
     EXACT(programId); EXACT(kind); EXACT(jobId); EXACT(detail);
+}
+void compare(const deep::SiteDevelopmentAuditEvent& a,const deep::SiteDevelopmentAuditEvent& b,const std::string& path) {
+    EXACT(programId); EXACT(kind); EXACT(siteId); EXACT(fleetId); EXACT(teamId); EXACT(workshopShipId);
+    EXACT(leaderId); EXACT(charterRevision); EXACT(packageRow); FLOAT(amount); EXACT(detail);
+}
+void compare(const deep::SiteOperatingAuditEvent& a,const deep::SiteOperatingAuditEvent& b,const std::string& path) {
+    EXACT(siteId); EXACT(kind); EXACT(operatingRevision); EXACT(cause); EXACT(episodeStartedDay); FLOAT(amount); EXACT(detail);
 }
 
 void compare(const deep::CommandRejectedEvent& a, const deep::CommandRejectedEvent& b,

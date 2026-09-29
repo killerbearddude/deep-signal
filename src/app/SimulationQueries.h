@@ -95,6 +95,8 @@ struct ColonySummary {
     std::vector<AppointmentModifierBreakdownRow> shipyardModifierBreakdown;
     double totalRawStockpile = 0.0;
     double totalProcessedStockpile = 0.0;
+    ProcessedMaterialSet processedProductionTotals;
+    MineralSet rawStockpiles;
 };
 
 // Display-ready shipyard order row with resolved names for common UI tables.
@@ -447,6 +449,8 @@ struct FreightProgramSummary {
     std::string sourceName;
     std::string destinationName;
     std::string materialName;
+    std::string operatingBaseName;
+    std::optional<double> sourceRawHandling,destinationRawHandling,destinationRawRoom;
     std::string requestedFleetName;
     std::string leasedFleetName;
     std::string taskFleetName;
@@ -522,7 +526,8 @@ struct MaintenanceTeamSummary {
     MaintenanceTeam team;
     std::string locationName;
     std::vector<std::string> qualifiedFamilyNames;
-    std::optional<MaintenanceProgramId> controllingProgramId;
+    std::optional<ProgramController> controller;
+    std::string controllerName;
 };
 struct MaintenanceClientSummary {
     SurveyProgramId surveyProgramId;
@@ -740,8 +745,38 @@ struct EventLogEntrySummary {
 // the current game and returns independent DTO values. Serialize reads with
 // commands/new/load; consecutive calls can describe different worlds or days if
 // the caller mutates the service between them. No internal locking is provided.
+// Owned site views contain public location, real stocks and recorded outcomes;
+// no physical deposit rows or reserve/accessibility estimates cross this boundary.
+struct StockLocationSummary { StockLocation location; BodyId bodyId; std::string name; };
+struct SiteSummary {
+    ResourceSite site;
+    SitePackageEvaluation installed;
+    std::string bodyName,condition;
+    double rawOccupancy=0,supportedDuty=0,rawHandling=0,dutySpent=0;
+    std::optional<SiteDevelopmentProgramId> constructionOwner;
+    std::vector<FreightProgramId> relatedFreight;
+};
+struct SiteDevelopmentSummary {
+    SiteDevelopmentProgram program;
+    std::string condition,siteName,supportName,builderName,teamName,teamLocation;
+    SitePackageEvaluation package;
+    double assemblyWork=0;
+    std::vector<FreightProgramId> relatedFreight;
+};
+struct SiteDevelopmentPreview {
+    bool structurallyValid=false;
+    std::string validationMessage,condition;
+    SitePackageEvaluation package;
+};
+
 class SimulationQueries {
 public:
+    [[nodiscard]] std::vector<StockLocationSummary> stockLocations() const;
+    [[nodiscard]] std::vector<SiteModuleDefinition> siteModuleCatalog() const;
+    [[nodiscard]] std::vector<SiteSummary> sites() const;
+    [[nodiscard]] std::vector<SiteDevelopmentSummary> siteDevelopments() const;
+    [[nodiscard]] SiteDevelopmentPreview previewSiteDevelopment(const CreateSiteDevelopmentCommand&) const;
+
     // Binds queries to an application service. Returned summaries are snapshots
     // copied from the service state at the time each query is called.
     explicit SimulationQueries(const SimulationService& service) noexcept;

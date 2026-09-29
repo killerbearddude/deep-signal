@@ -1,7 +1,7 @@
 #include "save/SciencePersistence.h"
 #include "save/SaveGameRepository.h"
 
-// Responsibility: map durable simulation records to active v16 rows.
+// Responsibility: map durable simulation records to active v17 rows.
 // Older development schemas are rejected without modifying their files.
 // Each operation owns its connection and reconstructed data; the input snapshot
 // is borrowed unchanged during save. Parameter binding separates values from SQL.
@@ -13,6 +13,7 @@
 #include "save/FreightPersistence.h"
 #include "save/MaintenancePersistence.h"
 #include "save/Schema.h"
+#include "save/SitePersistence.h"
 #include "sim/Minerals.h"
 #include "sim/GameStateValidation.h"
 
@@ -47,7 +48,7 @@ template <typename IdT>
     return id.value;
 }
 
-// Converts enum values to stable persisted ordinals. Schema migrations must
+// Converts enum values to stable persisted ordinals. Future schema revisions must
 // account for any future enum reordering.
 template <typename EnumT>
 [[nodiscard]] std::int64_t enumValue(const EnumT value) noexcept {
@@ -74,7 +75,7 @@ template <typename EnumT>
     } else if constexpr (std::is_same_v<EnumT, StrategicZone>) {
         return value >= 0 && value <= static_cast<std::int64_t>(StrategicZone::DeepSurveyFrontier);
     } else if constexpr (std::is_same_v<EnumT, ShipRole>) {
-        return value >= 0 && value <= static_cast<std::int64_t>(ShipRole::Escort);
+        return value >= 0 && value <= static_cast<std::int64_t>(ShipRole::Builder);
     } else if constexpr (std::is_same_v<EnumT, ShipComponentKind>) {
         return value >= 0 && value <= static_cast<std::int64_t>(ShipComponentKind::Workshop);
     } else if constexpr (std::is_same_v<EnumT, ProcessingPolicy>) {
@@ -216,9 +217,10 @@ void reuse(Statement& stmt) {
 }
 
 void clearExistingSave(Database& db) {
+    clearSiteState(db);
     clearScienceState(db);
     clearMaintenanceState(db);
-    // Delete child tables first because v16 retains explicit foreign keys
+    // Delete child tables first because v17 retains explicit foreign keys
     // without ON DELETE CASCADE. This all runs inside the write transaction.
     db.execute(R"sql(
         DELETE FROM event_log;
@@ -305,6 +307,8 @@ void saveIdCounters(Database& db, const IdCounters& ids) {
     insertCounter("next_analysis_program_id",ids.nextAnalysisProgramId);
     insertCounter("next_observation_batch_id",ids.nextObservationBatchId);
     insertCounter("next_measurement_profile_id",ids.nextMeasurementProfileId);
+    insertCounter("next_site_id",ids.nextSiteId);
+    insertCounter("next_site_development_program_id",ids.nextSiteDevelopmentProgramId);
 }
 
 void saveStarSystems(Database& db, const GameState& state) {
@@ -893,6 +897,8 @@ void loadIdCounters(Database& db, IdCounters& ids) {
     ids.nextAnalysisProgramId=loadCounter(db,"next_analysis_program_id");
     ids.nextObservationBatchId=loadCounter(db,"next_observation_batch_id");
     ids.nextMeasurementProfileId=loadCounter(db,"next_measurement_profile_id");
+    ids.nextSiteId=loadCounter(db,"next_site_id");
+    ids.nextSiteDevelopmentProgramId=loadCounter(db,"next_site_development_program_id");
 }
 
 void loadStarSystems(Database& db, GameState& state) {
@@ -1060,7 +1066,7 @@ void loadColonies(Database& db, GameState& state) {
     for (const Colony& colony : state.colonies) {
         if (mineralRows[colony.id.value] != mineralCount() ||
             materialRows[colony.id.value] != processedMaterialCount()) {
-            throw std::runtime_error{"v16 colony resource rows must be complete"};
+            throw std::runtime_error{"v17 colony resource rows must be complete"};
         }
     }
 
@@ -1136,7 +1142,7 @@ void loadShipComponentsAndClasses(Database& db, GameState& state) {
     }
     for (const ShipComponentDefinition& row : state.shipComponents) {
         if (costRows[row.id.value] != processedMaterialCount()) {
-            throw std::runtime_error{"v16 component cost rows must be complete"};
+            throw std::runtime_error{"v17 component cost rows must be complete"};
         }
     }
     Statement classes{db, R"sql(
@@ -1493,6 +1499,7 @@ void loadEvents(Database& db, GameState& state) {
     loadFreightState(db, state);
     loadMaintenanceState(db, state);
     loadScienceState(db,state);
+    loadSiteState(db,state);
     loadAppointments(db, state);
     loadEvents(db, state);
 
@@ -1520,12 +1527,12 @@ void SaveGameRepository::save(const std::filesystem::path& path, const GameState
     if (hasUserSchema(db)) {
         const std::int64_t version = readSchemaVersion(db);
         if (version != kSchemaVersion) throw std::runtime_error{"Unsupported save schema version"};
-        requireV16Structure(db);
+        requireV17Structure(db);
         (void)readSnapshot(db);
     } else {
         // DDL and rows share this transaction. A failed new-path save may
         // leave an empty file, but not a partially initialized schema.
-        createSchemaV16(db);
+        createSchemaV17(db);
     }
     clearExistingSave(db);
     saveSchemaVersion(db);
@@ -1554,6 +1561,7 @@ void SaveGameRepository::save(const std::filesystem::path& path, const GameState
     saveFreightState(db, state);
     saveMaintenanceState(db, state);
     saveScienceState(db,state);
+    saveSiteState(db,state);
     saveEvents(db, state);
     // Re-read on this connection before commit. This catches incomplete rows,
     // ordinal gaps, and foreign-key problems while rollback can still restore
@@ -1575,7 +1583,7 @@ GameState SaveGameRepository::load(const std::filesystem::path& path) {
     Transaction transaction{db, Transaction::Mode::Read};
     const std::int64_t version = readSchemaVersion(db);
     if (version != kSchemaVersion) throw std::runtime_error{"Unsupported save schema version"};
-    requireV16Structure(db, true);
+    requireV17Structure(db, true);
     GameState state = readSnapshot(db);
 
     transaction.commit();

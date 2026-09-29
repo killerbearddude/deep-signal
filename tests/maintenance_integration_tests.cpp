@@ -46,9 +46,9 @@ Simulation supplied() {
     for (int i = 0; i < 2; ++i) {
         FreightProgramCharter c;
         c.name = i == 0 ? "Electronics" : "Composites";
-        c.sourceColonyId = sim.state().colonies.back().id;
-        c.destinationColonyId = home;
-        c.material = i == 0 ? ProcessedMaterial::Electronics : ProcessedMaterial::IndustrialComposites;
+        c.source = sim.state().colonies.back().id; c.operatingBaseColonyId = sim.state().colonies.back().id;
+        c.destination = home;
+        c.commodity = i == 0 ? ProcessedMaterial::Electronics : ProcessedMaterial::IndustrialComposites;
         c.totalQuantity = 20;
         c.requestedFleetId = sim.state().fleets.at(static_cast<std::size_t>(i) + 2).id;
         c.requestedLeaderId = sim.state().people.front().id;
@@ -77,7 +77,7 @@ void supply_and_bulk_daily_equivalence() {
                            state.colonies.at(state.colonies.size() - 2).processedStockpile.get(material) +
                            p.consumed.get(material);
             for (const auto& ship : state.ships)
-                if (ship.cargo && ship.cargo->material == material)
+                if (ship.cargo && ship.cargo->commodity == Commodity{material})
                     total += ship.cargo->quantity;
             near(
                 total, 20,
@@ -149,8 +149,8 @@ void typed_arbitration_and_waiting_intent() {
     require(sim.execute(CreateSurveyProgramCommand{sc}).ok, "survey request for busy tender remains intent");
     FreightProgramCharter fc;
     fc.name = "Busy tender freight";
-    fc.sourceColonyId = c.serviceColonyId;
-    fc.destinationColonyId = state.colonies.front().id;
+    fc.source = c.serviceColonyId; fc.operatingBaseColonyId = c.serviceColonyId;
+    fc.destination = state.colonies.front().id;
     fc.requestedFleetId = c.requestedTenderId;
     fc.requestedLeaderId = c.requestedLeaderId;
     fc.totalQuantity = 1;
@@ -356,9 +356,9 @@ void all_three_kinds_share_one_opening_stock() {
     require(sim.execute(CreateSurveyProgramCommand{other}).ok, "later survey fuel consumer accepted");
     FreightProgramCharter f;
     f.name = "Later freight fuel consumer";
-    f.sourceColonyId = home;
-    f.destinationColonyId = depot.id;
-    f.material = ProcessedMaterial::Electronics;
+    f.source = home; f.operatingBaseColonyId = home;
+    f.destination = depot.id;
+    f.commodity = ProcessedMaterial::Electronics;
     f.totalQuantity = 1;
     f.requestedFleetId = freighter;
     f.requestedLeaderId = s.people.front().id;

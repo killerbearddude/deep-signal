@@ -737,7 +737,7 @@ void test_ship_class_summaries_expose_build_targets() {
 
     const auto shipClasses = queries.shipClasses();
 
-    require(shipClasses.size() == 2, "home scenario exposes cutter and reference freighter class summaries");
+    require(shipClasses.size() == 3, "home scenario exposes cutter, freighter and builder class summaries");
     require(shipClasses.front().name == "Survey Cutter", "ship class summary includes Survey Cutter");
     require(shipClasses.front().roleName == "Survey", "ship class summary exposes display role name");
     require(shipClasses.front().buildPoints == 500.0, "ship class summary exposes build points");
@@ -1107,7 +1107,7 @@ void test_ship_design_queries_and_survey_preview_agree_with_commands() {
     deep::SimulationQueries queries{service};
     const auto catalog = queries.shipComponents();
     const auto classes = queries.shipClasses();
-    require(catalog.size() == 9 && classes.size() == 2,
+    require(catalog.size() == 10 && classes.size() == 3,
             "UI queries expose the authoritative starting catalog and revision");
     require(catalog.front().internalVolumeCapacity == 1000.0 &&
             catalog.front().buildCost.get(deep::ProcessedMaterial::StructuralAlloys) == 200.0,
@@ -1118,7 +1118,7 @@ void test_ship_design_queries_and_survey_preview_agree_with_commands() {
     const auto preview = queries.previewShipDesign(draft);
     requireNear(preview.design.propellantCapacity, 2000.0, "draft preview derives extra tankage");
     requireNear(preview.design.buildPoints, 580.0, "draft preview derives extra BP");
-    require(service.state().shipClasses.size() == 2 &&
+    require(service.state().shipClasses.size() == 3 &&
             service.state().shipClasses.front().components == original,
             "preview does not mutate or reserve authoritative state");
     auto warningDraft = original;
@@ -1143,7 +1143,7 @@ void test_ship_design_queries_and_survey_preview_agree_with_commands() {
         .basedOnClassId = classes.front().id, .components = draft
     }).ok, "app service commits complete draft through command boundary");
     const auto updated = queries.shipClasses();
-    require(updated.size() == 3 && updated.back().id == service.state().shipClasses.back().id &&
+    require(updated.size() == 4 && updated.back().id == service.state().shipClasses.back().id &&
             updated.back().revision == 2 && updated.back().components == draft,
             "saved revision appears in typed UI class list");
 

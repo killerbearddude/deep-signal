@@ -96,7 +96,7 @@ bool samePayload(const deep::SimEventPayload& lhs, const deep::SimEventPayload& 
                    almostEqual(left.fuelAmount, right.fuelAmount) && left.detail == right.detail;
         } else if constexpr (std::is_same_v<Left, deep::FreightProgramAuditEvent>) {
             return left.programId == right.programId && left.kind == right.kind &&
-                   left.fleetId == right.fleetId && left.colonyId == right.colonyId &&
+                   left.fleetId == right.fleetId && left.location == right.location && left.commodity == right.commodity &&
                    left.leaderId == right.leaderId && left.charterRevision == right.charterRevision &&
                    left.shipmentNumber == right.shipmentNumber &&
                    almostEqual(left.amount, right.amount) && left.detail == right.detail;
@@ -110,6 +110,15 @@ bool samePayload(const deep::SimEventPayload& lhs, const deep::SimEventPayload& 
                    left.jobNumber == right.jobNumber && left.detail == right.detail;
         } else if constexpr (std::is_same_v<Left, deep::AnalysisProgramAuditEvent>) {
             return left.programId==right.programId && left.kind==right.kind && left.jobId==right.jobId && left.detail==right.detail;
+        } else if constexpr (std::is_same_v<Left, deep::SiteDevelopmentAuditEvent>) {
+            return left.programId==right.programId && left.kind==right.kind && left.siteId==right.siteId &&
+                left.fleetId==right.fleetId && left.teamId==right.teamId && left.workshopShipId==right.workshopShipId &&
+                left.leaderId==right.leaderId && left.charterRevision==right.charterRevision && left.packageRow==right.packageRow &&
+                almostEqual(left.amount,right.amount) && left.detail==right.detail;
+        } else if constexpr (std::is_same_v<Left, deep::SiteOperatingAuditEvent>) {
+            return left.siteId==right.siteId && left.kind==right.kind && left.operatingRevision==right.operatingRevision &&
+                left.cause==right.cause && left.episodeStartedDay==right.episodeStartedDay &&
+                almostEqual(left.amount,right.amount) && left.detail==right.detail;
         } else if constexpr (std::is_same_v<Left, deep::CommandRejectedEvent>) {
             return left.reason == right.reason;
         }
@@ -254,7 +263,7 @@ void test_freight_program_audit_round_trips_and_rejects_malformed() {
     // survey #1. All current fields and absent participants survive the boundary.
     requireRoundTrip(deep::FreightProgramAuditEvent{
         .programId = deep::FreightProgramId{1}, .kind = deep::FreightProgramAuditKind::Transfer,
-        .fleetId = deep::FleetId{4}, .colonyId = deep::ColonyId{7}, .leaderId = deep::PersonId{3},
+        .fleetId = deep::FleetId{4}, .location = deep::ColonyId{7}, .leaderId = deep::PersonId{3},
         .charterRevision = 2, .shipmentNumber = 3, .amount = 25.5,
         .detail = "Unload \"cargo\"\\receipt\nnext"
     }, "freight audit fields round-trip with their typed program identity");
@@ -262,7 +271,7 @@ void test_freight_program_audit_round_trips_and_rejects_malformed() {
         .programId = deep::FreightProgramId{2}, .kind = deep::FreightProgramAuditKind::Authorized,
         .detail = "Waiting for named assets"
     }, "freight audit optional identities round-trip");
-    const std::string valid = R"({"program_id":1,"kind":0,"fleet_id":0,"colony_id":0,"leader_id":0,"charter_revision":1,"shipment_number":0,"amount":0,"detail":"x"})";
+    const std::string valid = R"({"program_id":1,"kind":0,"fleet_id":0,"location_kind":-1,"location_id":0,"commodity_kind":-1,"commodity":0,"leader_id":0,"charter_revision":1,"shipment_number":0,"amount":0,"detail":"x"})";
     for (const auto& [before, after] : {
             std::pair{std::string{"\"kind\":0"}, std::string{"\"kind\":99"}},
             std::pair{std::string{"\"fleet_id\":0"}, std::string{"\"fleet_id\":-1"}},
@@ -372,8 +381,8 @@ void test_integer_overflow_is_rejected() {
 }
 
 void test_event_type_names_are_stable_schema_v1_strings() {
-    // These strings are stored in event_log.event_type. Renaming one requires a
-    // save migration, so this test catches accidental churn.
+    // These strings are stored in event_log.event_type. Renaming changes the
+    // active save contract, so this test catches accidental churn.
     require(deep::save::eventTypeName(deep::MineralExtractedEvent{}) == "mineral_extracted",
             "mineral_extracted type name is stable");
     require(deep::save::eventTypeName(deep::ShipyardOrderCreatedEvent{}) == "shipyard_order_created",
@@ -395,6 +404,20 @@ void test_event_type_names_are_stable_schema_v1_strings() {
 }
 
 void runAllTests() {
+    // P4B stores namespace tags explicitly: site#7 is never colony#7 and raw
+    // Ice is never a processed resource sharing its numeric ordinal.
+    requireRoundTrip(deep::FreightProgramAuditEvent{
+        .programId=deep::FreightProgramId{1},.kind=deep::FreightProgramAuditKind::Transfer,
+        .fleetId=deep::FleetId{2},.location=deep::SiteId{7},.leaderId=deep::PersonId{3},
+        .charterRevision=2,.shipmentNumber=4,.amount=12.5,.detail="Raw stock transfer",
+        .commodity=deep::Mineral::WaterIce},"raw site freight audit keeps both namespace tags");
+    requireRoundTrip(deep::SiteDevelopmentAuditEvent{deep::SiteDevelopmentProgramId{1},
+        deep::SiteDevelopmentAuditKind::AssemblyWork,deep::SiteId{7},deep::FleetId{2},
+        deep::MaintenanceTeamId{3},deep::ShipId{4},deep::PersonId{5},2,3,.25,"Actual partial work"},
+        "site construction audit preserves all participants and row identity");
+    requireRoundTrip(deep::SiteOperatingAuditEvent{deep::SiteId{7},deep::SiteOperatingAuditKind::IssueRaised,
+        3,deep::SiteOperatingIssueCause::ZeroRecovery,10,0,"No Water Ice recovered under these operating conditions"},
+        "site operating issue preserves cause and dated episode without geological truth");
     // P3C operating work and service history use distinct typed envelopes.
     requireRoundTrip(deep::EquipmentDutyUsedEvent{deep::FleetId{1},deep::ShipId{2},deep::ShipComponentId{4},
         deep::SurveyProgramId{1},1.0,8.0,9.0}, "actual timed duty event round-trips");

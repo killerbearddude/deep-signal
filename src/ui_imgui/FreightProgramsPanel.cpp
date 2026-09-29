@@ -123,10 +123,12 @@ void FreightProgramsPanel::render(const SimulationQueries& queries, SimulationSe
 void FreightProgramsPanel::renderEditor(const SimulationQueries& queries, SimulationService& service) {
     if (!ImGui::CollapsingHeader("Authorize or amend delivery", ImGuiTreeNodeFlags_DefaultOpen)) return;
     const auto colonies = queries.colonies();
+    const auto locations = queries.stockLocations();
     const auto fleets = queries.fleets();
     const auto people = queries.personnel();
-    if (!draft_.sourceColonyId && !colonies.empty()) draft_.sourceColonyId = colonies.front().id;
-    if (!draft_.destinationColonyId && colonies.size() > 1) draft_.destinationColonyId = colonies[1].id;
+    if (!validStockLocation(draft_.source) && !colonies.empty()) draft_.source = colonies.front().id;
+    if (!draft_.operatingBaseColonyId && !colonies.empty()) draft_.operatingBaseColonyId=colonies.front().id;
+    if (!validStockLocation(draft_.destination) && colonies.size() > 1) draft_.destination = colonies[1].id;
     if (editingProgramId_) {
         ImGui::Text("Amending freight #%lld", static_cast<long long>(editingProgramId_->value));
         ImGui::SameLine();
@@ -150,17 +152,35 @@ void FreightProgramsPanel::renderEditor(const SimulationQueries& queries, Simula
             ImGui::EndCombo();
         }
     };
-    colonySelector("Source colony", draft_.sourceColonyId);
-    colonySelector("Destination colony", draft_.destinationColonyId);
-    if (ImGui::BeginCombo("Material", toString(draft_.material).data())) {
-        for (std::size_t index = 0; index < processedMaterialCount(); ++index) {
-            const auto material = static_cast<ProcessedMaterial>(index);
-            if (ImGui::Selectable(toString(material).data(), draft_.material == material)) draft_.material = material;
+    const auto locationSelector=[&](const char* label,StockLocation& selected) {
+        std::string current="Choose location";
+        for(const auto& row:locations)if(row.location==selected)current=row.name;
+        if(ImGui::BeginCombo(label,current.c_str())) {
+            for(const auto& row:locations) {
+                const auto labelText=row.name+"##"+std::to_string(static_cast<int>(stockLocationKind(row.location)))+":"+std::to_string(stockLocationId(row.location));
+                if(ImGui::Selectable(labelText.c_str(),row.location==selected))selected=row.location;
+            }
+            ImGui::EndCombo();
+        }
+    };
+    locationSelector("Cargo source",draft_.source);
+    locationSelector("Cargo destination",draft_.destination);
+    colonySelector("Operating base (must be an endpoint)",draft_.operatingBaseColonyId);
+    if(ImGui::BeginCombo("Commodity",commodityName(draft_.commodity).data())) {
+        for(std::size_t i=0;i<processedMaterialCount();++i) {
+            Commodity c{static_cast<ProcessedMaterial>(i)};
+            const auto name="Processed: "+std::string(commodityName(c));
+            if(ImGui::Selectable(name.c_str(),draft_.commodity==c))draft_.commodity=c;
+        }
+        for(std::size_t i=0;i<mineralCount();++i) {
+            Commodity c{static_cast<Mineral>(i)};
+            const auto name="Raw: "+std::string(commodityName(c));
+            if(ImGui::Selectable(name.c_str(),draft_.commodity==c))draft_.commodity=c;
         }
         ImGui::EndCombo();
     }
     ImGui::EndDisabled();
-    ImGui::TextWrapped("Source, destination and material are fixed for this contract. A different route or commodity requires a new program.");
+    ImGui::TextWrapped("Source, destination, operating base and commodity are fixed for this contract. A different route or commodity requires a new program.");
     ImGui::InputDouble("Cumulative delivery target (normalized units)", &draft_.totalQuantity, 1.0, 100.0, "%.3f");
     std::string fleetLabel = "Unassigned";
     for (const FleetSummary& row : fleets) if (draft_.requestedFleetId == row.id) fleetLabel = namedOption(row.name, row.id);
@@ -184,7 +204,7 @@ void FreightProgramsPanel::renderEditor(const SimulationQueries& queries, Simula
     ImGui::TextWrapped("Freight uses one explicit delivery procedure; the responsible leader adds no new freight bonus. Existing fleet-commander fuel effects still apply.");
     if (ImGui::TreeNode("Advanced stock and operating-fuel policy")) {
         ImGui::InputDouble("Source cargo stock floor", &draft_.policy.sourceCargoFloor, 1.0, 100.0, "%.3f");
-        ImGui::InputDouble("Source operating-Propellant floor", &draft_.policy.sourcePropellantFloor, 1.0, 100.0, "%.3f");
+        ImGui::InputDouble("Base operating-Propellant floor", &draft_.policy.basePropellantFloor, 1.0, 100.0, "%.3f");
         bool limited = draft_.policy.maxAdditionalPropellant.has_value();
         if (ImGui::Checkbox("Limit lifetime additional operating fuel", &limited)) {
             draft_.policy.maxAdditionalPropellant = limited ? std::optional<double>{0.0} : std::nullopt;
@@ -236,7 +256,7 @@ void FreightProgramsPanel::renderDetail(const FreightProgramSummary& program, Si
     ImGui::Text("%s -> %s | %s", program.sourceName.c_str(), program.destinationName.c_str(), program.materialName.c_str());
     ImGui::TextWrapped("%s", program.condition.c_str());
     ImGui::Text("Requested fleet: %s | Leased: %s | Committed task: %s", program.requestedFleetName.c_str(), program.leasedFleetName.c_str(), program.taskFleetName.c_str());
-    if (program.pendingFleetChange) ImGui::TextWrapped("Requested fleet change is pending the empty source planning boundary; current cargo and return retain their original fleet.");
+    if (program.pendingFleetChange) ImGui::TextWrapped("Requested fleet change is pending the empty operating-base planning boundary; current cargo and return retain their original fleet.");
     ImGui::Text("Responsible leader: %s", program.leaderName.c_str());
     ImGui::Text("Phase: %s | Location: %s", program.taskName.c_str(), program.locationName.c_str());
     if (program.currentLegArrivalDay) ImGui::Text("Current leg to %s arrives day %lld", program.routeDestinationName.c_str(), static_cast<long long>(*program.currentLegArrivalDay));
@@ -244,12 +264,17 @@ void FreightProgramsPanel::renderDetail(const FreightProgramSummary& program, Si
     ImGui::Text("Delivered %.3f / target %.3f | Unpicked %.3f | Existing commitment %.3f", program.cargoDelivered, program.charter.totalQuantity, program.unpickedQuantity, program.committedQuantity);
     if (program.commitmentAboveTarget > 0.0) ImGui::TextWrapped("%.3f units are already committed above the revised target; prior shipments remain honored.", program.commitmentAboveTarget);
     ImGui::Text("Cargo loaded %.3f | Delivered %.3f | Returned to source %.3f | Aboard %.3f", program.cargoLoaded, program.cargoDelivered, program.cargoReturned, program.cargoAboard);
+    ImGui::Text("Fixed operating base: %s",program.operatingBaseName.c_str());
+    if(program.sourceRawHandling)ImGui::Text("Source site conditional raw handling: %.3f/day",*program.sourceRawHandling);
+    if(program.destinationRawHandling)ImGui::Text("Destination site conditional raw handling: %.3f/day",*program.destinationRawHandling);
+    if(program.destinationRawRoom)ImGui::Text("Destination shared raw room: %.3f",*program.destinationRawRoom);
+    if(program.sourceRawHandling||program.destinationRawHandling)ImGui::TextWrapped("Handling is conditional on next-opening support and shared with other transfers and extraction; no reservation or guaranteed ETA.");
     ImGui::Text("Operating fuel loaded %.3f | Burned %.3f", program.fuelLoaded, program.fuelBurned);
     if (program.fuelAllowanceRemaining) ImGui::Text("Remaining lifetime operating-fuel allowance: %.3f", *program.fuelAllowanceRemaining);
-    else ImGui::TextUnformatted("Operating-fuel allowance: unlimited; actual source supply still required");
-    ImGui::Text("Current source cargo stock %.3f | Source Propellant %.3f | Destination stock %.3f", program.sourceCargoStock, program.sourcePropellantStock, program.destinationStock);
+    else ImGui::TextUnformatted("Operating-fuel allowance: unlimited; actual base supply still required");
+    ImGui::Text("Current source cargo stock %.3f | Base Propellant %.3f | Destination stock %.3f", program.sourceCargoStock, program.sourcePropellantStock, program.destinationStock);
     ImGui::Text("Withdrawal floors: cargo %.3f / operating Propellant %.3f | Return contingency %.3f",
-                program.charter.policy.sourceCargoFloor, program.charter.policy.sourcePropellantFloor,
+                program.charter.policy.sourceCargoFloor, program.charter.policy.basePropellantFloor,
                 program.charter.policy.returnContingencyFraction);
     ImGui::TextWrapped("Cumulative delivered records actual unloads. Destination stock may later be consumed. Arrival alone credits no stock; cargo cannot fuel engines implicitly.");
     if (program.lifecycle == FreightProgramLifecycle::Suspended && program.cargoAboard > 0.0) ImGui::TextWrapped("Suspended; fleet retained while cargo is aboard. Resume or cancel future pickups to settle the load.");
@@ -277,7 +302,7 @@ void FreightProgramsPanel::renderDetail(const FreightProgramSummary& program, Si
             // A later amendment must not rewrite the limits under which this
             // historical reporting boundary was reached.
             ImGui::Text("Policy at report: cargo floor %.3f / operating Propellant floor %.3f / return contingency %.3f",
-                        report.policy.sourceCargoFloor, report.policy.sourcePropellantFloor,
+                        report.policy.sourceCargoFloor, report.policy.basePropellantFloor,
                         report.policy.returnContingencyFraction);
             if (report.policy.maxAdditionalPropellant) ImGui::Text("Lifetime operating-fuel allowance at report: %.3f", *report.policy.maxAdditionalPropellant);
             else ImGui::TextUnformatted("Lifetime operating-fuel allowance at report: unlimited");

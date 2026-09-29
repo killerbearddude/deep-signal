@@ -1,5 +1,7 @@
 #include "sim/Commands.h"
 #include "sim/FreightProgramRules.h"
+#include "sim/FreightProgramExecution.h"
+#include "sim/ProgramControl.h"
 #include "sim/GameStateValidation.h"
 #include "sim/ScenarioFactory.h"
 #include "sim/Simulation.h"
@@ -25,8 +27,9 @@ void near(double a, double b, const char* message) {
 deep::FreightProgramCharter charter(const deep::GameState& s, double quantity = 500) {
     deep::FreightProgramCharter c;
     c.name = "Freight acceptance";
-    c.sourceColonyId = s.colonies[s.colonies.size() - 2].id;
-    c.destinationColonyId = s.colonies.back().id;
+    c.source = s.colonies[s.colonies.size() - 2].id;
+    c.operatingBaseColonyId = std::get<deep::ColonyId>(c.source);
+    c.destination = s.colonies.back().id;
     c.totalQuantity = quantity;
     c.requestedFleetId = s.fleets.back().id;
     c.requestedLeaderId = s.people.front().id;
@@ -49,7 +52,7 @@ double destStock(const deep::Simulation& sim,
 }
 void day(deep::Simulation& sim) {
     const auto r = sim.advanceDaysDetailed(1);
-    require(r.advancedDays == 1 && !r.interrupted, "expected uninterrupted physical day");
+    if(r.advancedDays!=1 || r.interrupted) throw std::runtime_error("Expected uninterrupted physical day "+std::to_string(sim.state().date.day)+": "+(sim.state().freightPrograms.empty()?std::string{}:sim.state().freightPrograms.back().issue.message));
     deep::validateGameState(sim.state());
 }
 template <class Predicate> void until(deep::Simulation& sim, Predicate pred) {
@@ -250,13 +253,15 @@ void cargo_propellant_is_not_engine_fuel_and_issues() {
     // and an actionable completion-return issue with stable acknowledgment.
     auto state = deep::createDelegatedFreightScenario();
     auto c = charter(state, 100);
-    c.material = deep::ProcessedMaterial::Propellant;
-    const double initial = state.colonies[state.colonies.size() - 2].processedStockpile.get(c.material);
+    c.commodity = deep::ProcessedMaterial::Propellant;
+    const double initial = state.colonies[state.colonies.size() - 2].processedStockpile.get(
+        std::get<deep::ProcessedMaterial>(c.commodity));
     deep::Simulation sim{state};
     authorize(sim, c);
     until(sim,
           [](const auto& s) { return s.freightPrograms.back().task == deep::FreightProgramTask::Return; });
-    near(sourceStock(sim, c.material) + destStock(sim, c.material) + sim.state().ships.back().fuel +
+    near(sourceStock(sim, std::get<deep::ProcessedMaterial>(c.commodity)) +
+             destStock(sim, std::get<deep::ProcessedMaterial>(c.commodity)) + sim.state().ships.back().fuel +
              p(sim).fuelBurned,
          initial, "payload Propellant and tanks conserve separate actual accounts");
     auto blocked = sim.state();
@@ -291,7 +296,8 @@ void cargo_propellant_is_not_engine_fuel_and_issues() {
           [](const auto& s) { return deep::freightCargoAboard(s, s.freightPrograms.back().id) == 100; });
     auto empty = loading.state();
     empty.ships.back().fuel = 0;
-    empty.colonies[empty.colonies.size() - 2].processedStockpile.set(c.material, 0);
+    empty.colonies[empty.colonies.size() - 2].processedStockpile.set(
+        std::get<deep::ProcessedMaterial>(c.commodity), 0);
     deep::Simulation noConversion{empty};
     noConversion.advanceDays(1);
     near(noConversion.state().ships.back().fuel, 0, "cargo Propellant cannot enter engines implicitly");
@@ -331,7 +337,7 @@ void mixed_hulls_and_midload_competition() {
     until(partial,
           [](const auto& s) { return s.freightPrograms.back().task == deep::FreightProgramTask::Unloading; });
     auto impaired = partial.state();
-    auto damaged = impaired.shipClasses.back();
+    auto damaged = *std::find_if(impaired.shipClasses.begin(),impaired.shipClasses.end(),[&](const auto& cls){return cls.id==impaired.ships.back().shipClassId;});
     damaged.id = {impaired.ids.nextShipClassId++};
     damaged.name = "Unpowered detached test fixture";
     damaged.basedOnClassId.reset();
@@ -424,6 +430,106 @@ void fractional_and_unrepresentable_transfers() {
     require(!deep::freightFuelDebitRepresentable(residual, residual.fleets.back(), 1.0),
             "common tiny-residual normalization cannot silently lose program engine fuel");
 }
+// Focused executor fixture uses detached supported hardware to isolate raw
+// custody and phase pools; the campaign proof earns the installation separately.
+void raw_same_body_collection_custody() {
+    auto state = deep::createDelegatedFreightScenario();
+    auto c = charter(state, 100);
+    deep::ResourceSite site;
+    site.id = {1};
+    site.name = "Stock staging";
+    site.bodyId = state.fleets.back().currentBodyId;
+    site.rawStock.set(deep::Mineral::WaterIce, 100);
+    state.resourceSites.push_back(site);
+    c.source = site.id;
+    c.destination = c.operatingBaseColonyId;
+    c.commodity = deep::Mineral::WaterIce;
+    deep::FreightProgram program;
+    program.id = {1};
+    program.charter = c;
+    // A prepared commitment avoids giving this detached site fictional installed
+    // capabilities merely to exercise the transfer executor's funded pool.
+    program.leasedFleetId = state.fleets.back().id;
+    program.taskFleetId = program.leasedFleetId;
+    program.task = deep::FreightProgramTask::Loading;
+    program.nextShipmentNumber = 2;
+    program.shipment = deep::FreightShipment{1,
+                                             1,
+                                             0,
+                                             *program.leasedFleetId,
+                                             *c.requestedLeaderId,
+                                             c.source,
+                                             c.destination,
+                                             c.operatingBaseColonyId,
+                                             c.commodity,
+                                             {{state.ships.back().id, 100}}};
+    state.freightPrograms.push_back(program);
+    deep::FreightProgramExecutionHooks hooks;
+    hooks.emit = [](deep::EventSeverity, deep::SimEventPayload) {};
+    hooks.startProgramMove = [](deep::FreightProgramId, deep::FleetId, deep::BodyId, double&) {
+        throw std::runtime_error("same-body route invented a transit");
+        return false;
+    };
+    auto& actual = state.freightPrograms.back();
+    auto opening = [&](double handling) {
+        ++state.date.day;
+        deep::OpeningProgramContext context{state};
+        for (auto& budget : context.sites)
+            budget.remainingHandling = handling;
+        deep::runFreightProgramOpeningDay(state, actual, context, hooks);
+    };
+    opening(25);
+    near(deep::freightCargoAboard(state, actual.id), 25, "shared site rate bounds physical per-hull pickup");
+    near(state.resourceSites.back().rawStock.get(deep::Mineral::WaterIce), 75,
+         "raw load debits only selected site inventory");
+    // Cancelling before dispatch returns to the exact source identity and must
+    // retain custody when its shared receiving room or handling is unavailable.
+    auto cancelled = state;
+    auto& cancellation = cancelled.freightPrograms.back();
+    cancellation.closure = deep::FreightProgramClosure::Cancelled;
+    cancellation.lifecycle = deep::FreightProgramLifecycle::Closing;
+    deep::OpeningProgramContext blocked{cancelled};
+    for (auto& budget : blocked.sites) {
+        budget.remainingHandling = 50;
+        budget.receivingRoom = 0;
+    }
+    deep::runFreightProgramOpeningDay(cancelled, cancellation, blocked, hooks);
+    near(deep::freightCargoAboard(cancelled, cancellation.id), 25,
+         "full raw receiving room retains cancelled cargo aboard");
+    require(cancellation.lifecycle != deep::FreightProgramLifecycle::Closed,
+            "custody prevents premature cancellation close");
+    deep::OpeningProgramContext room{cancelled};
+    for (auto& budget : room.sites) {
+        budget.remainingHandling = 50;
+        budget.receivingRoom = 25;
+    }
+    deep::runFreightProgramOpeningDay(cancelled, cancellation, room, hooks);
+    near(cancellation.cargoReturned, 25, "cancellation performs actual raw source return");
+    near(cancelled.resourceSites.back().rawStock.get(deep::Mineral::WaterIce), 100,
+         "cancelled partial collection conserves source raw cargo");
+    require(cancellation.receipts.back().location == c.source,
+            "same-body cancellation receipt identifies source site, not base colony");
+    state.resourceSites.back().rawStock.set(deep::Mineral::WaterIce, 0);
+    opening(50);
+    require(actual.task == deep::FreightProgramTask::Loading &&
+                deep::freightShipmentPlannedQuantity(*actual.shipment) == 100,
+            "collection retains committed manifest when another consumer depletes source");
+    near(deep::freightCargoAboard(state, actual.id), 25, "source shortage retains partial custody");
+    state.resourceSites.back().rawStock.set(deep::Mineral::WaterIce, 75);
+    opening(50);
+    opening(50);
+    opening(50);
+    require(actual.task == deep::FreightProgramTask::Unloading,
+            "same-body loaded dispatch is a distinct action");
+    const double before = state.colonies[state.colonies.size() - 2].stockpile.get(deep::Mineral::WaterIce);
+    opening(0);
+    opening(0);
+    near(actual.cargoDelivered, 100, "raw cargo delivered to destination raw store");
+    near(state.colonies[state.colonies.size() - 2].stockpile.get(deep::Mineral::WaterIce) - before, 100,
+         "raw delivery updates existing industry inventory");
+    require(actual.lifecycle == deep::FreightProgramLifecycle::Closed && !actual.shipment,
+            "collection completes at base without final empty source trip");
+}
 } // namespace
 int main() {
     try {
@@ -434,6 +540,7 @@ int main() {
         cargo_propellant_is_not_engine_fuel_and_issues();
         mixed_hulls_and_midload_competition();
         fractional_and_unrepresentable_transfers();
+        raw_same_body_collection_custody();
         std::cout << "freight execution tests passed\n";
         return 0;
     } catch (const std::exception& e) {

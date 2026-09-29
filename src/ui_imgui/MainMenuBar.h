@@ -38,6 +38,7 @@ struct PanelVisibility {
     bool surveyPrograms = false;
     bool freightPrograms = false;
     bool maintenancePrograms = false;
+    bool siteDevelopment = false;
     bool science = false;
     bool shipyard = false;
     bool economyForecast = false;
