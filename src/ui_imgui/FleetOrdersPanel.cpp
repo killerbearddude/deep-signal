@@ -12,6 +12,8 @@
 #include <cstddef>
 #include <optional>
 #include <string>
+#include <type_traits>
+#include <variant>
 #include <vector>
 
 namespace deep::ui_imgui {
@@ -37,9 +39,9 @@ void drawFleetSummary(const FleetSummary& fleet) {
     ImGui::Text("Ships: %zu", fleet.shipCount);
     ImGui::Text("Fuel: %.1f / %.1f (%.1f%%)", fleet.currentFuel, fleet.fuelCapacity, fleet.fuelPercent);
     ImGui::Text("Current range: %.1f map unit(s)", fleet.currentRange);
-    if (fleet.controllingProgramId) {
-        ImGui::TextWrapped("Controlled by survey program %s (#%lld). Use the program controls to suspend or cancel its work.",
-            fleet.controllingProgramName.c_str(), static_cast<long long>(fleet.controllingProgramId->value));
+    if (fleet.controllingProgram) {
+        ImGui::TextWrapped("Controlled by %s. Use its program panel to resume or amend its work; these controls preserve physical commitments.",
+            fleet.controllingProgramLabel.c_str());
     }
 }
 
@@ -175,15 +177,28 @@ void FleetOrdersPanel::render(const SimulationQueries& queries,
         drawFleetSummary(*fleet);
         drawCurrentOrder(*fleet);
         drawTimelinePreview(*fleet);
-        if (fleet->controllingProgramId) {
+        if (fleet->controllingProgram) {
             if (ImGui::Button("Suspend controlling program")) {
-                const CommandResult result = service.execute(SuspendSurveyProgramCommand{*fleet->controllingProgramId});
+                const CommandResult result = std::visit([&service](const auto id) {
+                    if constexpr (std::is_same_v<decltype(id), const SurveyProgramId>) {
+                        return service.execute(SuspendSurveyProgramCommand{id});
+                    } else {
+                        return service.execute(SuspendFreightProgramCommand{id});
+                    }
+                }, *fleet->controllingProgram);
                 commandSucceeded_ = result.ok;
                 commandStatus_ = result.message;
             }
             ImGui::SameLine();
-            if (ImGui::Button("Cancel controlling program")) {
-                const CommandResult result = service.execute(CancelSurveyProgramCommand{*fleet->controllingProgramId});
+            const bool freight = std::holds_alternative<FreightProgramId>(*fleet->controllingProgram);
+            if (ImGui::Button(freight ? "Cancel future pickups" : "Cancel controlling program")) {
+                const CommandResult result = std::visit([&service](const auto id) {
+                    if constexpr (std::is_same_v<decltype(id), const SurveyProgramId>) {
+                        return service.execute(CancelSurveyProgramCommand{id});
+                    } else {
+                        return service.execute(CancelFreightProgramCommand{id});
+                    }
+                }, *fleet->controllingProgram);
                 commandSucceeded_ = result.ok;
                 commandStatus_ = result.message;
             }
@@ -209,7 +224,7 @@ void FleetOrdersPanel::render(const SimulationQueries& queries,
     // Preview gating is advisory. The service revalidates the complete route
     // against current state when the player actually submits the command.
     const bool hasFuelForMove = !movePreview.has_value() || movePreview->canAfford;
-    const bool canQueueMove = fleet.has_value() && !fleet->controllingProgramId &&
+    const bool canQueueMove = fleet.has_value() && !fleet->controllingProgram &&
         destinationSelected && !idleDestinationIsCurrent && hasFuelForMove;
 
     if (movePreview.has_value()) {
@@ -269,7 +284,7 @@ void FleetOrdersPanel::render(const SimulationQueries& queries,
         ImGui::TextUnformatted("Select a fleet and body to preview resource survey eligibility.");
     }
 
-    const bool canSurvey = fleet.has_value() && !fleet->controllingProgramId &&
+    const bool canSurvey = fleet.has_value() && !fleet->controllingProgram &&
         surveyPreview.has_value() && surveyPreview->canSurvey;
     if (!canSurvey) {
         ImGui::BeginDisabled();
@@ -288,7 +303,7 @@ void FleetOrdersPanel::render(const SimulationQueries& queries,
         commandStatus_ = result.message;
     }
 
-    const bool canCancel = fleet.has_value() && !fleet->controllingProgramId && fleet->hasActiveOrder;
+    const bool canCancel = fleet.has_value() && !fleet->controllingProgram && fleet->hasActiveOrder;
     if (!canCancel) {
         ImGui::BeginDisabled();
     }
@@ -304,7 +319,7 @@ void FleetOrdersPanel::render(const SimulationQueries& queries,
     }
 
     ImGui::SameLine();
-    const bool canClearQueue = fleet.has_value() && !fleet->controllingProgramId && !fleet->queuedOrders.empty();
+    const bool canClearQueue = fleet.has_value() && !fleet->controllingProgram && !fleet->queuedOrders.empty();
     if (!canClearQueue) {
         ImGui::BeginDisabled();
     }

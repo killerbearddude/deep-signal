@@ -37,12 +37,13 @@ namespace {
 
 bool validShipComponentDefinition(const ShipComponentDefinition& definition) noexcept {
     if (!definition.id || definition.name.empty() ||
-        definition.kind < ShipComponentKind::Hull || definition.kind > ShipComponentKind::Utility ||
+        definition.kind < ShipComponentKind::Hull || definition.kind > ShipComponentKind::CargoBay ||
         !nonnegativeFinite(definition.mass) || !nonnegativeFinite(definition.volume) ||
         !nonnegativeFinite(definition.internalVolumeCapacity) ||
         !nonnegativeFinite(definition.powerGeneration) || !nonnegativeFinite(definition.powerDemand) ||
         !nonnegativeFinite(definition.propellantCapacity) ||
-        !nonnegativeFinite(definition.surveyCapability) || !nonnegativeFinite(definition.buildPoints)) {
+        !nonnegativeFinite(definition.surveyCapability) || !nonnegativeFinite(definition.cargoCapacity) ||
+        !nonnegativeFinite(definition.cargoHandlingPerDay) || !nonnegativeFinite(definition.buildPoints)) {
         return false;
     }
     for (const double amount : definition.buildCost.amount) {
@@ -75,6 +76,8 @@ ShipDesignEvaluation evaluateShipDesign(const std::vector<ShipComponentDefinitio
         result.powerDemand += definition->powerDemand * count;
         result.propellantCapacity += definition->propellantCapacity * count;
         result.surveyCapability += definition->surveyCapability * count;
+        result.cargoCapacity += definition->cargoCapacity * count;
+        result.cargoHandlingPerDay += definition->cargoHandlingPerDay * count;
         result.buildPoints += definition->buildPoints * count;
         for (std::size_t i = 0; i < processedMaterialCount(); ++i) {
             result.buildCost.amount[i] += definition->buildCost.amount[i] * count;
@@ -87,7 +90,8 @@ ShipDesignEvaluation evaluateShipDesign(const std::vector<ShipComponentDefinitio
     if (!nonnegativeFinite(result.dryMass) || !nonnegativeFinite(result.usedVolume) ||
         !nonnegativeFinite(result.volumeCapacity) || !nonnegativeFinite(result.powerGeneration) ||
         !nonnegativeFinite(result.powerDemand) || !nonnegativeFinite(result.propellantCapacity) ||
-        !nonnegativeFinite(result.surveyCapability) || !nonnegativeFinite(result.buildPoints) ||
+        !nonnegativeFinite(result.surveyCapability) || !nonnegativeFinite(result.cargoCapacity) ||
+        !nonnegativeFinite(result.cargoHandlingPerDay) || !nonnegativeFinite(result.buildPoints) ||
         std::any_of(result.buildCost.amount.begin(), result.buildCost.amount.end(),
                     [](double amount) { return !nonnegativeFinite(amount); })) {
         result.constraints.push_back("Derived design values exceed finite limits");
@@ -131,13 +135,22 @@ std::vector<ShipComponentDefinition> standardShipComponentCatalog() {
             .buildCost = cost(0.0, 40.0, 0.0, 0.0), .buildPoints = 70.0},
         ShipComponentDefinition{.id = ShipComponentId{5}, .name = "General Ship Systems",
             .kind = ShipComponentKind::Utility, .mass = 40.0, .volume = 50.0,
-            .powerDemand = 20.0, .buildCost = cost(20.0, 10.0, 0.0, 20.0), .buildPoints = 50.0}
+            .powerDemand = 20.0, .buildCost = cost(20.0, 10.0, 0.0, 20.0), .buildPoints = 50.0},
+        ShipComponentDefinition{.id = ShipComponentId{6}, .name = "Standard Cargo Bay",
+            .kind = ShipComponentKind::CargoBay, .mass = 60.0, .volume = 200.0,
+            .powerDemand = 20.0, .cargoCapacity = 100.0, .cargoHandlingPerDay = 25.0,
+            .buildCost = cost(40.0, 10.0, 0.0, 20.0), .buildPoints = 60.0}
     };
 }
 
 std::vector<ShipComponentInstall> referenceSurveyCutterComponents() {
     return {{ShipComponentId{1}, 1}, {ShipComponentId{2}, 1}, {ShipComponentId{3}, 1},
             {ShipComponentId{4}, 1}, {ShipComponentId{5}, 1}};
+}
+
+std::vector<ShipComponentInstall> referenceFreighterComponents() {
+    return {{ShipComponentId{1}, 1}, {ShipComponentId{2}, 1}, {ShipComponentId{3}, 1},
+            {ShipComponentId{5}, 1}, {ShipComponentId{6}, 2}};
 }
 
 } // namespace deep

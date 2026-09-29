@@ -426,7 +426,8 @@ enum class ShipComponentKind {
     Reactor,
     PropellantTank,
     SurveySensor,
-    Utility
+    Utility,
+    CargoBay
 };
 
 // Catalog data is authoritative. Designs install typed IDs rather than copying
@@ -442,6 +443,9 @@ struct ShipComponentDefinition {
     double powerDemand = 0.0;
     double propellantCapacity = 0.0;
     double surveyCapability = 0.0;
+    // Normalized processed-material units, independent of density and transit mass.
+    double cargoCapacity = 0.0;
+    double cargoHandlingPerDay = 0.0;
     ProcessedMaterialSet buildCost;
     double buildPoints = 0.0;
 };
@@ -489,6 +493,15 @@ struct ShipyardOrder {
     ShipyardOrderStatus status = ShipyardOrderStatus::Active;
 };
 
+// One physical lot held on one hull. Propellant cargo is separate from engine
+// fuel and cannot be burned without an explicit later transfer feature.
+struct ShipCargo {
+    FreightProgramId programId;
+    int shipmentNumber = 0;
+    ProcessedMaterial material = ProcessedMaterial::StructuralAlloys;
+    double quantity = 0.0;
+};
+
 // A constructed ship. Ships are assigned to exactly one fleet in this prototype.
 struct Ship {
     ShipId id;
@@ -498,6 +511,7 @@ struct Ship {
     // Current propellant amount for this hull. Fuel is consumed when fleet
     // movement starts and must not exceed derived class tank capacity.
     double fuel = 0.0;
+    std::optional<ShipCargo> cargo = std::nullopt;
 };
 
 // Fleet order type. Only body-to-body movement exists in Prototype 0.1.

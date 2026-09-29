@@ -13,6 +13,8 @@
 #include "sim/IdTypes.h"
 #include "sim/ShipDesignRules.h"
 #include "sim/SurveyProgram.h"
+#include "sim/ProgramControl.h"
+#include "sim/FreightProgram.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -161,6 +163,8 @@ struct ShipComponentSummary {
     double powerDemand = 0.0;
     double propellantCapacity = 0.0;
     double surveyCapability = 0.0;
+    double cargoCapacity = 0.0;
+    double cargoHandlingPerDay = 0.0;
     ProcessedMaterialSet buildCost;
     double buildPoints = 0.0;
 };
@@ -279,8 +283,8 @@ struct FleetSummary {
     std::string ownerInstitutionName;
     // Actual execution ownership, derived from program leases rather than a
     // second mutable assignment on the fleet.
-    std::optional<SurveyProgramId> controllingProgramId;
-    std::string controllingProgramName;
+    std::optional<ProgramController> controllingProgram;
+    std::string controllingProgramLabel;
     FleetOrderType activeOrderType = FleetOrderType::None;
     std::string activeOrderName;
     bool hasActiveOrder = false;
@@ -393,6 +397,104 @@ struct SurveyProgramCharterPreview {
     std::vector<std::string> waitingReasons;
     std::string firstTargetChoiceReason;
     std::string executionCondition;
+};
+
+// Owned per-hull view. The lot is physical custody, while plannedQuantity is a
+// finite shipment limit. Zero operational rate never hides stored cargo.
+struct FreightHullSummary {
+    ShipId shipId;
+    std::string shipName;
+    double cargoCapacity = 0.0;
+    double operationalHandlingPerDay = 0.0;
+    double plannedQuantity = 0.0;
+    double cargoQuantity = 0.0;
+    std::optional<FreightProgramId> cargoProgramId;
+    int shipmentNumber = 0;
+    std::string materialName;
+};
+
+struct FreightReceiptSummary {
+    FreightTransferReceipt receipt;
+    std::string actionName;
+    std::string fleetName;
+    std::string leaderName;
+    std::string colonyName;
+    std::string materialName;
+};
+
+struct FreightReportSummary {
+    FreightProgramReport report;
+    std::string fleetName;
+    std::string locationName;
+};
+
+// Current physical progress and historical throughput are deliberately separate:
+// destinationStock can decrease after another operation consumes a delivery.
+struct FreightProgramSummary {
+    FreightProgramId id;
+    FreightProgramCharter charter;
+    int charterRevision = 1;
+    FreightProgramLifecycle lifecycle = FreightProgramLifecycle::Authorized;
+    FreightProgramClosure closure = FreightProgramClosure::None;
+    std::string lifecycleName;
+    std::string taskName;
+    std::string condition;
+    std::string sourceName;
+    std::string destinationName;
+    std::string materialName;
+    std::string requestedFleetName;
+    std::string leasedFleetName;
+    std::string taskFleetName;
+    std::string leaderName;
+    std::optional<FleetId> leasedFleetId;
+    std::optional<FleetId> taskFleetId;
+    bool pendingFleetChange = false;
+    std::optional<FreightShipment> shipment;
+    std::string shipmentLeaderName;
+    std::string locationName;
+    std::string routeDestinationName;
+    std::optional<std::int64_t> currentLegArrivalDay;
+    double sourceCargoStock = 0.0;
+    double sourcePropellantStock = 0.0;
+    double destinationStock = 0.0;
+    double cargoLoaded = 0.0;
+    double cargoDelivered = 0.0;
+    double cargoReturned = 0.0;
+    double cargoAboard = 0.0;
+    double unpickedQuantity = 0.0;
+    double committedQuantity = 0.0;
+    double commitmentAboveTarget = 0.0;
+    double fuelLoaded = 0.0;
+    double fuelBurned = 0.0;
+    std::optional<double> fuelAllowanceRemaining;
+    std::optional<std::int64_t> nextReportDay;
+    std::optional<std::int64_t> closedDay;
+    FreightProgramIssue issue;
+    bool canAmend = false;
+    bool canSuspend = false;
+    bool canResume = false;
+    bool canCancel = false;
+    std::vector<FreightHullSummary> hulls;
+    std::vector<FreightReceiptSummary> receipts;
+    std::vector<FreightReportSummary> reports;
+};
+
+// Pure advice for next-opening readiness. Authorization only depends on valid
+// structure; neither this projection nor rendering reserves/debits inventory.
+struct FreightProgramCharterPreview {
+    bool structurallyValid = false;
+    std::string validationMessage;
+    std::string executionCondition;
+    std::vector<std::string> waitingReasons;
+    bool shipmentReady = false;
+    double plannedQuantity = 0.0;
+    double requiredOperatingFuel = 0.0;
+    double additionalOperatingFuel = 0.0;
+    std::int64_t loadingDays = 0;
+    std::int64_t unloadingDays = 0;
+    std::optional<std::int64_t> projectedDepartureDay;
+    std::optional<std::int64_t> projectedReturnDepartureDay;
+    std::vector<FreightHullSummary> hulls;
 };
 
 struct SurveyTimeSummary {
@@ -636,6 +738,13 @@ public:
         const SurveyProgramCharter& charter,
         std::optional<SurveyProgramId> amendingProgramId = std::nullopt) const;
     [[nodiscard]] SurveyTimeSummary surveyTime() const;
+
+    // Freight projections preserve stored program/roster/receipt order and use
+    // the authoritative pure planner for draft readiness and handling totals.
+    [[nodiscard]] std::vector<FreightProgramSummary> freightPrograms() const;
+    [[nodiscard]] FreightProgramCharterPreview previewFreightProgramCharter(
+        const FreightProgramCharter& charter,
+        std::optional<FreightProgramId> amendingProgramId = std::nullopt) const;
 
     // Returns display-ready personnel rows with resolved institution names.
     [[nodiscard]] std::vector<PersonSummary> personnel() const;

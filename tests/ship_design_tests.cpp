@@ -146,7 +146,7 @@ void testRevisionBindingAndDesignBlocker() {
     require(sim.state().shipyardOrders.at(1).status == deep::ShipyardOrderStatus::Completed,
             "old revision order completes before isolated overflow proof");
 
-    const auto revisedId = sim.state().shipClasses.at(1).id;
+    const auto revisedId = sim.state().shipClasses.back().id;
     const auto alloysBefore = sim.state().colonies.front().processedStockpile.get(
         deep::ProcessedMaterial::StructuralAlloys);
     const auto shipCountBefore = sim.state().ships.size();

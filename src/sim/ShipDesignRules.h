@@ -21,6 +21,9 @@ struct ShipDesignEvaluation {
     double powerMargin = 0.0;
     double propellantCapacity = 0.0;
     double surveyCapability = 0.0;
+    double cargoCapacity = 0.0;
+    // Installed rate; operational handling is zero when powerMargin < 0.
+    double cargoHandlingPerDay = 0.0;
     ProcessedMaterialSet buildCost;
     double buildPoints = 0.0;
     bool constructible = false;
@@ -38,9 +41,10 @@ struct FleetSurveyEvaluation {
     const std::vector<ShipComponentInstall>& components);
 [[nodiscard]] FleetSurveyEvaluation evaluateFleetSurvey(const GameState& state, const Fleet& fleet);
 
-// Fixed starting catalog and reference composition. These are also used to
-// translate legacy aggregate Survey Cutter saves into component revisions.
+// Authoritative starting catalog and immutable reference compositions. Current
+// development saves have no legacy aggregate conversion path.
 [[nodiscard]] std::vector<ShipComponentDefinition> standardShipComponentCatalog();
 [[nodiscard]] std::vector<ShipComponentInstall> referenceSurveyCutterComponents();
+[[nodiscard]] std::vector<ShipComponentInstall> referenceFreighterComponents();
 
 } // namespace deep

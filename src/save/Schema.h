@@ -11,11 +11,11 @@
 
 namespace deep::save {
 
-inline constexpr std::int64_t kSchemaVersion = 13;
+inline constexpr std::int64_t kSchemaVersion = 14;
 
-// Creates only the active v13 table/index structure in a schema-empty database.
+// Creates only the active v14 table/index structure in a schema-empty database.
 // The repository owns the transaction and version-row insertion.
-void createSchemaV13(Database& db);
+void createSchemaV14(Database& db);
 
 // True only when no user schema objects exist. SQLite internal objects are
 // ignored; unrelated tables/views/indexes make a destination nonempty.
@@ -26,9 +26,9 @@ void createSchemaV13(Database& db);
 [[nodiscard]] std::int64_t readSchemaVersion(Database& db);
 
 // Compare table columns, foreign keys, index/key shapes, and user object names
-// against v13. Read-only Load may tolerate known-table triggers;
+// against v14. Read-only Load may tolerate known-table triggers;
 // Save rejects all user triggers because their write effects are not trusted.
 // Does not repair or modify the destination.
-void requireV13Structure(Database& db, bool allowKnownTableTriggers = false);
+void requireV14Structure(Database& db, bool allowKnownTableTriggers = false);
 
 } // namespace deep::save

@@ -56,6 +56,8 @@ template <typename EnumT>
         return value >= 0 && value <= static_cast<std::int64_t>(SurveyPlanningApproach::PriorityFirst);
     } else if constexpr (std::is_same_v<EnumT, SurveyProgramAuditKind>) {
         return value >= 0 && value <= static_cast<std::int64_t>(SurveyProgramAuditKind::IssueAcknowledged);
+    } else if constexpr (std::is_same_v<EnumT, FreightProgramAuditKind>) {
+        return value >= 0 && value <= static_cast<std::int64_t>(FreightProgramAuditKind::IssueRaised);
     } else {
         static_assert(std::is_enum_v<EnumT>, "enumFromValue requires an enum type");
         return false;
@@ -282,6 +284,8 @@ void requireFlatJsonObjectShape(const std::string_view json) {
             return "resource_survey_completed";
         } else if constexpr (std::is_same_v<Event, SurveyProgramAuditEvent>) {
             return "survey_program_audit";
+        } else if constexpr (std::is_same_v<Event, FreightProgramAuditEvent>) {
+            return "freight_program_audit";
         } else if constexpr (std::is_same_v<Event, CommandRejectedEvent>) {
             return "command_rejected";
         }
@@ -342,6 +346,16 @@ void requireFlatJsonObjectShape(const std::string_view json) {
             object["pass_number"] = event.passNumber;
             object["fuel_amount"] = checkedFiniteDoubleFromPayload(event.fuelAmount, "event.fuel_amount");
             object["detail"] = event.detail;
+        } else if constexpr (std::is_same_v<Event, FreightProgramAuditEvent>) {
+            object["program_id"] = idValue(event.programId);
+            object["kind"] = enumValue(event.kind);
+            object["fleet_id"] = event.fleetId ? idValue(*event.fleetId) : 0;
+            object["colony_id"] = event.colonyId ? idValue(*event.colonyId) : 0;
+            object["leader_id"] = event.leaderId ? idValue(*event.leaderId) : 0;
+            object["charter_revision"] = event.charterRevision;
+            object["shipment_number"] = event.shipmentNumber;
+            object["amount"] = checkedFiniteDoubleFromPayload(event.amount, "event.amount");
+            object["detail"] = event.detail;
         } else if constexpr (std::is_same_v<Event, CommandRejectedEvent>) {
             object["reason"] = event.reason;
         }
@@ -401,6 +415,16 @@ void requireFlatJsonObjectShape(const std::string_view json) {
                 << ",\"charter_revision\":" << event.charterRevision
                 << ",\"pass_number\":" << event.passNumber
                 << ",\"fuel_amount\":" << numberToJson(event.fuelAmount, "event.fuel_amount")
+                << ",\"detail\":" << quoteJson(event.detail);
+        } else if constexpr (std::is_same_v<Event, FreightProgramAuditEvent>) {
+            out << "\"program_id\":" << idValue(event.programId)
+                << ",\"kind\":" << enumValue(event.kind)
+                << ",\"fleet_id\":" << (event.fleetId ? idValue(*event.fleetId) : 0)
+                << ",\"colony_id\":" << (event.colonyId ? idValue(*event.colonyId) : 0)
+                << ",\"leader_id\":" << (event.leaderId ? idValue(*event.leaderId) : 0)
+                << ",\"charter_revision\":" << event.charterRevision
+                << ",\"shipment_number\":" << event.shipmentNumber
+                << ",\"amount\":" << numberToJson(event.amount, "event.amount")
                 << ",\"detail\":" << quoteJson(event.detail);
         } else if constexpr (std::is_same_v<Event, CommandRejectedEvent>) {
             out << "\"reason\":" << quoteJson(event.reason);
@@ -532,6 +556,26 @@ void requireFlatJsonObjectShape(const std::string_view json) {
         };
     }
 
+    if (eventType == "freight_program_audit") {
+        const std::int64_t fleetId = requireInt64("fleet_id");
+        const std::int64_t colonyId = requireInt64("colony_id");
+        const std::int64_t leaderId = requireInt64("leader_id");
+        if (fleetId < 0 || colonyId < 0 || leaderId < 0) {
+            throw std::runtime_error{"Invalid optional ID in freight program audit payload"};
+        }
+        return FreightProgramAuditEvent{
+            .programId = FreightProgramId{requireInt64("program_id")},
+            .kind = enumFromValue<FreightProgramAuditKind>(requireInt64("kind")),
+            .fleetId = fleetId == 0 ? std::nullopt : std::optional{FleetId{fleetId}},
+            .colonyId = colonyId == 0 ? std::nullopt : std::optional{ColonyId{colonyId}},
+            .leaderId = leaderId == 0 ? std::nullopt : std::optional{PersonId{leaderId}},
+            .charterRevision = checkedIntFromPayload(requireInt64("charter_revision"), "event.charter_revision"),
+            .shipmentNumber = checkedIntFromPayload(requireInt64("shipment_number"), "event.shipment_number"),
+            .amount = requireDouble("amount"),
+            .detail = requireString("detail")
+        };
+    }
+
     if (eventType == "command_rejected") {
         return CommandRejectedEvent{.reason = requireString("reason")};
     }
@@ -620,6 +664,26 @@ void requireFlatJsonObjectShape(const std::string_view json) {
             .charterRevision = checkedIntFromPayload(jsonInt64(payloadJson, "charter_revision"), "event.charter_revision"),
             .passNumber = checkedIntFromPayload(jsonInt64(payloadJson, "pass_number"), "event.pass_number"),
             .fuelAmount = jsonDouble(payloadJson, "fuel_amount"),
+            .detail = jsonString(payloadJson, "detail")
+        };
+    }
+
+    if (eventType == "freight_program_audit") {
+        const std::int64_t fleetId = jsonInt64(payloadJson, "fleet_id");
+        const std::int64_t colonyId = jsonInt64(payloadJson, "colony_id");
+        const std::int64_t leaderId = jsonInt64(payloadJson, "leader_id");
+        if (fleetId < 0 || colonyId < 0 || leaderId < 0) {
+            throw std::runtime_error{"Invalid optional ID in freight program audit payload"};
+        }
+        return FreightProgramAuditEvent{
+            .programId = FreightProgramId{jsonInt64(payloadJson, "program_id")},
+            .kind = enumFromValue<FreightProgramAuditKind>(jsonInt64(payloadJson, "kind")),
+            .fleetId = fleetId == 0 ? std::nullopt : std::optional{FleetId{fleetId}},
+            .colonyId = colonyId == 0 ? std::nullopt : std::optional{ColonyId{colonyId}},
+            .leaderId = leaderId == 0 ? std::nullopt : std::optional{PersonId{leaderId}},
+            .charterRevision = checkedIntFromPayload(jsonInt64(payloadJson, "charter_revision"), "event.charter_revision"),
+            .shipmentNumber = checkedIntFromPayload(jsonInt64(payloadJson, "shipment_number"), "event.shipment_number"),
+            .amount = jsonDouble(payloadJson, "amount"),
             .detail = jsonString(payloadJson, "detail")
         };
     }

@@ -1,6 +1,6 @@
 #include "save/Schema.h"
 
-// Responsibility: define the active v13 schema and inspect its structure.
+// Responsibility: define the active v14 schema and inspect its structure.
 // Tables mirror durable GameState records; event payloads remain inspectable JSON
 // text. Foreign keys and CHECK constraints provide a first line of validation,
 // not complete type/graph validation. Repository reconstruction and the domain
@@ -124,11 +124,11 @@ struct IndexShape {
 
 } // namespace
 
-void createSchemaV13(Database& db) {
+void createSchemaV14(Database& db) {
     db.execute(R"sql(
         CREATE TABLE schema_version (
             id INTEGER PRIMARY KEY CHECK(id = 1),
-            version INTEGER NOT NULL CHECK(version = 13)
+            version INTEGER NOT NULL CHECK(version = 14)
         );
 
         CREATE TABLE game_meta (
@@ -259,7 +259,7 @@ void createSchemaV13(Database& db) {
             id INTEGER PRIMARY KEY NOT NULL CHECK(id > 0),
             ordinal INTEGER NOT NULL UNIQUE CHECK(typeof(ordinal) = 'integer' AND ordinal >= 0),
             name TEXT NOT NULL CHECK(length(name) > 0),
-            kind INTEGER NOT NULL CHECK(kind BETWEEN 0 AND 4),
+            kind INTEGER NOT NULL CHECK(kind BETWEEN 0 AND 5),
             mass REAL NOT NULL CHECK(mass >= 0.0),
             volume REAL NOT NULL CHECK(volume >= 0.0),
             internal_volume_capacity REAL NOT NULL CHECK(internal_volume_capacity >= 0.0),
@@ -267,6 +267,8 @@ void createSchemaV13(Database& db) {
             power_demand REAL NOT NULL CHECK(power_demand >= 0.0),
             propellant_capacity REAL NOT NULL CHECK(propellant_capacity >= 0.0),
             survey_capability REAL NOT NULL CHECK(survey_capability >= 0.0),
+            cargo_capacity REAL NOT NULL CHECK(cargo_capacity >= 0.0),
+            cargo_handling_per_day REAL NOT NULL CHECK(cargo_handling_per_day >= 0.0),
             build_points REAL NOT NULL CHECK(build_points >= 0.0)
         );
 
@@ -520,6 +522,146 @@ void createSchemaV13(Database& db) {
             FOREIGN KEY(fleet_body_id) REFERENCES bodies(id)
         );
 
+        -- Freight preserves intent separately from one optional committed
+        -- shipment. Cargo rows are physical per-ship lots, not manifest totals.
+        CREATE TABLE freight_programs (
+            id INTEGER PRIMARY KEY NOT NULL CHECK(id > 0),
+            ordinal INTEGER NOT NULL UNIQUE CHECK(typeof(ordinal) = 'integer' AND ordinal >= 0),
+            name TEXT NOT NULL CHECK(length(name) > 0),
+            source_colony_id INTEGER NOT NULL CHECK(source_colony_id > 0),
+            destination_colony_id INTEGER NOT NULL CHECK(destination_colony_id > 0),
+            material INTEGER NOT NULL CHECK(material BETWEEN 0 AND 5),
+            total_quantity REAL NOT NULL CHECK(total_quantity >= 0.0),
+            requested_fleet_id INTEGER NULL CHECK(requested_fleet_id IS NULL OR requested_fleet_id > 0),
+            requested_leader_id INTEGER NULL CHECK(requested_leader_id IS NULL OR requested_leader_id > 0),
+            source_cargo_floor REAL NOT NULL CHECK(source_cargo_floor >= 0.0),
+            source_propellant_floor REAL NOT NULL CHECK(source_propellant_floor >= 0.0),
+            max_additional_propellant REAL NULL CHECK(max_additional_propellant IS NULL OR max_additional_propellant >= 0.0),
+            return_contingency_fraction REAL NOT NULL CHECK(return_contingency_fraction >= 0.0),
+            created_day INTEGER NOT NULL CHECK(created_day >= 0),
+            charter_revision INTEGER NOT NULL CHECK(charter_revision > 0),
+            lifecycle INTEGER NOT NULL CHECK(lifecycle BETWEEN 0 AND 3),
+            closure INTEGER NOT NULL CHECK(closure BETWEEN 0 AND 2),
+            closed_day INTEGER NULL CHECK(closed_day IS NULL OR closed_day >= created_day),
+            leased_fleet_id INTEGER NULL UNIQUE CHECK(leased_fleet_id IS NULL OR leased_fleet_id > 0),
+            task INTEGER NOT NULL CHECK(task BETWEEN 0 AND 7),
+            task_fleet_id INTEGER NULL CHECK(task_fleet_id IS NULL OR task_fleet_id > 0),
+            next_shipment_number INTEGER NOT NULL CHECK(next_shipment_number > 0),
+            cargo_loaded REAL NOT NULL CHECK(cargo_loaded >= 0.0),
+            cargo_delivered REAL NOT NULL CHECK(cargo_delivered >= 0.0),
+            cargo_returned REAL NOT NULL CHECK(cargo_returned >= 0.0),
+            fuel_loaded REAL NOT NULL CHECK(fuel_loaded >= 0.0),
+            fuel_burned REAL NOT NULL CHECK(fuel_burned >= 0.0),
+            next_report_day INTEGER NOT NULL CHECK(next_report_day > 0),
+            report_start_day INTEGER NOT NULL CHECK(report_start_day >= 0),
+            reported_cargo_loaded REAL NOT NULL CHECK(reported_cargo_loaded >= 0.0),
+            reported_cargo_delivered REAL NOT NULL CHECK(reported_cargo_delivered >= 0.0),
+            reported_cargo_returned REAL NOT NULL CHECK(reported_cargo_returned >= 0.0),
+            reported_fuel_loaded REAL NOT NULL CHECK(reported_fuel_loaded >= 0.0),
+            reported_fuel_burned REAL NOT NULL CHECK(reported_fuel_burned >= 0.0),
+            reported_shipments INTEGER NOT NULL CHECK(reported_shipments >= 0),
+            issue_signature TEXT NOT NULL,
+            issue_message TEXT NOT NULL,
+            issue_acknowledged INTEGER NOT NULL CHECK(issue_acknowledged IN (0, 1)),
+            CHECK(source_colony_id != destination_colony_id),
+            FOREIGN KEY(source_colony_id) REFERENCES colonies(id),
+            FOREIGN KEY(destination_colony_id) REFERENCES colonies(id),
+            FOREIGN KEY(requested_fleet_id) REFERENCES fleets(id),
+            FOREIGN KEY(requested_leader_id) REFERENCES people(id),
+            FOREIGN KEY(leased_fleet_id) REFERENCES fleets(id),
+            FOREIGN KEY(task_fleet_id) REFERENCES fleets(id)
+        );
+
+        CREATE TABLE freight_shipments (
+            program_id INTEGER PRIMARY KEY NOT NULL CHECK(program_id > 0),
+            number INTEGER NOT NULL CHECK(number > 0),
+            charter_revision INTEGER NOT NULL CHECK(charter_revision > 0),
+            committed_day INTEGER NOT NULL CHECK(committed_day >= 0),
+            fleet_id INTEGER NOT NULL CHECK(fleet_id > 0),
+            leader_id INTEGER NOT NULL CHECK(leader_id > 0),
+            source_colony_id INTEGER NOT NULL CHECK(source_colony_id > 0),
+            destination_colony_id INTEGER NOT NULL CHECK(destination_colony_id > 0),
+            material INTEGER NOT NULL CHECK(material BETWEEN 0 AND 5),
+            UNIQUE(program_id, number),
+            FOREIGN KEY(program_id) REFERENCES freight_programs(id),
+            FOREIGN KEY(fleet_id) REFERENCES fleets(id),
+            FOREIGN KEY(leader_id) REFERENCES people(id),
+            FOREIGN KEY(source_colony_id) REFERENCES colonies(id),
+            FOREIGN KEY(destination_colony_id) REFERENCES colonies(id)
+        );
+
+        CREATE TABLE freight_shipment_manifest (
+            program_id INTEGER NOT NULL CHECK(program_id > 0),
+            ordinal INTEGER NOT NULL CHECK(typeof(ordinal) = 'integer' AND ordinal >= 0),
+            ship_id INTEGER NOT NULL CHECK(ship_id > 0),
+            planned_quantity REAL NOT NULL CHECK(planned_quantity >= 0.0),
+            PRIMARY KEY(program_id, ordinal),
+            UNIQUE(program_id, ship_id),
+            FOREIGN KEY(program_id) REFERENCES freight_shipments(program_id),
+            FOREIGN KEY(ship_id) REFERENCES ships(id)
+        );
+
+        CREATE TABLE ship_cargo (
+            ship_id INTEGER PRIMARY KEY NOT NULL CHECK(ship_id > 0),
+            program_id INTEGER NOT NULL CHECK(program_id > 0),
+            shipment_number INTEGER NOT NULL CHECK(shipment_number > 0),
+            material INTEGER NOT NULL CHECK(material BETWEEN 0 AND 5),
+            quantity REAL NOT NULL CHECK(quantity > 0.0),
+            FOREIGN KEY(ship_id) REFERENCES ships(id),
+            FOREIGN KEY(program_id, shipment_number) REFERENCES freight_shipments(program_id, number)
+        );
+
+        CREATE TABLE freight_transfer_receipts (
+            program_id INTEGER NOT NULL CHECK(program_id > 0),
+            ordinal INTEGER NOT NULL CHECK(typeof(ordinal) = 'integer' AND ordinal >= 0),
+            sequence INTEGER NOT NULL CHECK(sequence > 0),
+            shipment_number INTEGER NOT NULL CHECK(shipment_number > 0),
+            day INTEGER NOT NULL CHECK(day >= 0),
+            fleet_id INTEGER NOT NULL CHECK(fleet_id > 0),
+            leader_id INTEGER NOT NULL CHECK(leader_id > 0),
+            colony_id INTEGER NOT NULL CHECK(colony_id > 0),
+            material INTEGER NOT NULL CHECK(material BETWEEN 0 AND 5),
+            kind INTEGER NOT NULL CHECK(kind BETWEEN 0 AND 3),
+            amount REAL NOT NULL CHECK(amount > 0.0),
+            PRIMARY KEY(program_id, ordinal),
+            UNIQUE(program_id, sequence),
+            FOREIGN KEY(program_id) REFERENCES freight_programs(id),
+            FOREIGN KEY(fleet_id) REFERENCES fleets(id),
+            FOREIGN KEY(leader_id) REFERENCES people(id),
+            FOREIGN KEY(colony_id) REFERENCES colonies(id)
+        );
+
+        CREATE TABLE freight_program_reports (
+            program_id INTEGER NOT NULL CHECK(program_id > 0),
+            ordinal INTEGER NOT NULL CHECK(typeof(ordinal) = 'integer' AND ordinal >= 0),
+            start_day INTEGER NOT NULL CHECK(start_day >= 0),
+            end_day INTEGER NOT NULL CHECK(end_day >= start_day),
+            is_ninety_day_review INTEGER NOT NULL CHECK(is_ninety_day_review IN (0, 1)),
+            charter_revision INTEGER NOT NULL CHECK(charter_revision > 0),
+            cargo_loaded REAL NOT NULL CHECK(cargo_loaded >= 0.0),
+            cargo_delivered REAL NOT NULL CHECK(cargo_delivered >= 0.0),
+            cargo_returned REAL NOT NULL CHECK(cargo_returned >= 0.0),
+            fuel_loaded REAL NOT NULL CHECK(fuel_loaded >= 0.0),
+            fuel_burned REAL NOT NULL CHECK(fuel_burned >= 0.0),
+            cargo_aboard REAL NOT NULL CHECK(cargo_aboard >= 0.0),
+            shipments_started INTEGER NOT NULL CHECK(shipments_started >= 0),
+            target_quantity REAL NOT NULL CHECK(target_quantity >= 0.0),
+            cumulative_delivered REAL NOT NULL CHECK(cumulative_delivered >= 0.0),
+            committed_quantity REAL NOT NULL CHECK(committed_quantity >= 0.0),
+            fleet_id INTEGER NULL CHECK(fleet_id IS NULL OR fleet_id > 0),
+            fleet_body_id INTEGER NULL CHECK(fleet_body_id IS NULL OR fleet_body_id > 0),
+            waiting_reason TEXT NOT NULL,
+            source_cargo_floor REAL NOT NULL CHECK(source_cargo_floor >= 0.0),
+            source_propellant_floor REAL NOT NULL CHECK(source_propellant_floor >= 0.0),
+            max_additional_propellant REAL NULL CHECK(max_additional_propellant IS NULL OR max_additional_propellant >= 0.0),
+            return_contingency_fraction REAL NOT NULL CHECK(return_contingency_fraction >= 0.0),
+            PRIMARY KEY(program_id, ordinal),
+            UNIQUE(program_id, end_day),
+            FOREIGN KEY(program_id) REFERENCES freight_programs(id),
+            FOREIGN KEY(fleet_id) REFERENCES fleets(id),
+            FOREIGN KEY(fleet_body_id) REFERENCES bodies(id)
+        );
+
         CREATE TABLE event_log (
             id INTEGER PRIMARY KEY NOT NULL CHECK(id > 0),
             day INTEGER NOT NULL CHECK(day >= 0),
@@ -573,10 +715,10 @@ std::int64_t readSchemaVersion(Database& db) {
 namespace {
 
 void requireStructure(Database& db, const bool allowKnownTableTriggers) {
-    // Compare against a fresh v13 declaration. Load permits known-table
+    // Compare against a fresh v14 declaration. Load permits known-table
     // triggers only because it is read-only; Save rejects their write effects.
     Database reference{std::filesystem::path{":memory:"}};
-    createSchemaV13(reference);
+    createSchemaV14(reference);
     const auto expectedObjects = readUserObjects(reference);
     std::vector<std::string> tables;
     for (const auto& object : expectedObjects) {
@@ -599,7 +741,7 @@ void requireStructure(Database& db, const bool allowKnownTableTriggers) {
 
 } // namespace
 
-void requireV13Structure(Database& db, const bool allowKnownTableTriggers) {
+void requireV14Structure(Database& db, const bool allowKnownTableTriggers) {
     requireStructure(db, allowKnownTableTriggers);
 }
 

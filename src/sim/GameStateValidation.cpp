@@ -1,6 +1,7 @@
 #include "sim/GameStateValidation.h"
 #include "sim/ShipDesignRules.h"
 #include "sim/SurveyProgramValidation.h"
+#include "sim/FreightProgramValidation.h"
 #include "sim/ProcessingAllocationRules.h"
 
 // Implements zero-trust validation for fully assembled simulation snapshots.
@@ -436,6 +437,15 @@ void validateEventPayload(const GameState& state, const SimEventPayload& payload
             requireState(event.charterRevision > 0 && event.passNumber >= 0 &&
                          isFinite(event.fuelAmount) && event.fuelAmount >= 0.0,
                          "survey audit numbers must be valid");
+        } else if constexpr (std::is_same_v<Event, FreightProgramAuditEvent>) {
+            requireValidReference(containsId(state.freightPrograms, event.programId), event.programId, "event freight program");
+            requireState(event.kind >= FreightProgramAuditKind::Authorized && event.kind <= FreightProgramAuditKind::IssueRaised,
+                         "freight audit kind must be valid");
+            if (event.fleetId) requireValidReference(containsId(state.fleets, *event.fleetId), *event.fleetId, "event freight fleet");
+            if (event.colonyId) requireValidReference(containsId(state.colonies, *event.colonyId), *event.colonyId, "event freight colony");
+            if (event.leaderId) requireValidReference(containsId(state.people, *event.leaderId), *event.leaderId, "event freight leader");
+            requireState(event.charterRevision > 0 && event.shipmentNumber >= 0 && isFinite(event.amount) && event.amount >= 0.0,
+                         "freight audit numbers must be valid");
         } else if constexpr (std::is_same_v<Event, CommandRejectedEvent>) {
             requireState(!event.reason.empty(), "command-rejected event reason must be non-empty");
         }
@@ -463,6 +473,8 @@ void validateGameState(const GameState& state) {
     validateIdsAndCounter<SurveyTeam, SurveyTeamId>(state.surveyTeams, state.ids.nextSurveyTeamId, "survey team");
     validateIdsAndCounter<SurveyProgram, SurveyProgramId>(state.surveyPrograms,
                                                            state.ids.nextSurveyProgramId, "survey program");
+    validateIdsAndCounter<FreightProgram, FreightProgramId>(state.freightPrograms,
+                                                          state.ids.nextFreightProgramId, "freight program");
     validateIdsAndCounter<SimEvent, EventId>(state.eventLog, state.ids.nextEventId, "event");
 
     for (const StarSystem& system : state.starSystems) {
@@ -659,6 +671,7 @@ void validateGameState(const GameState& state) {
     }
 
     validateSurveyProgramState(state);
+    validateFreightProgramState(state);
 
     std::int64_t previousEventId = 0;
     std::int64_t previousEventDay = 0;

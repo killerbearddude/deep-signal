@@ -521,7 +521,7 @@ GameState createHomeSystemScenario() {
     addDeposit(state, frontierObjectId, Mineral::Volatiles, 600'000.0, 0.3, 0.20);
 
     state.shipComponents = standardShipComponentCatalog();
-    state.ids.nextShipComponentId = 6;
+    state.ids.nextShipComponentId = 7;
     state.shipClasses.push_back(ShipClass{
         .id = surveyCutterId,
         .name = "Survey Cutter",
@@ -529,6 +529,12 @@ GameState createHomeSystemScenario() {
         .basedOnClassId = std::nullopt,
         .components = referenceSurveyCutterComponents(),
         .speedKmPerDay = 50.0
+    });
+
+    state.shipClasses.push_back(ShipClass{
+        .id = ShipClassId{state.ids.nextShipClassId++}, .name = "Reference Freighter",
+        .role = ShipRole::Freighter, .basedOnClassId = std::nullopt,
+        .components = referenceFreighterComponents(), .speedKmPerDay = 50.0
     });
 
     Person priorityLeader = state.people.at(2);
@@ -600,6 +606,40 @@ GameState createDelegatedSurveyScenario() {
         .id = fleetId, .name = "P3A Survey Fleet",
         .currentBodyId = homeBodyId, .destinationBodyId = std::nullopt,
         .shipIds = {shipId}, .activeOrder = {}, .queuedOrders = {},
+        .ownerInstitutionId = state.institutions.front().id
+    });
+    return state;
+}
+
+GameState createDelegatedFreightScenario() {
+    // Reuse isolated fixed positions, leaving the main home economy intact.
+    // The survey ship/team start at the receiving colony with no engine fuel.
+    // Neither freight nor survey intent is pre-authorized by this fixture.
+    GameState state = createDelegatedSurveyScenario();
+    const ColonyId sourceId = state.colonies.back().id;
+    Colony receiving = state.colonies.back();
+    receiving.id = ColonyId{state.ids.nextColonyId++};
+    receiving.bodyId = state.bodies.at(state.bodies.size() - 3).id;
+    receiving.name = "P3B Receiving Colony";
+    receiving.processedStockpile = {};
+    state.colonies.push_back(receiving);
+    state.fleets.back().currentBodyId = receiving.bodyId;
+    state.surveyTeams.front().colonyId = receiving.id;
+    for (auto& colony : state.colonies) if (colony.id == sourceId) {
+        colony.name = "P3B Supply Colony";
+        colony.processedStockpile.set(ProcessedMaterial::StructuralAlloys, 500.0);
+    }
+    const FleetId fleetId{state.ids.nextFleetId++};
+    const ShipId shipId{state.ids.nextShipId++};
+    state.ships.push_back(Ship{
+        .id = shipId, .shipClassId = state.shipClasses.back().id,
+        .name = "P3B Reference Freighter", .fleetId = fleetId, .fuel = 0.0
+    });
+    state.fleets.push_back(Fleet{
+        .id = fleetId, .name = "P3B Freight Fleet",
+        .currentBodyId = state.colonies.at(state.colonies.size() - 2).bodyId,
+        .destinationBodyId = std::nullopt, .shipIds = {shipId},
+        .activeOrder = {}, .queuedOrders = {},
         .ownerInstitutionId = state.institutions.front().id
     });
     return state;

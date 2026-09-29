@@ -262,24 +262,24 @@ void workspace_presets_and_legacy_visibility() {
     using ui_imgui::Workspace;
     // Keep the expected operational composition explicit, including the legacy
     // Inspector. The persistent overview intentionally has no visibility flag.
-    constexpr std::array<bool PanelVisibility::*, 10> operationalFields{
+    constexpr std::array<bool PanelVisibility::*, 11> operationalFields{
         &PanelVisibility::strategicMap, &PanelVisibility::bodies, &PanelVisibility::inspector,
         &PanelVisibility::colonies, &PanelVisibility::fleets, &PanelVisibility::fleetOrders,
-        &PanelVisibility::surveyPrograms, &PanelVisibility::shipyard,
+        &PanelVisibility::surveyPrograms, &PanelVisibility::freightPrograms, &PanelVisibility::shipyard,
         &PanelVisibility::economyForecast, &PanelVisibility::eventLog
     };
     struct Preset {
         Workspace workspace;
         const char* name;
-        std::array<bool, 10> visible;
+        std::array<bool, 11> visible;
     };
     constexpr std::array<Preset, 6> presets{{
-        {Workspace::System, "System", {true, true, false, false, false, false, false, false, false, false}},
-        {Workspace::Economy, "Economy", {false, false, false, false, false, false, false, false, true, false}},
-        {Workspace::Production, "Production", {false, false, false, true, false, false, false, true, true, false}},
-        {Workspace::Fleets, "Fleets", {true, false, false, false, true, true, false, false, false, false}},
-        {Workspace::Intelligence, "Intelligence", {true, true, false, false, false, true, true, false, false, false}},
-        {Workspace::History, "History", {false, false, false, false, false, false, false, false, false, true}}
+        {Workspace::System, "System", {true, true, false, false, false, false, false, false, false, false, false}},
+        {Workspace::Economy, "Economy", {false, false, false, false, false, false, false, false, false, true, false}},
+        {Workspace::Production, "Production", {false, false, false, true, false, false, false, false, true, true, false}},
+        {Workspace::Fleets, "Fleets", {true, false, false, false, true, true, false, true, false, false, false}},
+        {Workspace::Intelligence, "Intelligence", {true, true, false, false, false, true, true, false, false, false, false}},
+        {Workspace::History, "History", {false, false, false, false, false, false, false, false, false, false, true}}
     }};
     const auto matches = [&](const PanelVisibility& visibility, const Preset& preset) {
         for (std::size_t index = 0; index < operationalFields.size(); ++index) {

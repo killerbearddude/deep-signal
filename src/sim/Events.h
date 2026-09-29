@@ -127,6 +127,26 @@ struct SurveyProgramAuditEvent {
     std::string detail{};
 };
 
+// Freight audits carry typed custody identity; Departure amounts are actual
+// engine burn, while Transfer detail/receipts distinguish inventory transfers.
+enum class FreightProgramAuditKind {
+    Authorized, Amended, Suspended, Resumed, Cancelled, IssueAcknowledged,
+    LeaseAcquired, ShipmentPlanned, Transfer, Departure, Closed,
+    ReportPublished, IssueRaised
+};
+
+struct FreightProgramAuditEvent {
+    FreightProgramId programId;
+    FreightProgramAuditKind kind = FreightProgramAuditKind::Authorized;
+    std::optional<FleetId> fleetId = std::nullopt;
+    std::optional<ColonyId> colonyId = std::nullopt;
+    std::optional<PersonId> leaderId = std::nullopt;
+    int charterRevision = 1;
+    int shipmentNumber = 0;
+    double amount = 0.0;
+    std::string detail{};
+};
+
 // Emitted when validation rejects a command or a daily process detects invalid
 // state. The reason should be precise enough for UI display and test assertions.
 struct CommandRejectedEvent {
@@ -144,6 +164,7 @@ using SimEventPayload = std::variant<
     FleetArrivedEvent,
     ResourceSurveyCompletedEvent,
     SurveyProgramAuditEvent,
+    FreightProgramAuditEvent,
     CommandRejectedEvent
 >;
 

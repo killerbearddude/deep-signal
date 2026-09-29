@@ -149,7 +149,7 @@ void testEverySimulationAdvancePathStopsAtPendingIssue() {
     deep::Simulation sim{std::move(pending)};
     const auto detailed = sim.advanceDaysDetailed(90);
     require(detailed.interrupted && detailed.advancedDays == 0 &&
-            detailed.issueProgramId == sim.state().surveyPrograms.front().id &&
+            detailed.issueProgramId == deep::ProgramController{sim.state().surveyPrograms.front().id} &&
             sim.state().date.day == 0,
             "detailed advancement cannot bypass an unresolved issue");
     require(sim.advanceDays(5).empty() && sim.state().date.day == 0,
