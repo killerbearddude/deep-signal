@@ -1,6 +1,6 @@
 #include "save/Schema.h"
 
-// Responsibility: define the active v12 schema and inspect its structure.
+// Responsibility: define the active v13 schema and inspect its structure.
 // Tables mirror durable GameState records; event payloads remain inspectable JSON
 // text. Foreign keys and CHECK constraints provide a first line of validation,
 // not complete type/graph validation. Repository reconstruction and the domain
@@ -124,11 +124,11 @@ struct IndexShape {
 
 } // namespace
 
-void createSchemaV12(Database& db) {
+void createSchemaV13(Database& db) {
     db.execute(R"sql(
         CREATE TABLE schema_version (
             id INTEGER PRIMARY KEY CHECK(id = 1),
-            version INTEGER NOT NULL CHECK(version = 12)
+            version INTEGER NOT NULL CHECK(version = 13)
         );
 
         CREATE TABLE game_meta (
@@ -172,6 +172,7 @@ void createSchemaV12(Database& db) {
             failed_assignments INTEGER NOT NULL CHECK(failed_assignments >= 0),
             commendations INTEGER NOT NULL CHECK(commendations >= 0),
             controversies INTEGER NOT NULL CHECK(controversies >= 0),
+            survey_planning_approach INTEGER NOT NULL CHECK(survey_planning_approach BETWEEN 0 AND 1),
             FOREIGN KEY(institution_id) REFERENCES institutions(id)
         );
 
@@ -388,6 +389,137 @@ void createSchemaV12(Database& db) {
             FOREIGN KEY(fleet_id) REFERENCES fleets(id)
         );
 
+        CREATE TABLE survey_teams (
+            id INTEGER PRIMARY KEY NOT NULL CHECK(id > 0),
+            ordinal INTEGER NOT NULL UNIQUE CHECK(typeof(ordinal) = 'integer' AND ordinal >= 0),
+            name TEXT NOT NULL CHECK(length(name) > 0),
+            location_kind INTEGER NOT NULL CHECK(location_kind BETWEEN 0 AND 1),
+            colony_id INTEGER NULL CHECK(colony_id IS NULL OR colony_id > 0),
+            fleet_id INTEGER NULL CHECK(fleet_id IS NULL OR fleet_id > 0),
+            CHECK((location_kind = 0 AND colony_id IS NOT NULL AND fleet_id IS NULL)
+                OR (location_kind = 1 AND colony_id IS NULL AND fleet_id IS NOT NULL)),
+            FOREIGN KEY(colony_id) REFERENCES colonies(id),
+            FOREIGN KEY(fleet_id) REFERENCES fleets(id)
+        );
+
+        -- Canonical physical leases are nullable unique IDs on the program.
+        -- Requested IDs express intent and do not claim an unavailable asset.
+        CREATE TABLE survey_programs (
+            id INTEGER PRIMARY KEY NOT NULL CHECK(id > 0),
+            ordinal INTEGER NOT NULL UNIQUE CHECK(typeof(ordinal) = 'integer' AND ordinal >= 0),
+            name TEXT NOT NULL CHECK(length(name) > 0),
+            home_colony_id INTEGER NOT NULL CHECK(home_colony_id > 0),
+            pending_home_colony_id INTEGER NULL CHECK(pending_home_colony_id IS NULL OR pending_home_colony_id > 0),
+            requested_fleet_id INTEGER NULL CHECK(requested_fleet_id IS NULL OR requested_fleet_id > 0),
+            requested_leader_id INTEGER NULL CHECK(requested_leader_id IS NULL OR requested_leader_id > 0),
+            requested_team_id INTEGER NULL CHECK(requested_team_id IS NULL OR requested_team_id > 0),
+            max_additional_propellant REAL NULL CHECK(max_additional_propellant IS NULL OR max_additional_propellant >= 0.0),
+            home_stock_floor REAL NOT NULL CHECK(home_stock_floor >= 0.0),
+            return_contingency_fraction REAL NOT NULL CHECK(return_contingency_fraction >= 0.0),
+            created_day INTEGER NOT NULL CHECK(created_day >= 0),
+            charter_revision INTEGER NOT NULL CHECK(charter_revision > 0),
+            lifecycle INTEGER NOT NULL CHECK(lifecycle BETWEEN 0 AND 3),
+            closure INTEGER NOT NULL CHECK(closure BETWEEN 0 AND 2),
+            leased_fleet_id INTEGER NULL UNIQUE CHECK(leased_fleet_id IS NULL OR leased_fleet_id > 0),
+            leased_team_id INTEGER NULL UNIQUE CHECK(leased_team_id IS NULL OR leased_team_id > 0),
+            task INTEGER NOT NULL CHECK(task BETWEEN 0 AND 3),
+            task_body_id INTEGER NULL CHECK(task_body_id IS NULL OR task_body_id > 0),
+            task_fleet_id INTEGER NULL CHECK(task_fleet_id IS NULL OR task_fleet_id > 0),
+            task_team_id INTEGER NULL CHECK(task_team_id IS NULL OR task_team_id > 0),
+            task_leader_id INTEGER NULL CHECK(task_leader_id IS NULL OR task_leader_id > 0),
+            task_approach INTEGER NOT NULL CHECK(task_approach BETWEEN 0 AND 1),
+            task_pass_number INTEGER NOT NULL CHECK(task_pass_number >= 0),
+            work_days_completed INTEGER NOT NULL CHECK(work_days_completed >= 0),
+            first_work_day INTEGER NOT NULL CHECK(first_work_day >= 0),
+            last_selection_reason TEXT NOT NULL,
+            fuel_loaded REAL NOT NULL CHECK(fuel_loaded >= 0.0),
+            fuel_burned REAL NOT NULL CHECK(fuel_burned >= 0.0),
+            total_work_days INTEGER NOT NULL CHECK(total_work_days >= 0),
+            next_report_day INTEGER NOT NULL CHECK(next_report_day > 0),
+            report_start_day INTEGER NOT NULL CHECK(report_start_day >= 0),
+            reported_fuel_loaded REAL NOT NULL CHECK(reported_fuel_loaded >= 0.0),
+            reported_fuel_burned REAL NOT NULL CHECK(reported_fuel_burned >= 0.0),
+            reported_work_days INTEGER NOT NULL CHECK(reported_work_days >= 0),
+            reported_visits INTEGER NOT NULL CHECK(reported_visits >= 0),
+            issue_signature TEXT NOT NULL,
+            issue_message TEXT NOT NULL,
+            issue_acknowledged INTEGER NOT NULL CHECK(issue_acknowledged IN (0, 1)),
+            FOREIGN KEY(home_colony_id) REFERENCES colonies(id),
+            FOREIGN KEY(pending_home_colony_id) REFERENCES colonies(id),
+            FOREIGN KEY(requested_fleet_id) REFERENCES fleets(id),
+            FOREIGN KEY(requested_leader_id) REFERENCES people(id),
+            FOREIGN KEY(requested_team_id) REFERENCES survey_teams(id),
+            FOREIGN KEY(leased_fleet_id) REFERENCES fleets(id),
+            FOREIGN KEY(leased_team_id) REFERENCES survey_teams(id),
+            FOREIGN KEY(task_body_id) REFERENCES bodies(id),
+            FOREIGN KEY(task_fleet_id) REFERENCES fleets(id),
+            FOREIGN KEY(task_team_id) REFERENCES survey_teams(id),
+            FOREIGN KEY(task_leader_id) REFERENCES people(id)
+        );
+
+        CREATE TABLE survey_program_targets (
+            program_id INTEGER NOT NULL CHECK(program_id > 0),
+            ordinal INTEGER NOT NULL CHECK(typeof(ordinal) = 'integer' AND ordinal >= 0),
+            body_id INTEGER NOT NULL CHECK(body_id > 0),
+            priority INTEGER NOT NULL CHECK(priority >= 0),
+            requested_passes INTEGER NOT NULL CHECK(requested_passes > 0),
+            PRIMARY KEY(program_id, ordinal),
+            UNIQUE(program_id, body_id),
+            FOREIGN KEY(program_id) REFERENCES survey_programs(id),
+            FOREIGN KEY(body_id) REFERENCES bodies(id)
+        );
+
+        -- Receipts remain even when a later charter removes a target row.
+        CREATE TABLE survey_program_receipts (
+            program_id INTEGER NOT NULL CHECK(program_id > 0),
+            ordinal INTEGER NOT NULL CHECK(typeof(ordinal) = 'integer' AND ordinal >= 0),
+            body_id INTEGER NOT NULL CHECK(body_id > 0),
+            pass_number INTEGER NOT NULL CHECK(pass_number > 0),
+            fleet_id INTEGER NOT NULL CHECK(fleet_id > 0),
+            team_id INTEGER NOT NULL CHECK(team_id > 0),
+            leader_id INTEGER NULL CHECK(leader_id IS NULL OR leader_id > 0),
+            approach INTEGER NOT NULL CHECK(approach BETWEEN 0 AND 1),
+            first_work_day INTEGER NOT NULL CHECK(first_work_day >= 0),
+            completed_day INTEGER NOT NULL CHECK(completed_day >= first_work_day),
+            work_days INTEGER NOT NULL CHECK(work_days > 0),
+            deposits_improved INTEGER NOT NULL CHECK(deposits_improved >= 0),
+            average_confidence_before REAL NOT NULL CHECK(average_confidence_before BETWEEN 0.0 AND 1.0),
+            average_confidence_after REAL NOT NULL CHECK(average_confidence_after BETWEEN 0.0 AND 1.0),
+            PRIMARY KEY(program_id, ordinal),
+            UNIQUE(program_id, body_id, pass_number),
+            FOREIGN KEY(program_id) REFERENCES survey_programs(id),
+            FOREIGN KEY(body_id) REFERENCES bodies(id),
+            FOREIGN KEY(fleet_id) REFERENCES fleets(id),
+            FOREIGN KEY(team_id) REFERENCES survey_teams(id),
+            FOREIGN KEY(leader_id) REFERENCES people(id)
+        );
+
+        CREATE TABLE survey_program_reports (
+            program_id INTEGER NOT NULL CHECK(program_id > 0),
+            ordinal INTEGER NOT NULL CHECK(typeof(ordinal) = 'integer' AND ordinal >= 0),
+            start_day INTEGER NOT NULL CHECK(start_day >= 0),
+            end_day INTEGER NOT NULL CHECK(end_day >= start_day),
+            is_ninety_day_review INTEGER NOT NULL CHECK(is_ninety_day_review IN (0, 1)),
+            charter_revision INTEGER NOT NULL CHECK(charter_revision > 0),
+            leader_id INTEGER NULL CHECK(leader_id IS NULL OR leader_id > 0),
+            approach INTEGER NOT NULL CHECK(approach BETWEEN 0 AND 1),
+            visits_completed INTEGER NOT NULL CHECK(visits_completed >= 0),
+            work_days INTEGER NOT NULL CHECK(work_days >= 0),
+            fuel_loaded REAL NOT NULL CHECK(fuel_loaded >= 0.0),
+            fuel_burned REAL NOT NULL CHECK(fuel_burned >= 0.0),
+            fleet_id INTEGER NULL CHECK(fleet_id IS NULL OR fleet_id > 0),
+            team_id INTEGER NULL CHECK(team_id IS NULL OR team_id > 0),
+            fleet_body_id INTEGER NULL CHECK(fleet_body_id IS NULL OR fleet_body_id > 0),
+            waiting_reason TEXT NOT NULL,
+            PRIMARY KEY(program_id, ordinal),
+            UNIQUE(program_id, end_day),
+            FOREIGN KEY(program_id) REFERENCES survey_programs(id),
+            FOREIGN KEY(leader_id) REFERENCES people(id),
+            FOREIGN KEY(fleet_id) REFERENCES fleets(id),
+            FOREIGN KEY(team_id) REFERENCES survey_teams(id),
+            FOREIGN KEY(fleet_body_id) REFERENCES bodies(id)
+        );
+
         CREATE TABLE event_log (
             id INTEGER PRIMARY KEY NOT NULL CHECK(id > 0),
             day INTEGER NOT NULL CHECK(day >= 0),
@@ -406,6 +538,10 @@ void createSchemaV12(Database& db) {
         CREATE INDEX idx_fleets_owner_institution_id ON fleets(owner_institution_id);
         CREATE INDEX idx_fleet_order_queue_fleet_id ON fleet_order_queue(fleet_id);
         CREATE INDEX idx_ships_fleet_id ON ships(fleet_id);
+        CREATE INDEX idx_survey_teams_fleet_id ON survey_teams(fleet_id);
+        CREATE INDEX idx_survey_program_targets_body_id ON survey_program_targets(body_id);
+        CREATE INDEX idx_survey_program_receipts_body_id ON survey_program_receipts(body_id);
+        CREATE INDEX idx_survey_program_reports_end_day ON survey_program_reports(end_day);
         CREATE INDEX idx_events_day ON event_log(day);
     )sql");
 }
@@ -437,10 +573,10 @@ std::int64_t readSchemaVersion(Database& db) {
 namespace {
 
 void requireStructure(Database& db, const bool allowKnownTableTriggers) {
-    // Compare against a fresh v12 declaration. Load permits known-table
+    // Compare against a fresh v13 declaration. Load permits known-table
     // triggers only because it is read-only; Save rejects their write effects.
     Database reference{std::filesystem::path{":memory:"}};
-    createSchemaV12(reference);
+    createSchemaV13(reference);
     const auto expectedObjects = readUserObjects(reference);
     std::vector<std::string> tables;
     for (const auto& object : expectedObjects) {
@@ -463,7 +599,7 @@ void requireStructure(Database& db, const bool allowKnownTableTriggers) {
 
 } // namespace
 
-void requireV12Structure(Database& db, const bool allowKnownTableTriggers) {
+void requireV13Structure(Database& db, const bool allowKnownTableTriggers) {
     requireStructure(db, allowKnownTableTriggers);
 }
 

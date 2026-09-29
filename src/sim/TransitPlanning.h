@@ -61,4 +61,13 @@ namespace deep {
                                   std::int64_t departureDay,
                                   double burnAccelerationG = kPrototypeBurnAccelerationG) noexcept;
 
+// Shared departure fuel price after the currently appointed FleetCommander
+// modifier. Manual commands, delegated sorties, and previews must use this
+// same calculation; actual payment remains a separate simulation mutation.
+[[nodiscard]] double adjustedFleetMoveFuelCost(const GameState& state,
+                                               const Fleet& fleet,
+                                               BodyId originBodyId,
+                                               BodyId destinationBodyId,
+                                               std::int64_t departureDay) noexcept;
+
 } // namespace deep

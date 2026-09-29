@@ -88,6 +88,13 @@ bool samePayload(const deep::SimEventPayload& lhs, const deep::SimEventPayload& 
                    left.depositsImproved == right.depositsImproved &&
                    almostEqual(left.averageConfidenceBefore, right.averageConfidenceBefore) &&
                    almostEqual(left.averageConfidenceAfter, right.averageConfidenceAfter);
+        } else if constexpr (std::is_same_v<Left, deep::SurveyProgramAuditEvent>) {
+            return left.programId == right.programId && left.kind == right.kind &&
+                   left.fleetId == right.fleetId && left.bodyId == right.bodyId &&
+                   left.leaderId == right.leaderId && left.approach == right.approach &&
+                   left.charterRevision == right.charterRevision &&
+                   left.passNumber == right.passNumber &&
+                   almostEqual(left.fuelAmount, right.fuelAmount) && left.detail == right.detail;
         } else if constexpr (std::is_same_v<Left, deep::CommandRejectedEvent>) {
             return left.reason == right.reason;
         }
@@ -182,8 +189,8 @@ void test_fleet_arrived_round_trips() {
 }
 
 void test_resource_survey_completed_round_trips() {
-    // Resource surveys are durable exploration audit events. This prevents
-    // confidence improvements from losing their target or result summary.
+    // Resource surveys are durable exploration audit events. This protects
+    // both confidence gains and a valid empty result during save serialization.
     requireRoundTrip(deep::ResourceSurveyCompletedEvent{
         .fleetId = deep::FleetId{18},
         .bodyId = deep::BodyId{19},
@@ -191,6 +198,36 @@ void test_resource_survey_completed_round_trips() {
         .averageConfidenceBefore = 0.25,
         .averageConfidenceAfter = 0.75
     }, "resource_survey_completed payload round-trips");
+    requireRoundTrip(deep::ResourceSurveyCompletedEvent{
+        .fleetId = deep::FleetId{18},
+        .bodyId = deep::BodyId{19},
+        .depositsImproved = 0,
+        .averageConfidenceBefore = 0.0,
+        .averageConfidenceAfter = 0.0
+    }, "zero-information resource_survey_completed payload round-trips");
+}
+
+void test_survey_program_audit_round_trips() {
+    requireRoundTrip(deep::SurveyProgramAuditEvent{
+        .programId = deep::SurveyProgramId{21},
+        .kind = deep::SurveyProgramAuditKind::VisitCompleted,
+        .fleetId = deep::FleetId{4},
+        .bodyId = deep::BodyId{7},
+        .leaderId = deep::PersonId{3},
+        .approach = deep::SurveyPlanningApproach::PriorityFirst,
+        .charterRevision = 2,
+        .passNumber = 1,
+        .fuelAmount = 12.5,
+        .detail = "Survey \"pass\" complete\\review\nnext"
+    }, "survey_program_audit complete payload round-trips");
+    requireRoundTrip(deep::SurveyProgramAuditEvent{
+        .programId = deep::SurveyProgramId{22},
+        .kind = deep::SurveyProgramAuditKind::Authorized,
+        .fleetId = std::nullopt,
+        .bodyId = std::nullopt,
+        .leaderId = std::nullopt,
+        .detail = "Waiting for assigned assets"
+    }, "survey_program_audit optional identities round-trip");
 }
 
 void test_command_rejected_round_trips_escaped_reason() {
@@ -226,6 +263,14 @@ void test_invalid_mineral_ordinal_is_rejected() {
         static_cast<void>(deep::save::eventPayloadFromJson(
             "mineral_extracted",
             R"({"colony_id":1,"body_id":2,"mineral":14,"amount":1.0,"remaining_deposit":2.0})"));
+    });
+}
+
+void test_invalid_survey_program_audit_enum_is_rejected() {
+    requireThrows("invalid survey program audit kind is rejected", [] {
+        static_cast<void>(deep::save::eventPayloadFromJson(
+            "survey_program_audit",
+            R"({"program_id":1,"kind":99,"fleet_id":0,"body_id":0,"leader_id":0,"approach":0,"charter_revision":1,"pass_number":0,"fuel_amount":0,"detail":"x"})"));
     });
 }
 
@@ -298,6 +343,8 @@ void test_event_type_names_are_stable_schema_v1_strings() {
             "fleet_arrived type name is stable");
     require(deep::save::eventTypeName(deep::ResourceSurveyCompletedEvent{}) == "resource_survey_completed",
             "resource_survey_completed type name is stable");
+    require(deep::save::eventTypeName(deep::SurveyProgramAuditEvent{}) == "survey_program_audit",
+            "survey_program_audit type name is stable");
     require(deep::save::eventTypeName(deep::CommandRejectedEvent{}) == "command_rejected",
             "command_rejected type name is stable");
 }
@@ -310,10 +357,12 @@ void runAllTests() {
     test_fleet_order_assigned_round_trips();
     test_fleet_arrived_round_trips();
     test_resource_survey_completed_round_trips();
+    test_survey_program_audit_round_trips();
     test_command_rejected_round_trips_escaped_reason();
     test_unknown_event_type_is_rejected();
     test_missing_required_field_is_rejected();
     test_invalid_mineral_ordinal_is_rejected();
+    test_invalid_survey_program_audit_enum_is_rejected();
     test_non_finite_numeric_payload_is_rejected();
     test_non_finite_numeric_serialization_is_rejected();
     test_integer_overflow_is_rejected();

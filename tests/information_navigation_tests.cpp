@@ -69,10 +69,10 @@ void require(const bool condition, const std::string_view message) {
     return world;
 }
 
-[[nodiscard]] std::array<bool, 11> visibility(const PanelVisibility& value) {
+[[nodiscard]] std::array<bool, 12> visibility(const PanelVisibility& value) {
     return {value.saveLoad, value.timeControl, value.strategicMap, value.bodies,
         value.inspector, value.colonies, value.fleets, value.fleetOrders,
-        value.shipyard, value.economyForecast, value.eventLog};
+        value.surveyPrograms, value.shipyard, value.economyForecast, value.eventLog};
 }
 
 struct Fixture {

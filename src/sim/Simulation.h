@@ -10,8 +10,31 @@
 #include "sim/GameState.h"
 
 #include <vector>
+#include <optional>
+#include <string>
 
 namespace deep {
+
+// Actual elapsed time and consequential interruption from every advance path.
+// Existing callers may still use advanceDays() for events; it delegates to this
+// same bounded runner and therefore cannot bypass decision boundaries.
+struct AdvanceResult {
+    int requestedDays = 0;
+    int advancedDays = 0;
+    bool interrupted = false;
+    std::optional<SurveyProgramId> issueProgramId = std::nullopt;
+    std::string stopReason{};
+    std::vector<SimEvent> events{};
+};
+
+// Applies one physically authorized resource survey to the target's still
+// uncertain deposits and returns its compact result payload. The caller must
+// validate fleet location and powered equipment, then emit the returned event
+// once; this helper does not dispatch commands or append audit history. A body
+// with no improvable deposits yields a valid zero-information result.
+[[nodiscard]] ResourceSurveyCompletedEvent applyResourceSurveyResult(GameState& state,
+                                                                     FleetId fleetId,
+                                                                     BodyId bodyId) noexcept;
 
 // Single-owner, single-threaded simulation engine. This class intentionally has
 // no UI, SDL, ImGui, SQLite, filesystem, or wall-clock dependencies.
@@ -36,11 +59,15 @@ public:
     // This is not a rollback transaction if an exception interrupts execution.
     CommandResult execute(const SimCommand& command);
 
-    // Advances the simulation by a positive number of days and returns only the
+    // Advances by at most the requested positive number of days and returns only the
     // events emitted during this call. All returned events are also appended to
-    // GameState::eventLog. A non-positive count emits one rejection and leaves
-    // the date unchanged. Daily economy telemetry remains in state, not here.
+    // GameState::eventLog. It stops at an unacknowledged consequential issue;
+    // use advanceDaysDetailed to read elapsed days and the reason. A non-positive
+    // count emits one rejection and leaves the date unchanged.
     std::vector<SimEvent> advanceDays(int days);
+    // Returns actual elapsed days, emitted events, and any issue after the last
+    // fully executed daily phase. No entry point can bypass this runner.
+    [[nodiscard]] AdvanceResult advanceDaysDetailed(int days);
 
 private:
     // Movement duration is computed from deterministic sustained-burn transit
@@ -55,6 +82,12 @@ private:
     CommandResult clearFleetOrderQueue(const ClearFleetOrderQueueCommand& command);
     CommandResult cancelFleetOrder(const CancelFleetOrderCommand& command);
     CommandResult resourceSurvey(const ResourceSurveyCommand& command);
+    CommandResult createSurveyProgram(const CreateSurveyProgramCommand& command);
+    CommandResult amendSurveyProgram(const AmendSurveyProgramCommand& command);
+    CommandResult suspendSurveyProgram(const SuspendSurveyProgramCommand& command);
+    CommandResult resumeSurveyProgram(const ResumeSurveyProgramCommand& command);
+    CommandResult cancelSurveyProgram(const CancelSurveyProgramCommand& command);
+    CommandResult acknowledgeSurveyProgramIssue(const AcknowledgeSurveyProgramIssueCommand& command);
     CommandResult assignAppointment(const AssignAppointmentCommand& command);
     CommandResult setColonyProcessingPolicy(const SetColonyProcessingPolicyCommand& command);
 
@@ -63,6 +96,15 @@ private:
     // Returns false if no leg starts. emitted is null for command-time starts
     // whose events go only to GameState; daily ticks also collect returned events.
     bool startNextQueuedFleetOrder(Fleet& fleet, std::vector<SimEvent>* emitted);
+
+    // Shared physical departure used by a direct command and a leased program.
+    // The program hook verifies lease identity before calling beginFleetMove.
+    [[nodiscard]] std::optional<std::string> beginFleetMove(Fleet& fleet, BodyId destination,
+                                                              double& chargedFuel,
+                                                              std::vector<SimEvent>* emitted);
+    bool startProgramMove(SurveyProgramId programId, FleetId fleetId, BodyId destination,
+                          double& chargedFuel, std::vector<SimEvent>& emitted);
+    [[nodiscard]] std::optional<SurveyProgramId> controllingSurveyProgram(FleetId fleetId) const noexcept;
 
     void simulateOneDay(std::vector<SimEvent>& emitted);
     void simulateMining(std::vector<SimEvent>& emitted);

@@ -6,12 +6,14 @@
 #include "sim/ScenarioFactory.h"
 #include "sim/ShipDesignRules.h"
 #include "sim/Simulation.h"
+#include "sim/TransitPlanning.h"
 
 // Regression tests for SQLite save/load round-tripping.
 // These tests verify that the current schema persists durable Prototype 0.1 state,
 // including ID counters, institutions, ownership, production, fleet orders, and events.
 // Runtime-only economy telemetry is tested separately as intentionally transient.
 
+#include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <exception>
@@ -22,8 +24,10 @@
 #include <string>
 #include <string_view>
 #include <type_traits>
+#include <utility>
 #include <variant>
 #include <vector>
+#include <unistd.h>
 
 namespace {
 
@@ -129,6 +133,13 @@ bool samePayload(const deep::SimEventPayload& lhs, const deep::SimEventPayload& 
                    left.depositsImproved == right.depositsImproved &&
                    almostEqual(left.averageConfidenceBefore, right.averageConfidenceBefore) &&
                    almostEqual(left.averageConfidenceAfter, right.averageConfidenceAfter);
+        } else if constexpr (std::is_same_v<Left, deep::SurveyProgramAuditEvent>) {
+            return left.programId == right.programId && left.kind == right.kind &&
+                   left.fleetId == right.fleetId && left.bodyId == right.bodyId &&
+                   left.leaderId == right.leaderId && left.approach == right.approach &&
+                   left.charterRevision == right.charterRevision &&
+                   left.passNumber == right.passNumber &&
+                   almostEqual(left.fuelAmount, right.fuelAmount) && left.detail == right.detail;
         } else if constexpr (std::is_same_v<Left, deep::CommandRejectedEvent>) {
             return left.reason == right.reason;
         }
@@ -152,6 +163,10 @@ void requireSameState(const deep::GameState& expected, const deep::GameState& ac
     require(expected.ids.nextShipId == actual.ids.nextShipId, "ship counter round-trips");
     require(expected.ids.nextFleetId == actual.ids.nextFleetId, "fleet counter round-trips");
     require(expected.ids.nextEventId == actual.ids.nextEventId, "event counter round-trips");
+    require(expected.ids.nextSurveyProgramId == actual.ids.nextSurveyProgramId,
+            "survey program counter round-trips");
+    require(expected.ids.nextSurveyTeamId == actual.ids.nextSurveyTeamId,
+            "survey team counter round-trips");
 
     require(expected.starSystems.size() == actual.starSystems.size(), "star-system row count round-trips");
     for (std::size_t i = 0; i < expected.starSystems.size(); ++i) {
@@ -196,6 +211,8 @@ void requireSameState(const deep::GameState& expected, const deep::GameState& ac
                 "person commendation count round-trips");
         require(left.serviceRecord.controversies == right.serviceRecord.controversies,
                 "person controversy count round-trips");
+        require(left.surveyPlanningApproach == right.surveyPlanningApproach,
+                "person survey planning approach round-trips");
     }
 
     require(expected.appointments.size() == actual.appointments.size(), "appointment row count round-trips");
@@ -351,6 +368,91 @@ void requireSameState(const deep::GameState& expected, const deep::GameState& ac
         require(almostEqual(left.fuel, right.fuel), "ship fuel round-trips");
     }
 
+    require(expected.surveyTeams.size() == actual.surveyTeams.size(), "survey team count round-trips");
+    for (std::size_t i = 0; i < expected.surveyTeams.size(); ++i) {
+        const auto& left = expected.surveyTeams.at(i);
+        const auto& right = actual.surveyTeams.at(i);
+        require(left.id == right.id && left.name == right.name &&
+                left.locationKind == right.locationKind && left.colonyId == right.colonyId &&
+                left.fleetId == right.fleetId, "survey team identity and location round-trip");
+    }
+
+    require(expected.surveyPrograms.size() == actual.surveyPrograms.size(), "survey program count round-trips");
+    for (std::size_t i = 0; i < expected.surveyPrograms.size(); ++i) {
+        const auto& left = expected.surveyPrograms.at(i);
+        const auto& right = actual.surveyPrograms.at(i);
+        require(left.id == right.id && left.charter.name == right.charter.name &&
+                left.charter.homeColonyId == right.charter.homeColonyId &&
+                left.pendingHomeColonyId == right.pendingHomeColonyId &&
+                left.charter.requestedFleetId == right.charter.requestedFleetId &&
+                left.charter.requestedLeaderId == right.charter.requestedLeaderId &&
+                left.charter.requestedTeamId == right.charter.requestedTeamId &&
+                left.charter.policy.maxAdditionalPropellant == right.charter.policy.maxAdditionalPropellant &&
+                almostEqual(left.charter.policy.homeStockFloor, right.charter.policy.homeStockFloor) &&
+                almostEqual(left.charter.policy.returnContingencyFraction,
+                            right.charter.policy.returnContingencyFraction),
+                "survey program charter and policy round-trip");
+        require(left.charter.targets.size() == right.charter.targets.size(), "survey target count round-trips");
+        for (std::size_t j = 0; j < left.charter.targets.size(); ++j) {
+            const auto& a = left.charter.targets.at(j);
+            const auto& b = right.charter.targets.at(j);
+            require(a.bodyId == b.bodyId && a.priority == b.priority &&
+                    a.requestedPasses == b.requestedPasses, "survey target order and quotas round-trip");
+        }
+        require(left.createdDay == right.createdDay && left.charterRevision == right.charterRevision &&
+                left.lifecycle == right.lifecycle && left.closure == right.closure &&
+                left.leasedFleetId == right.leasedFleetId && left.leasedTeamId == right.leasedTeamId &&
+                left.task == right.task && left.taskBodyId == right.taskBodyId &&
+                left.taskFleetId == right.taskFleetId && left.taskTeamId == right.taskTeamId &&
+                left.taskLeaderId == right.taskLeaderId && left.taskApproach == right.taskApproach &&
+                left.taskPassNumber == right.taskPassNumber &&
+                left.workDaysCompleted == right.workDaysCompleted &&
+                left.firstWorkDay == right.firstWorkDay &&
+                left.lastSelectionReason == right.lastSelectionReason,
+                "survey program lifecycle, lease, and partial task round-trip");
+        require(left.receipts.size() == right.receipts.size(), "survey receipt count round-trips");
+        for (std::size_t j = 0; j < left.receipts.size(); ++j) {
+            const auto& a = left.receipts.at(j);
+            const auto& b = right.receipts.at(j);
+            require(a.bodyId == b.bodyId && a.passNumber == b.passNumber &&
+                    a.fleetId == b.fleetId && a.teamId == b.teamId && a.leaderId == b.leaderId &&
+                    a.approach == b.approach && a.firstWorkDay == b.firstWorkDay &&
+                    a.completedDay == b.completedDay && a.workDays == b.workDays &&
+                    a.depositsImproved == b.depositsImproved &&
+                    almostEqual(a.averageConfidenceBefore, b.averageConfidenceBefore) &&
+                    almostEqual(a.averageConfidenceAfter, b.averageConfidenceAfter),
+                    "survey visit receipt order and facts round-trip");
+        }
+        require(almostEqual(left.fuelLoaded, right.fuelLoaded) &&
+                almostEqual(left.fuelBurned, right.fuelBurned) &&
+                left.totalWorkDays == right.totalWorkDays &&
+                left.nextReportDay == right.nextReportDay &&
+                left.reportStartDay == right.reportStartDay &&
+                almostEqual(left.reportedFuelLoaded, right.reportedFuelLoaded) &&
+                almostEqual(left.reportedFuelBurned, right.reportedFuelBurned) &&
+                left.reportedWorkDays == right.reportedWorkDays &&
+                left.reportedVisits == right.reportedVisits,
+                "survey fuel totals and reporting cursor round-trip");
+        require(left.reports.size() == right.reports.size(), "survey report count round-trips");
+        for (std::size_t j = 0; j < left.reports.size(); ++j) {
+            const auto& a = left.reports.at(j);
+            const auto& b = right.reports.at(j);
+            require(a.startDay == b.startDay && a.endDay == b.endDay &&
+                    a.isNinetyDayReview == b.isNinetyDayReview &&
+                    a.charterRevision == b.charterRevision && a.leaderId == b.leaderId &&
+                    a.approach == b.approach && a.visitsCompleted == b.visitsCompleted &&
+                    a.workDays == b.workDays && almostEqual(a.fuelLoaded, b.fuelLoaded) &&
+                    almostEqual(a.fuelBurned, b.fuelBurned) && a.fleetId == b.fleetId &&
+                    a.teamId == b.teamId && a.fleetBodyId == b.fleetBodyId &&
+                    a.waitingReason == b.waitingReason,
+                    "survey report interval, accounting, and snapshot round-trip");
+        }
+        require(left.issue.signature == right.issue.signature &&
+                left.issue.message == right.issue.message &&
+                left.issue.acknowledged == right.issue.acknowledged,
+                "survey issue identity and acknowledgment round-trip");
+    }
+
     require(expected.eventLog.size() == actual.eventLog.size(), "event log row count round-trips");
     for (std::size_t i = 0; i < expected.eventLog.size(); ++i) {
         const deep::SimEvent& left = expected.eventLog.at(i);
@@ -372,6 +474,410 @@ std::filesystem::path malformedSavePath(const std::string_view suffix) {
     // Each malformed-save test gets its own file so one failed corruption step
     // cannot influence a later validation case.
     return std::filesystem::temp_directory_path() / ("deep_signal_malformed_" + std::string{suffix} + ".sqlite");
+}
+
+class UniqueProgramSavePath final {
+public:
+    UniqueProgramSavePath() {
+        std::string pattern = (std::filesystem::temp_directory_path() /
+            "deep_signal_p3a_return_XXXXXX").string();
+        const int descriptor = mkstemp(pattern.data());
+        require(descriptor >= 0, "create unique P3A return-issue save path");
+        close(descriptor);
+        path_ = pattern;
+        std::filesystem::remove(path_);
+    }
+    ~UniqueProgramSavePath() {
+        std::error_code ignored;
+        std::filesystem::remove(path_, ignored);
+        std::filesystem::remove(path_.string() + "-wal", ignored);
+        std::filesystem::remove(path_.string() + "-shm", ignored);
+        std::filesystem::remove(path_.string() + "-journal", ignored);
+    }
+    UniqueProgramSavePath(const UniqueProgramSavePath&) = delete;
+    UniqueProgramSavePath& operator=(const UniqueProgramSavePath&) = delete;
+    [[nodiscard]] const std::filesystem::path& path() const noexcept { return path_; }
+private:
+    std::filesystem::path path_;
+};
+
+deep::GameState makeWaitingSurveyProgramState() {
+    deep::GameState state = deep::createHomeSystemScenario();
+    const deep::SurveyTeamId teamId{state.ids.nextSurveyTeamId++};
+    const deep::SurveyProgramId programId{state.ids.nextSurveyProgramId++};
+    state.people.front().surveyPlanningApproach = deep::SurveyPlanningApproach::PriorityFirst;
+    state.surveyTeams.push_back(deep::SurveyTeam{
+        .id = teamId,
+        .name = "Terra field survey team",
+        .locationKind = deep::SurveyTeamLocationKind::Colony,
+        .colonyId = state.colonies.front().id,
+        .fleetId = std::nullopt
+    });
+    deep::SurveyProgram program;
+    program.id = programId;
+    program.charter.name = "Outer belt survey";
+    program.charter.homeColonyId = state.colonies.front().id;
+    program.charter.requestedLeaderId = state.people.front().id;
+    program.charter.requestedTeamId = teamId;
+    program.charter.targets = {
+        deep::SurveyProgramTarget{.bodyId = state.bodies.at(2).id, .priority = 2, .requestedPasses = 1},
+        deep::SurveyProgramTarget{.bodyId = state.bodies.at(1).id, .priority = 1, .requestedPasses = 2}
+    };
+    program.charter.policy.maxAdditionalPropellant = 45.0;
+    program.charter.policy.homeStockFloor = 10.0;
+    program.charter.policy.returnContingencyFraction = 0.2;
+    state.surveyPrograms.push_back(std::move(program));
+    return state;
+}
+
+void corruptSave(const std::filesystem::path& path, std::string_view sql,
+                 bool ignoreCheckConstraints, bool disableForeignKeys);
+void requireRepositoryLoadFails(const std::filesystem::path& path, std::string_view message);
+void requireServiceLoadFailsWithoutStateReplacement(const std::filesystem::path& path);
+
+void test_waiting_survey_program_round_trips() {
+    const auto path = malformedSavePath("waiting_survey_program");
+    std::filesystem::remove(path);
+    const deep::GameState source = makeWaitingSurveyProgramState();
+    deep::save::SaveGameRepository::save(path, source);
+    requireSameState(source, deep::save::SaveGameRepository::load(path));
+    std::filesystem::remove(path);
+}
+
+deep::SurveyProgramCharter makeDelegatedSurveyCharter(const deep::GameState& state) {
+    deep::SurveyProgramCharter charter;
+    charter.name = "Three target survey";
+    charter.homeColonyId = state.colonies.back().id;
+    charter.requestedFleetId = state.fleets.front().id;
+    charter.requestedLeaderId = state.people.back().id;
+    charter.requestedTeamId = state.surveyTeams.front().id;
+    charter.policy.maxAdditionalPropellant = 2'000.0;
+    charter.policy.returnContingencyFraction = 0.1;
+    for (std::size_t i = state.bodies.size() - 3; i < state.bodies.size(); ++i) {
+        charter.targets.push_back(deep::SurveyProgramTarget{
+            .bodyId = state.bodies.at(i).id, .priority = 0, .requestedPasses = 1
+        });
+    }
+    return charter;
+}
+
+void test_active_survey_program_continues_after_save_load() {
+    const auto path = malformedSavePath("active_survey_program");
+    std::filesystem::remove(path);
+    deep::Simulation uninterrupted{deep::createDelegatedSurveyScenario()};
+    const deep::SurveyProgramCharter charter = makeDelegatedSurveyCharter(uninterrupted.state());
+    require(uninterrupted.execute(deep::CreateSurveyProgramCommand{charter}).ok,
+            "ready delegated survey charter is authorized");
+
+    const auto nextDay = [&uninterrupted]() {
+        const auto result = uninterrupted.advanceDaysDetailed(1);
+        require(result.advancedDays == 1 && !result.interrupted,
+                "delegated survey fixture advances one full day without issue");
+    };
+    nextDay();
+    require(uninterrupted.state().surveyPrograms.front().fuelLoaded > 0.0,
+            "first program day records an actual refill");
+
+    std::optional<deep::Simulation> resumed;
+    const auto reload = [&]() {
+        deep::save::SaveGameRepository::save(path, uninterrupted.state());
+        deep::GameState loaded = deep::save::SaveGameRepository::load(path);
+        requireSameState(uninterrupted.state(), loaded);
+        resumed.emplace(std::move(loaded));
+    };
+    reload();
+    for (int day = 2; day <= 31; ++day) {
+        nextDay();
+        const auto result = resumed->advanceDaysDetailed(1);
+        require(result.advancedDays == 1 && !result.interrupted,
+                "loaded delegated survey continues one full day");
+        requireSameState(uninterrupted.state(), resumed->state());
+        if (day == 4) {
+            require(uninterrupted.state().surveyPrograms.front().workDaysCompleted > 0,
+                    "partly completed visit is present at Save/Load checkpoint");
+            reload();
+        } else if (day == 8) {
+            require(uninterrupted.state().surveyPrograms.front().receipts.size() == 1,
+                    "first visit receipt is present at Save/Load checkpoint");
+            reload();
+        } else if (day == 30) {
+            require(uninterrupted.state().surveyPrograms.front().reports.size() == 1,
+                    "30-day report is present at Save/Load checkpoint");
+            reload();
+        }
+    }
+    require(uninterrupted.state().surveyPrograms.front().receipts.size() == 3 &&
+            uninterrupted.state().surveyPrograms.front().reports.size() == 1,
+            "resuming after report boundary does not duplicate visit or report");
+    std::filesystem::remove(path);
+}
+
+void test_completion_return_issue_allows_amend_and_suspend_after_load() {
+    // This fixture removes onboard fuel only after a real final field pass. It
+    // models a changed physical return condition without adding remote refuel
+    // mechanics to P3A; both save branches later receive the same fixture input.
+    deep::GameState fixture = deep::createDelegatedSurveyScenario();
+    const deep::BodyId firstTarget = fixture.bodies.back().id;
+    fixture.bodies.back().x = 20.0; // Multi-day real transit, still within tankage.
+    deep::Simulation setup{std::move(fixture)};
+    auto charter = makeDelegatedSurveyCharter(setup.state());
+    charter.targets = {{firstTarget, 3, 1}};
+    require(setup.execute(deep::CreateSurveyProgramCommand{charter}).ok,
+            "final-pass return-issue fixture authorizes one target");
+    for (int day = 0; day < 80; ++day) {
+        const auto& program = setup.state().surveyPrograms.front();
+        if (program.lifecycle == deep::SurveyProgramLifecycle::Closing &&
+            program.closure == deep::SurveyProgramClosure::Completed &&
+            program.task == deep::SurveyProgramTask::Return) break;
+        const auto step = setup.advanceDaysDetailed(1);
+        require(step.advancedDays == 1 && !step.interrupted,
+                "final field pass reaches its physical return obligation");
+    }
+    const auto& beforeShortage = setup.state().surveyPrograms.front();
+    require(beforeShortage.lifecycle == deep::SurveyProgramLifecycle::Closing &&
+            beforeShortage.closure == deep::SurveyProgramClosure::Completed &&
+            beforeShortage.receipts.size() == 1 &&
+            setup.state().fleets.back().currentBodyId == firstTarget &&
+            setup.state().fleets.back().activeOrder.type == deep::FleetOrderType::None,
+            "completed final pass is stationary at target before return");
+
+    deep::GameState depleted = setup.state();
+    depleted.ships.back().fuel = 0.0;
+    deep::Simulation blocked{std::move(depleted)};
+    const auto stopped = blocked.advanceDaysDetailed(10);
+    const auto& issueProgram = blocked.state().surveyPrograms.front();
+    require(stopped.interrupted && stopped.advancedDays == 1 &&
+            issueProgram.lifecycle == deep::SurveyProgramLifecycle::Closing &&
+            issueProgram.closure == deep::SurveyProgramClosure::Completed &&
+            !issueProgram.issue.acknowledged &&
+            issueProgram.issue.signature.find("return:") == 0,
+            "unaffordable completion return raises a consequential issue after one full day");
+    UniqueProgramSavePath save;
+    deep::save::SaveGameRepository::save(save.path(), blocked.state());
+    deep::GameState loadedIssue = deep::save::SaveGameRepository::load(save.path());
+    requireSameState(blocked.state(), loadedIssue);
+
+    const auto replenishForNextReturn = [](deep::GameState state) {
+        const auto& program = state.surveyPrograms.front();
+        const auto& fleet = state.fleets.back();
+        const auto home = std::find_if(state.colonies.begin(), state.colonies.end(),
+            [&program](const deep::Colony& colony) { return colony.id == program.charter.homeColonyId; });
+        require(home != state.colonies.end(), "return home exists");
+        const double returnFuel = deep::adjustedFleetMoveFuelCost(
+            state, fleet, fleet.currentBodyId, home->bodyId, state.date.day + 1);
+        require(std::isfinite(returnFuel) && returnFuel + 5.0 < 1000.0,
+                "fixture return replenishment fits the built tank");
+        state.ships.back().fuel = returnFuel + 5.0;
+        return state;
+    };
+    const auto advanceEquivalentToClosure = [](deep::Simulation& left, deep::Simulation& right,
+                                                const int limit) {
+        for (int day = 0; day < limit; ++day) {
+            if (left.state().surveyPrograms.front().lifecycle == deep::SurveyProgramLifecycle::Closed) break;
+            const auto a = left.advanceDaysDetailed(1);
+            const auto b = right.advanceDaysDetailed(1);
+            require(a.advancedDays == 1 && b.advancedDays == 1 && !a.interrupted && !b.interrupted,
+                    "equivalent restored return branches advance without a new issue");
+            requireSameState(left.state(), right.state());
+        }
+        require(left.state().surveyPrograms.front().lifecycle == deep::SurveyProgramLifecycle::Closed &&
+                left.state().surveyPrograms.front().closure == deep::SurveyProgramClosure::Completed,
+                "restored physical return eventually closes the completed charter");
+    };
+
+    deep::Simulation amended{loadedIssue};
+    auto extended = amended.state().surveyPrograms.front().charter;
+    extended.targets.push_back(deep::SurveyProgramTarget{
+        .bodyId = amended.state().bodies.at(amended.state().bodies.size() - 2).id,
+        .priority = 1, .requestedPasses = 1
+    });
+    const auto amendment = amended.execute(deep::AmendSurveyProgramCommand{
+        .programId = amended.state().surveyPrograms.front().id, .charter = extended
+    });
+    const auto& reopened = amended.state().surveyPrograms.front();
+    require(amendment.ok && reopened.lifecycle == deep::SurveyProgramLifecycle::Authorized &&
+            reopened.closure == deep::SurveyProgramClosure::None &&
+            reopened.task == deep::SurveyProgramTask::Return &&
+            reopened.taskFleetId == issueProgram.taskFleetId &&
+            reopened.taskTeamId == issueProgram.taskTeamId &&
+            reopened.taskLeaderId == issueProgram.taskLeaderId &&
+            amended.state().fleets.back().currentBodyId == firstTarget &&
+            amended.state().fleets.back().activeOrder.type == deep::FleetOrderType::None &&
+            amended.state().ships.back().fuel == 0.0 &&
+            amended.state().surveyPrograms.front().fuelBurned == issueProgram.fuelBurned,
+            "amendment reopens authority without moving, refueling, or replacing committed task assets");
+    deep::save::SaveGameRepository::save(save.path(), amended.state());
+    deep::GameState loadedAmendment = deep::save::SaveGameRepository::load(save.path());
+    requireSameState(amended.state(), loadedAmendment);
+    deep::Simulation amendedLive{replenishForNextReturn(amended.state())};
+    deep::Simulation amendedLoaded{replenishForNextReturn(std::move(loadedAmendment))};
+    advanceEquivalentToClosure(amendedLive, amendedLoaded, 120);
+    require(amendedLive.state().surveyPrograms.front().receipts.size() == 2,
+            "added target executes only after committed return and next planning boundary");
+
+    deep::Simulation suspended{blocked.state()};
+    const auto pause = suspended.execute(deep::SuspendSurveyProgramCommand{
+        .programId = suspended.state().surveyPrograms.front().id
+    });
+    const auto& paused = suspended.state().surveyPrograms.front();
+    require(pause.ok && paused.lifecycle == deep::SurveyProgramLifecycle::Suspended &&
+            paused.closure == deep::SurveyProgramClosure::None &&
+            paused.task == deep::SurveyProgramTask::Return &&
+            paused.taskFleetId == issueProgram.taskFleetId &&
+            paused.taskTeamId == issueProgram.taskTeamId &&
+            suspended.state().fleets.back().currentBodyId == firstTarget &&
+            suspended.state().ships.back().fuel == 0.0,
+            "suspension pauses completion return without teleporting or canceling its task");
+    deep::save::SaveGameRepository::save(save.path(), suspended.state());
+    deep::GameState loadedSuspension = deep::save::SaveGameRepository::load(save.path());
+    requireSameState(suspended.state(), loadedSuspension);
+    deep::Simulation suspendedLive{replenishForNextReturn(suspended.state())};
+    deep::Simulation suspendedLoaded{replenishForNextReturn(std::move(loadedSuspension))};
+    const auto resume = deep::ResumeSurveyProgramCommand{suspendedLive.state().surveyPrograms.front().id};
+    require(suspendedLive.execute(resume).ok && suspendedLoaded.execute(resume).ok,
+            "both suspended branches resume the same unfinished return");
+    advanceEquivalentToClosure(suspendedLive, suspendedLoaded, 80);
+    require(suspendedLive.state().surveyPrograms.front().receipts.size() == 1,
+            "resume closes after original visit without duplicate fieldwork");
+}
+
+void test_pending_survey_home_amendment_round_trips() {
+    const auto path = malformedSavePath("pending_survey_home");
+    std::filesystem::remove(path);
+    deep::Simulation sim{deep::createDelegatedSurveyScenario()};
+    require(sim.execute(deep::CreateSurveyProgramCommand{makeDelegatedSurveyCharter(sim.state())}).ok,
+            "pending-home fixture authorizes program");
+    require(sim.advanceDaysDetailed(4).advancedDays == 4,
+            "pending-home fixture reaches a partly completed visit");
+    const deep::SurveyProgram& before = sim.state().surveyPrograms.front();
+    require(before.task == deep::SurveyProgramTask::Survey &&
+            before.workDaysCompleted > 0 && !before.lastSelectionReason.empty(),
+            "pending-home fixture retains active task and decision rationale");
+    deep::SurveyProgramCharter amended = before.charter;
+    amended.homeColonyId = sim.state().colonies.front().id;
+    require(sim.execute(deep::AmendSurveyProgramCommand{.programId = before.id, .charter = amended}).ok,
+            "home amendment is accepted while survey visit remains committed");
+    const deep::SurveyProgram& pending = sim.state().surveyPrograms.front();
+    require(pending.pendingHomeColonyId == amended.homeColonyId &&
+            pending.charter.homeColonyId != amended.homeColonyId,
+            "new home remains pending until a safe physical boundary");
+    deep::save::SaveGameRepository::save(path, sim.state());
+    deep::GameState loaded = deep::save::SaveGameRepository::load(path);
+    requireSameState(sim.state(), loaded);
+    deep::Simulation resumed{std::move(loaded)};
+    require(sim.advanceDaysDetailed(1).advancedDays == 1 &&
+            resumed.advanceDaysDetailed(1).advancedDays == 1,
+            "both original and loaded pending-home worlds advance one day");
+    requireSameState(sim.state(), resumed.state());
+    std::filesystem::remove(path);
+}
+
+void test_malformed_survey_history_rows_are_rejected() {
+    const auto base = malformedSavePath("program_history_base");
+    std::filesystem::remove(base);
+    deep::Simulation sim{deep::createDelegatedSurveyScenario()};
+    require(sim.execute(deep::CreateSurveyProgramCommand{makeDelegatedSurveyCharter(sim.state())}).ok,
+            "history corruption fixture authorizes program");
+    const auto advance = sim.advanceDaysDetailed(30);
+    require(advance.advancedDays == 30 && !advance.interrupted &&
+            sim.state().surveyPrograms.front().receipts.size() == 3 &&
+            sim.state().surveyPrograms.front().reports.size() == 1,
+            "history corruption fixture has completed receipts and a report");
+    deep::save::SaveGameRepository::save(base, sim.state());
+
+    const struct Corruption {
+        const char* name;
+        const char* sql;
+        bool ignoreChecks = false;
+        bool disableForeignKeys = false;
+    } corruptions[] = {
+        {"receipt_gap", "UPDATE survey_program_receipts SET ordinal=7 WHERE ordinal=2;"},
+        {"report_gap", "UPDATE survey_program_reports SET ordinal=7 WHERE ordinal=0;"},
+        {"receipt_overlap", "UPDATE survey_program_receipts SET first_work_day=5 WHERE ordinal=1;"},
+        {"receipt_pass", "UPDATE survey_program_receipts SET pass_number=9 WHERE ordinal=0;"},
+        {"report_interval", "UPDATE survey_program_reports SET end_day=29;"},
+        {"report_start_gap", "UPDATE survey_program_reports SET start_day=10;"},
+        {"report_cursor_mismatch", "UPDATE survey_programs SET reported_visits=2;"},
+        {"report_work_sum_mismatch", "UPDATE survey_program_reports SET work_days=14;"},
+        {"report_bad_review", "UPDATE survey_program_reports SET is_ninety_day_review=2;", true},
+        {"report_bad_real", "UPDATE survey_program_reports SET fuel_loaded='1junk';", true},
+        {"receipt_bad_real", "UPDATE survey_program_receipts SET average_confidence_before='1junk' WHERE ordinal=0;", true},
+        {"pending_home_unknown", "UPDATE survey_programs SET pending_home_colony_id=999;", false, true}
+    };
+    for (const Corruption& test : corruptions) {
+        const auto path = malformedSavePath(test.name);
+        std::filesystem::remove(path);
+        std::filesystem::copy_file(base, path);
+        corruptSave(path, test.sql, test.ignoreChecks, test.disableForeignKeys);
+        requireRepositoryLoadFails(path, "malformed survey history row is rejected");
+        requireServiceLoadFailsWithoutStateReplacement(path);
+        std::filesystem::remove(path);
+    }
+    std::filesystem::remove(base);
+}
+
+void test_malformed_survey_partial_rows_are_rejected() {
+    const auto base = malformedSavePath("program_partial_base");
+    std::filesystem::remove(base);
+    deep::Simulation sim{deep::createDelegatedSurveyScenario()};
+    require(sim.execute(deep::CreateSurveyProgramCommand{makeDelegatedSurveyCharter(sim.state())}).ok,
+            "partial corruption fixture authorizes program");
+    const auto advance = sim.advanceDaysDetailed(4);
+    const deep::SurveyProgram& program = sim.state().surveyPrograms.front();
+    require(advance.advancedDays == 4 && !advance.interrupted &&
+            program.task == deep::SurveyProgramTask::Survey && program.workDaysCompleted == 1 &&
+            program.firstWorkDay == 4 && program.taskPassNumber == 1,
+            "partial corruption fixture has one credited work day on pass one");
+    deep::save::SaveGameRepository::save(base, sim.state());
+
+    const struct Corruption { const char* name; const char* sql; } corruptions[] = {
+        {"partial_missing_first_day", "UPDATE survey_programs SET first_work_day=0;"},
+        {"partial_duplicate_pass", "UPDATE survey_programs SET task_pass_number=2;"},
+        {"partial_already_complete", "UPDATE survey_programs SET work_days_completed=5, total_work_days=5;"}
+    };
+    for (const Corruption& test : corruptions) {
+        const auto path = malformedSavePath(test.name);
+        std::filesystem::remove(path);
+        std::filesystem::copy_file(base, path);
+        corruptSave(path, test.sql, false, false);
+        requireRepositoryLoadFails(path, "malformed partial survey task is rejected");
+        requireServiceLoadFailsWithoutStateReplacement(path);
+        std::filesystem::remove(path);
+    }
+    std::filesystem::remove(base);
+}
+
+void test_malformed_survey_program_rows_are_rejected() {
+    const auto base = malformedSavePath("program_base");
+    std::filesystem::remove(base);
+    const deep::GameState source = makeWaitingSurveyProgramState();
+    deep::save::SaveGameRepository::save(base, source);
+    const struct Corruption {
+        const char* name;
+        const char* sql;
+        bool ignoreChecks = false;
+        bool disableForeignKeys = false;
+    } corruptions[] = {
+        {"program_target_gap", "UPDATE survey_program_targets SET ordinal=7 WHERE ordinal=1;"},
+        {"program_bad_int_type", "UPDATE survey_programs SET task_pass_number='1junk';", true},
+        {"program_bad_real_type", "UPDATE survey_programs SET home_stock_floor='1junk';", true},
+        {"program_bad_team_location", "UPDATE survey_teams SET location_kind=1, colony_id=NULL;", true},
+        {"program_missing_requested_team", "UPDATE survey_programs SET requested_team_id=999;", false, true},
+        {"program_stale_counter", "UPDATE id_counters SET value=1 WHERE key='next_survey_program_id';"},
+        {"program_bad_issue_bool", "UPDATE survey_programs SET issue_acknowledged=2;", true},
+        {"program_orphaned_task", "UPDATE survey_programs SET task=2, task_body_id=2, work_days_completed=1;"},
+        {"program_false_completed", "UPDATE survey_programs SET lifecycle=3, closure=1;"}
+    };
+    for (const Corruption& test : corruptions) {
+        const auto path = malformedSavePath(test.name);
+        std::filesystem::remove(path);
+        std::filesystem::copy_file(base, path);
+        corruptSave(path, test.sql, test.ignoreChecks, test.disableForeignKeys);
+        requireRepositoryLoadFails(path, "malformed survey program row is rejected");
+        requireServiceLoadFailsWithoutStateReplacement(path);
+        std::filesystem::remove(path);
+    }
+    std::filesystem::remove(base);
 }
 
 void createPopulatedSave(const std::filesystem::path& path) {
@@ -498,7 +1004,7 @@ void test_design_revision_round_trip() {
     require(service.execute(deep::AssignShipyardBuildCommand{colonyId, original.id, 1}).ok,
             "later order binds original revision before save");
     const deep::GameState expected = service.state();
-    require(service.saveGame(path).ok, "v12 component revision snapshot saves");
+    require(service.saveGame(path).ok, "v13 component revision snapshot saves");
     const deep::GameState loaded = deep::save::SaveGameRepository::load(path);
     requireSameState(expected, loaded);
     require(loaded.shipClasses.back().components == draft &&
@@ -1018,6 +1524,13 @@ void test_malformed_save_event_payload_missing_field_is_rejected() {
 
 int main() {
     try {
+        test_waiting_survey_program_round_trips();
+        test_active_survey_program_continues_after_save_load();
+        test_completion_return_issue_allows_amend_and_suspend_after_load();
+        test_pending_survey_home_amendment_round_trips();
+        test_malformed_survey_history_rows_are_rejected();
+        test_malformed_survey_partial_rows_are_rejected();
+        test_malformed_survey_program_rows_are_rejected();
         test_zero_capacity_waiting_order_round_trip();
         test_design_revision_round_trip();
         test_non_constructible_revision_round_trip();

@@ -24,6 +24,7 @@
 #include "ui_imgui/ShipyardPanel.h"
 #include "ui_imgui/ShellLayout.h"
 #include "ui_imgui/StrategicMapPanel.h"
+#include "ui_imgui/SurveyProgramsPanel.h"
 #include "ui_imgui/TimeControlPanel.h"
 
 #include <optional>
@@ -86,6 +87,7 @@ private:
     ColonyPanel colonyPanel_;
     FleetPanel fleetPanel_;
     FleetOrdersPanel fleetOrdersPanel_;
+    SurveyProgramsPanel surveyProgramsPanel_;
     EventLogPanel eventLogPanel_;
     InspectorPanel inspectorPanel_;
     InformationPanel informationPanel_;

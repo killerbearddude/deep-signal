@@ -31,6 +31,12 @@ ImGuiApp::ImGuiApp()
         colonyPanel_.resetWorldState();
         processingEditor_.resetWorldState();
         shipyardPanel_.resetWorldState();
+        surveyProgramsPanel_.resetWorldState();
+        timeControlPanel_.resetWorldState();
+        mainMenuBar_.resetWorldState();
+        pendingNavigationFocus_.reset();
+        actionError_.clear();
+        actionErrorUntil_ = 0.0;
     }} {
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
@@ -182,6 +188,7 @@ void ImGuiApp::renderPanels() {
     colonyPanel_.render(queries, interactions_, visibility_.colonies);
     fleetPanel_.render(queries, interactions_, visibility_.fleets);
     fleetOrdersPanel_.render(queries, service_, interactions_.mainSelection(), visibility_.fleetOrders);
+    surveyProgramsPanel_.render(queries, service_, visibility_.surveyPrograms);
     economyForecastPanel_.render(forecasts, visibility_.economyForecast);
     eventLogPanel_.render(queries, visibility_.eventLog);
     inspectorPanel_.render(queries, service_, interactions_.mainSelection(), visibility_.inspector);

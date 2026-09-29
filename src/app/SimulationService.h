@@ -40,10 +40,13 @@ public:
     // simulation exceptions propagate. This call does not save automatically.
     CommandResult execute(const SimCommand& command);
 
-    // Advances by a count of whole simulation days and returns emitted audit
-    // events, which are also kept in state. Nonpositive input produces a warning
-    // without advancing; simulation exceptions propagate to the caller.
+    // Advances by at most the requested whole days and returns emitted audit
+    // events, which are also kept in state. An unacknowledged program issue can
+    // stop the batch early; use advanceDaysDetailed for actual elapsed days and
+    // stop reason. Nonpositive input emits a warning without advancing.
     std::vector<SimEvent> advanceDays(int days);
+    // Uses the same authoritative runner and includes elapsed count and issue.
+    [[nodiscard]] AdvanceResult advanceDaysDetailed(int days);
 
     // Replaces the active simulation with a fresh deterministic scenario. This
     // does not save the old game or reset selection held by separate UI objects.

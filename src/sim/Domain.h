@@ -97,6 +97,11 @@ struct PersonServiceRecord {
 // Durable personnel identity tied to a home-system institution. People are
 // simulation records rather than UI-only names so later appointment systems can
 // reference them by stable ID without changing save structure again.
+enum class SurveyPlanningApproach {
+    CoverageFirst,
+    PriorityFirst
+};
+
 struct Person {
     PersonId id;
     std::string name;
@@ -104,6 +109,9 @@ struct Person {
     PersonCompetencies competencies;
     int seniorityLevel = 0;
     PersonServiceRecord serviceRecord;
+    // P3A target-order preference. It does not alter travel speed, sensor
+    // performance, or existing appointment modifier arithmetic.
+    SurveyPlanningApproach surveyPlanningApproach = SurveyPlanningApproach::CoverageFirst;
 };
 
 

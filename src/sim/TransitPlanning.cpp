@@ -172,4 +172,24 @@ double moveFuelCost(const GameState& state,
     return std::max(1.0, (plan.transitDistanceKm / kKilometersPerMapUnit) * kPrototypeFuelPerMapUnit);
 }
 
+double adjustedFleetMoveFuelCost(const GameState& state,
+                                const Fleet& fleet,
+                                const BodyId originBodyId,
+                                const BodyId destinationBodyId,
+                                const std::int64_t departureDay) noexcept {
+    const double baseCost = moveFuelCost(state, originBodyId, destinationBodyId, departureDay);
+    if (!std::isfinite(baseCost)) return baseCost;
+    double modifier = 0.0;
+    const auto appointment = std::find_if(state.appointments.begin(), state.appointments.end(),
+        [&fleet](const Appointment& row) {
+            return row.role == AppointmentRole::FleetCommander &&
+                   row.scopeType == AppointmentScopeType::Fleet && row.scopeId == fleet.id.value;
+        });
+    if (appointment != state.appointments.end()) {
+        const Person* person = findById(state.people, appointment->personId);
+        if (person != nullptr) modifier = appointmentOperationalModifier(*person, AppointmentRole::FleetCommander);
+    }
+    return std::max(0.0, baseCost * (1.0 - modifier));
+}
+
 } // namespace deep

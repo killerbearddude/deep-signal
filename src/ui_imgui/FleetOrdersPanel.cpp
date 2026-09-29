@@ -37,6 +37,10 @@ void drawFleetSummary(const FleetSummary& fleet) {
     ImGui::Text("Ships: %zu", fleet.shipCount);
     ImGui::Text("Fuel: %.1f / %.1f (%.1f%%)", fleet.currentFuel, fleet.fuelCapacity, fleet.fuelPercent);
     ImGui::Text("Current range: %.1f map unit(s)", fleet.currentRange);
+    if (fleet.controllingProgramId) {
+        ImGui::TextWrapped("Controlled by survey program %s (#%lld). Use the program controls to suspend or cancel its work.",
+            fleet.controllingProgramName.c_str(), static_cast<long long>(fleet.controllingProgramId->value));
+    }
 }
 
 void drawCurrentOrder(const FleetSummary& fleet) {
@@ -171,6 +175,19 @@ void FleetOrdersPanel::render(const SimulationQueries& queries,
         drawFleetSummary(*fleet);
         drawCurrentOrder(*fleet);
         drawTimelinePreview(*fleet);
+        if (fleet->controllingProgramId) {
+            if (ImGui::Button("Suspend controlling program")) {
+                const CommandResult result = service.execute(SuspendSurveyProgramCommand{*fleet->controllingProgramId});
+                commandSucceeded_ = result.ok;
+                commandStatus_ = result.message;
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Cancel controlling program")) {
+                const CommandResult result = service.execute(CancelSurveyProgramCommand{*fleet->controllingProgramId});
+                commandSucceeded_ = result.ok;
+                commandStatus_ = result.message;
+            }
+        }
     } else {
         ImGui::TextUnformatted("Select a fleet from the map or Fleets table.");
     }
@@ -192,7 +209,8 @@ void FleetOrdersPanel::render(const SimulationQueries& queries,
     // Preview gating is advisory. The service revalidates the complete route
     // against current state when the player actually submits the command.
     const bool hasFuelForMove = !movePreview.has_value() || movePreview->canAfford;
-    const bool canQueueMove = fleet.has_value() && destinationSelected && !idleDestinationIsCurrent && hasFuelForMove;
+    const bool canQueueMove = fleet.has_value() && !fleet->controllingProgramId &&
+        destinationSelected && !idleDestinationIsCurrent && hasFuelForMove;
 
     if (movePreview.has_value()) {
         ImGui::Text("Move fuel cost: %.1f", movePreview->newMoveFuelCost);
@@ -251,7 +269,8 @@ void FleetOrdersPanel::render(const SimulationQueries& queries,
         ImGui::TextUnformatted("Select a fleet and body to preview resource survey eligibility.");
     }
 
-    const bool canSurvey = surveyPreview.has_value() && surveyPreview->canSurvey;
+    const bool canSurvey = fleet.has_value() && !fleet->controllingProgramId &&
+        surveyPreview.has_value() && surveyPreview->canSurvey;
     if (!canSurvey) {
         ImGui::BeginDisabled();
     }
@@ -269,7 +288,7 @@ void FleetOrdersPanel::render(const SimulationQueries& queries,
         commandStatus_ = result.message;
     }
 
-    const bool canCancel = fleet.has_value() && fleet->hasActiveOrder;
+    const bool canCancel = fleet.has_value() && !fleet->controllingProgramId && fleet->hasActiveOrder;
     if (!canCancel) {
         ImGui::BeginDisabled();
     }
@@ -285,7 +304,7 @@ void FleetOrdersPanel::render(const SimulationQueries& queries,
     }
 
     ImGui::SameLine();
-    const bool canClearQueue = fleet.has_value() && !fleet->queuedOrders.empty();
+    const bool canClearQueue = fleet.has_value() && !fleet->controllingProgramId && !fleet->queuedOrders.empty();
     if (!canClearQueue) {
         ImGui::BeginDisabled();
     }

@@ -1152,6 +1152,34 @@ void test_resource_survey_preview_and_queries_update_after_survey() {
             "recent survey result reports changed deposit count");
 }
 
+void test_resource_survey_preview_allows_zero_information_result() {
+    // Preview and command must agree when equipment and location are valid but
+    // there is no confidence gain. Display text must not claim the body barren.
+    deep::GameState state = deep::createHomeSystemScenario();
+    const deep::BodyId terraId = bodyIdByName(state, "Terra");
+    const deep::FleetId fleetId = addTestFleetAt(state, terraId);
+    deep::SimulationService service{std::move(state)};
+    deep::SimulationQueries queries{service};
+
+    const auto preview = queries.resourceSurveyPreview(fleetId, terraId);
+    require(preview.has_value() && preview->canSurvey,
+            "fully known body remains physically eligible for a survey pass");
+    require(preview->surveyableDepositCount == 0U,
+            "preview reports zero projected confidence improvements");
+    require(preview->warningText.find("No confidence improvement is projected") != std::string::npos,
+            "preview explains a zero-information result without blocking the command");
+
+    require(service.execute(deep::ResourceSurveyCommand{.fleetId = fleetId, .bodyId = terraId}).ok,
+            "zero-information survey executes through the application service");
+    const auto events = queries.recentEvents(1);
+    require(events.size() == 1U && events.front().message.find("No new information from this pass") != std::string::npos,
+            "event query states the zero-information result plainly");
+    const auto intelligence = queries.explorationIntelligence();
+    require(!intelligence.recentSurveyResults.empty() &&
+                intelligence.recentSurveyResults.front().summary.find("No new information from this pass") != std::string::npos,
+            "exploration result uses the same zero-information wording");
+}
+
 void test_ship_design_queries_and_survey_preview_agree_with_commands() {
     deep::SimulationService service;
     deep::SimulationQueries queries{service};
@@ -1347,6 +1375,7 @@ int main() {
         test_body_deposit_queries_expose_confidence_status();
         test_exploration_intelligence_lists_survey_targets();
         test_resource_survey_preview_and_queries_update_after_survey();
+        test_resource_survey_preview_allows_zero_information_result();
         test_ship_design_queries_and_survey_preview_agree_with_commands();
         test_recent_events_returns_limited_chronological_tail();
     } catch (const std::exception& ex) {

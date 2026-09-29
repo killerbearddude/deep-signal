@@ -8,6 +8,7 @@
 #include <stdexcept>
 #include <string>
 #include <limits>
+#include <cmath>
 
 namespace deep::save {
 namespace {
@@ -160,6 +161,18 @@ std::int64_t Statement::columnInt64Strict(const int column) const {
 
 double Statement::columnDouble(const int column) const {
     return sqlite3_column_double(stmt_, column);
+}
+
+double Statement::columnDoubleStrict(const int column) const {
+    const int type = sqlite3_column_type(stmt_, column);
+    if (type != SQLITE_FLOAT && type != SQLITE_INTEGER) {
+        throw std::runtime_error{"Save file contains a non-numeric value"};
+    }
+    const double value = sqlite3_column_double(stmt_, column);
+    if (!std::isfinite(value)) {
+        throw std::runtime_error{"Save file contains a non-finite number"};
+    }
+    return value;
 }
 
 std::string Statement::columnText(const int column) const {

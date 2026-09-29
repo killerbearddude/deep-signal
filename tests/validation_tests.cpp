@@ -478,10 +478,29 @@ void test_completed_order_with_build_progress_is_rejected() {
     });
 }
 
+void test_zero_information_resource_survey_event_is_valid() {
+    // A completed barren or already-known visit has no changed deposits; its
+    // persisted audit payload must remain loadable with explicit zero averages.
+    deep::GameState state = makeCompletedPrototypeState();
+    state.eventLog.push_back(deep::SimEvent{
+        .id = deep::EventId{state.ids.nextEventId++},
+        .day = state.date.day,
+        .severity = deep::EventSeverity::Info,
+        .payload = deep::ResourceSurveyCompletedEvent{
+            .fleetId = state.fleets.front().id,
+            .bodyId = state.fleets.front().currentBodyId,
+            .depositsImproved = 0,
+            .averageConfidenceBefore = 0.0,
+            .averageConfidenceAfter = 0.0
+        }
+    });
+    deep::validateGameState(state);
+}
+
 void test_invalid_resource_survey_event_is_rejected() {
-    // Resource-survey events are persisted audit data. Reject impossible result
-    // summaries so corrupted saves cannot claim that a no-op survey completed.
-    expectInvalidState("resource survey event with no improvements", [](deep::GameState& state) {
+    // Zero changed deposits cannot carry invented confidence averages, and a
+    // negative changed-deposit count is never a valid survey completion.
+    expectInvalidState("zero-information survey event with nonzero averages", [](deep::GameState& state) {
         state.eventLog.push_back(deep::SimEvent{
             .id = deep::EventId{state.ids.nextEventId++},
             .day = state.date.day,
@@ -492,6 +511,20 @@ void test_invalid_resource_survey_event_is_rejected() {
                 .depositsImproved = 0,
                 .averageConfidenceBefore = 0.25,
                 .averageConfidenceAfter = 0.75
+            }
+        });
+    });
+    expectInvalidState("resource survey event with negative improvements", [](deep::GameState& state) {
+        state.eventLog.push_back(deep::SimEvent{
+            .id = deep::EventId{state.ids.nextEventId++},
+            .day = state.date.day,
+            .severity = deep::EventSeverity::Info,
+            .payload = deep::ResourceSurveyCompletedEvent{
+                .fleetId = state.fleets.front().id,
+                .bodyId = state.fleets.front().currentBodyId,
+                .depositsImproved = -1,
+                .averageConfidenceBefore = 0.0,
+                .averageConfidenceAfter = 0.0
             }
         });
     });
@@ -531,6 +564,7 @@ int main() {
         test_event_day_after_current_day_is_rejected();
         test_event_ids_out_of_order_are_rejected();
         test_completed_order_with_build_progress_is_rejected();
+        test_zero_information_resource_survey_event_is_valid();
         test_invalid_resource_survey_event_is_rejected();
     } catch (const std::exception& ex) {
         std::cerr << "Validation test failure: " << ex.what() << '\n';

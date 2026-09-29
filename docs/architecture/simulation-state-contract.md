@@ -1,7 +1,7 @@
 # Simulation state contract
 
 This document records the H1A processing-configuration, H1B save-continuity,
-P1 shipyard-intent, and P2 vessel-design contracts. The in-memory `GameState` remains the authority for
+P1 shipyard-intent, P2 vessel-design, and P3A delegated-survey contracts. The in-memory `GameState` remains the authority for
 gameplay; SQLite stores explicit snapshots, not a second live world or a replay
 stream.
 
@@ -113,6 +113,8 @@ vectors:
 | `colonies` | `colonies` |
 | `mineralDeposits` | `mineral_deposits` |
 | `shipComponents` (v12) | `ship_components` |
+| `surveyTeams` (v13) | `survey_teams` |
+| `surveyPrograms` (v13) | `survey_programs` |
 | `shipClasses` | `ship_classes` |
 | `shipyardOrders` | `shipyard_orders` |
 | `ships` | `ships` |
@@ -120,7 +122,8 @@ vectors:
 
 Ordered child collections have their own scope. `appointments` keeps its global
 ordinal; `colony_processing_allocations` keeps an ordinal per colony; and
-`fleet_order_queue` keeps an ordinal per fleet. A Ship row has **two independent
+`fleet_order_queue` keeps an ordinal per fleet. P3A target, receipt, and report
+rows keep an ordinal per program. A Ship row has **two independent
 positions**: `ships.ordinal` reconstructs `GameState::ships`, while
 `ships.fleet_ordinal`, unique within its `fleet_id`, reconstructs that Fleet's
 `shipIds` roster. Reconstructing the roster by global Ship order would lose a
@@ -129,40 +132,42 @@ by mineral/material enum index, while metadata and ID counters remain keyed by
 name. `event_log` remains ordered by Event ID, with strictly increasing IDs and
 nondecreasing event days validated; it has no second ordinal.
 
-The current v12 writer assigns contiguous ordinals beginning at zero. Schema
+The current v13 writer assigns contiguous ordinals beginning at zero. Schema
 constraints require non-null integer, nonnegative, unique values in each scope;
 the reader also checks storage type and contiguity before accepting a sequence.
 Every ordered read uses explicit `ORDER BY`. Missing, duplicate, fractional,
-negative, or gapped v12 order data is rejected rather than reconstructed in
+negative, or gapped v13 order data is rejected rather than reconstructed in
 legacy ID order. Empty collections are valid.
 
 ## Schema versions and destination policy
 
-H1A wrote schema v10 and H1B wrote v11. P2 writes and reads **v12 only**.
-Deep Signal is in active pre-release development: development save files are
-disposable, and compatibility across schema versions is not guaranteed unless
-a future milestone explicitly establishes it. This is the current development
-policy, not a permanent release policy. A v10 or v11 file presented to the
-current loader fails with an unsupported-schema error; Load opens it read-only
-and does not modify it. Save also refuses to overwrite an older or unknown
-schema. No automatic migration or in-place repair is performed.
+H1A wrote schema v10, H1B wrote v11, and P2 wrote v12. P3A writes and reads
+**v13 only**. Deep Signal is in active pre-release development: development
+save files are disposable, and compatibility across schema versions is not
+guaranteed unless a future milestone explicitly establishes it. This is the
+current development policy, not a permanent release policy. An older file,
+including v12, fails with an unsupported-schema error before gameplay
+reconstruction. Load opens it read-only and does not modify it. Save refuses to
+overwrite older or unknown schemas. No automatic migration or in-place repair
+is performed.
 
-The v12 reader requires the current table, column, key, and foreign-key shape,
+The v13 reader requires the current table, column, key, and foreign-key shape,
 complete component and material-cost rows, class revision identity, ordered
-installations, and all H1B ordering checks. A version marker alone does not
-make a file valid. Destination recognition compares the user schema object set
-and each table's `table_xinfo`, `foreign_key_list`, and index shape with a
-freshly built v12 reference. Save rejects user triggers even when they target
-known tables because their write effects are not trusted. Read-only Load may
-tolerate triggers on known tables. The check does not require byte-identical
-`CREATE TABLE` text or silently add missing columns.
+installations, program/team references, scoped target/receipt/report ordinals,
+and all H1B ordering checks. A version marker alone does not make a file valid.
+Destination recognition compares the user schema object set and each table's
+`table_xinfo`, `foreign_key_list`, and index shape with a freshly built v13
+reference. Save rejects user triggers even on known tables because their write
+effects are not trusted. Read-only Load may tolerate triggers on known tables.
+The check does not require byte-identical `CREATE TABLE` text or silently add
+missing columns.
 
 Save accepts a new path, a schema-empty database, or an existing compatible,
-valid v12 save. It validates its input state before opening the destination.
+valid v13 save. It validates its input state before opening the destination.
 The connection enables foreign keys before an immediate write transaction.
-Inside that transaction it verifies an existing v12 snapshot before replacement,
-creates v12 schema only if empty, replaces rows, rereads the new snapshot, and
-commits only after validation. Load opens read-only, checks v12 structure and
+Inside that transaction it verifies an existing v13 snapshot before replacement,
+creates v13 schema only if empty, replaces rows, rereads the new snapshot, and
+commits only after validation. Load opens read-only, checks v13 structure and
 foreign keys, and validates a detached snapshot within one read transaction.
 A failed replacement rolls back the previous valid save's **logical** contents
 and schema. A failed first save may leave an empty new file; neither path
@@ -180,16 +185,16 @@ references, processing-editor drafts, and window geometry are also outside the
 game snapshot. Successful Load replaces the world and clears old-world
 interaction and editor state through the existing lifecycle.
 
-The H1B ordering contract, retained in v12, supports comparisons of durable state, ordered
+The H1B ordering contract, retained in v13, supports comparisons of durable state, ordered
 children, counters, and meaningful event order when an unsaved and reloaded
 simulation continue under the **same build and same inputs**. It does not
 promise bitwise identical floating-point results across compilers, platforms,
-or build flags, or unchanged outcomes after gameplay rules change. The H1A processing checks remain in force for current v12 snapshots.
+or build flags, or unchanged outcomes after gameplay rules change. The H1A processing checks remain in force for current v13 snapshots.
 
 ## Review evidence
 
 H1A processing-allocation and H1B durable-ordering tests remain part of the
-current suite. Current persistence evidence covers v12 round trips,
+current suite. Current persistence evidence covers v13 round trips,
 same-build continuation, malformed-state rejection, transactional rollback,
 and explicit rejection of older development schemas without changing their
 source files. Historical v10/v11 fixtures remain documented as evidence of
@@ -218,8 +223,54 @@ empty or partial tank; P2 has no later refueling command. Powered installed
 survey equipment is required for a fleet to survey; survey role alone is not
 sufficient. P2 does not change sustained-burn transit physics.
 
-Schema v12 replaces class aggregate cost/BP/tank columns with component tables,
-ordered installations, and revision lineage. Current saves keep component and
-class vector order and each class's installation order. Older v10/v11 files
-are rejected by the current build. Their historical fixtures remain useful for
-proving that rejection is clean and leaves the source file unchanged.
+P2's v12 schema replaced class aggregate cost/BP/tank columns with component
+tables, ordered installations, and revision lineage. P3A retains those records
+in v13 alongside new program state. Old v10/v11/v12 fixtures remain useful for
+proving current rejection is clean and leaves source files unchanged.
+
+## P3A: delegated home-supported survey programs
+
+A `SurveyProgram` is durable player intent: its charter requests a home colony,
+optional fleet/leader/team, ordered target pass quotas, and a bounded fuel
+policy. Requested IDs do not grant control. A program obtains one exclusive
+fleet/team lease only when those physical assets can be acquired together.
+`SurveyTeam` has one real location, either at a colony or aboard a fleet.
+The fleet keeps its actual transit plan; suspending or cancelling a program
+never teleports it, refunds departure fuel, or moves an embarked team remotely.
+An amendment records a new charter revision. A home change during committed
+work remains pending until a safe boundary; prior receipts remain historical.
+`Closing / Completed` means the final visit is done while physical return is
+still pending. It remains an actionable decision point: an accepted amendment
+reopens `Authorized`, and suspension records `Suspended`, both without replacing
+the committed return task or route. `Closed / Completed` requires the home return.
+
+The first executor runs one target pass per home-supported sortie. Leader
+approach determines target order from public charter priorities and completed
+pass counts. Target ranking cannot read hidden deposits. Each pass takes five
+qualifying workdays in the dedicated proof fixture; no work occurs on an
+arrival day. Powered installed survey equipment and an embarked team are
+required for progress. A valid visit can produce zero new information without
+claiming a body is barren. Manual survey remains immediate for unleased fleets.
+
+Refueling transfers only real Propellant above the charter's home-stock floor
+and within its remaining additional-fuel authorization, tank room, and planned
+sortie need. Hulls fill in persisted fleet-roster order. One opening-day
+physical action per fleet is allowed: transfer, departure, or survey workday.
+Program movement uses the same route planner and adjusted fuel-cost rule as
+manual movement. Mining, processing, shipyards, and movement retain their
+relative daily order after the program opening phase. End-of-day bookkeeping
+observes arrivals, publishes due reports, and raises consequential issues;
+it never launches a second action.
+
+The integer-day clock stops after a completed day when an unacknowledged
+consequential issue is raised. All advance entry points share that runner and
+report actual elapsed days. Global multiples of 30 publish durable reports;
+multiples of 90 mark a review. Reports use durable program counters and
+receipts, not session-only economy snapshots. Acknowledgment permits the
+same known limitation to continue waiting without inventing fuel or repeating
+an interruption every day.
+
+P3A does not model cargo freight, tender maintenance, final propulsion,
+scientific analysis/claims, research, or site development. A successful
+program closes only after its requested visits and home return. The existing
+manual transit cancellation shortcut remains unchanged for unleased fleets.

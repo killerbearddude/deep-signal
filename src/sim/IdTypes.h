@@ -32,6 +32,8 @@ struct ShipComponentTag;
 struct ShipTag;
 struct FleetTag;
 struct ShipyardOrderTag;
+struct SurveyProgramTag;
+struct SurveyTeamTag;
 struct EventTag;
 
 using StarSystemId = Id<StarSystemTag>;
@@ -44,6 +46,8 @@ using ShipComponentId = Id<ShipComponentTag>;
 using ShipId = Id<ShipTag>;
 using FleetId = Id<FleetTag>;
 using ShipyardOrderId = Id<ShipyardOrderTag>;
+using SurveyProgramId = Id<SurveyProgramTag>;
+using SurveyTeamId = Id<SurveyTeamTag>;
 using EventId = Id<EventTag>;
 
 } // namespace deep

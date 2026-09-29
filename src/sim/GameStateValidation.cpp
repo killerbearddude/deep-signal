@@ -1,5 +1,6 @@
 #include "sim/GameStateValidation.h"
 #include "sim/ShipDesignRules.h"
+#include "sim/SurveyProgramValidation.h"
 #include "sim/ProcessingAllocationRules.h"
 
 // Implements zero-trust validation for fully assembled simulation snapshots.
@@ -405,7 +406,7 @@ void validateEventPayload(const GameState& state, const SimEventPayload& payload
         } else if constexpr (std::is_same_v<Event, ResourceSurveyCompletedEvent>) {
             requireValidReference(containsId(state.fleets, event.fleetId), event.fleetId, "event fleet");
             requireValidReference(containsId(state.bodies, event.bodyId), event.bodyId, "event survey body");
-            requireState(event.depositsImproved > 0, "survey event must improve at least one deposit");
+            requireState(event.depositsImproved >= 0, "survey event improved-deposit count must be non-negative");
             requireState(isFinite(event.averageConfidenceBefore) && event.averageConfidenceBefore >= 0.0 &&
                              event.averageConfidenceBefore <= 1.0,
                          "survey event average before confidence must be between zero and one");
@@ -414,6 +415,27 @@ void validateEventPayload(const GameState& state, const SimEventPayload& payload
                          "survey event average after confidence must be between zero and one");
             requireState(event.averageConfidenceAfter >= event.averageConfidenceBefore,
                          "survey event confidence must not decrease");
+            // A completed pass can find nothing new, but empty-set averages must
+            // be explicit zeros so persisted events do not imply hidden gains.
+            if (event.depositsImproved == 0) {
+                requireState(event.averageConfidenceBefore == 0.0 && event.averageConfidenceAfter == 0.0,
+                             "zero-information survey event must have zero confidence averages");
+            }
+        } else if constexpr (std::is_same_v<Event, SurveyProgramAuditEvent>) {
+            requireValidReference(containsId(state.surveyPrograms, event.programId), event.programId,
+                                  "event survey program");
+            requireState(event.kind >= SurveyProgramAuditKind::Authorized &&
+                         event.kind <= SurveyProgramAuditKind::IssueAcknowledged,
+                         "survey program audit kind must be valid");
+            if (event.fleetId) requireValidReference(containsId(state.fleets, *event.fleetId), *event.fleetId, "event fleet");
+            if (event.bodyId) requireValidReference(containsId(state.bodies, *event.bodyId), *event.bodyId, "event body");
+            if (event.leaderId) requireValidReference(containsId(state.people, *event.leaderId), *event.leaderId, "event leader");
+            requireState(event.approach >= SurveyPlanningApproach::CoverageFirst &&
+                         event.approach <= SurveyPlanningApproach::PriorityFirst,
+                         "survey audit approach must be valid");
+            requireState(event.charterRevision > 0 && event.passNumber >= 0 &&
+                         isFinite(event.fuelAmount) && event.fuelAmount >= 0.0,
+                         "survey audit numbers must be valid");
         } else if constexpr (std::is_same_v<Event, CommandRejectedEvent>) {
             requireState(!event.reason.empty(), "command-rejected event reason must be non-empty");
         }
@@ -438,6 +460,9 @@ void validateGameState(const GameState& state) {
                                                             "shipyard order");
     validateIdsAndCounter<Ship, ShipId>(state.ships, state.ids.nextShipId, "ship");
     validateIdsAndCounter<Fleet, FleetId>(state.fleets, state.ids.nextFleetId, "fleet");
+    validateIdsAndCounter<SurveyTeam, SurveyTeamId>(state.surveyTeams, state.ids.nextSurveyTeamId, "survey team");
+    validateIdsAndCounter<SurveyProgram, SurveyProgramId>(state.surveyPrograms,
+                                                           state.ids.nextSurveyProgramId, "survey program");
     validateIdsAndCounter<SimEvent, EventId>(state.eventLog, state.ids.nextEventId, "event");
 
     for (const StarSystem& system : state.starSystems) {
@@ -457,6 +482,9 @@ void validateGameState(const GameState& state) {
         validatePersonCompetencies(person.competencies);
         requireState(person.seniorityLevel >= 0, "person seniority level must be non-negative");
         validatePersonServiceRecord(person.serviceRecord);
+        requireState(person.surveyPlanningApproach >= SurveyPlanningApproach::CoverageFirst &&
+                     person.surveyPlanningApproach <= SurveyPlanningApproach::PriorityFirst,
+                     "survey planning approach must be valid");
     }
 
     validateBodyParentGraph(state.bodies);
@@ -629,6 +657,8 @@ void validateGameState(const GameState& state) {
         requireState(appointmentSlots.insert(slotKey).second,
                      "appointment role/scope slots must be unique");
     }
+
+    validateSurveyProgramState(state);
 
     std::int64_t previousEventId = 0;
     std::int64_t previousEventDay = 0;

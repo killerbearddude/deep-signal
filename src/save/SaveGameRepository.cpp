@@ -1,6 +1,6 @@
 #include "save/SaveGameRepository.h"
 
-// Responsibility: map durable simulation records to active v12 rows.
+// Responsibility: map durable simulation records to active v13 rows.
 // Older development schemas are rejected without modifying their files.
 // Each operation owns its connection and reconstructed data; the input snapshot
 // is borrowed unchanged during save. Parameter binding separates values from SQL.
@@ -84,6 +84,16 @@ template <typename EnumT>
         return value >= 0 && value <= static_cast<std::int64_t>(FleetOrderType::MoveToBody);
     } else if constexpr (std::is_same_v<EnumT, EventSeverity>) {
         return value >= 0 && value <= static_cast<std::int64_t>(EventSeverity::Critical);
+    } else if constexpr (std::is_same_v<EnumT, SurveyPlanningApproach>) {
+        return value >= 0 && value <= static_cast<std::int64_t>(SurveyPlanningApproach::PriorityFirst);
+    } else if constexpr (std::is_same_v<EnumT, SurveyTeamLocationKind>) {
+        return value >= 0 && value <= static_cast<std::int64_t>(SurveyTeamLocationKind::Fleet);
+    } else if constexpr (std::is_same_v<EnumT, SurveyProgramLifecycle>) {
+        return value >= 0 && value <= static_cast<std::int64_t>(SurveyProgramLifecycle::Closed);
+    } else if constexpr (std::is_same_v<EnumT, SurveyProgramClosure>) {
+        return value >= 0 && value <= static_cast<std::int64_t>(SurveyProgramClosure::Cancelled);
+    } else if constexpr (std::is_same_v<EnumT, SurveyProgramTask>) {
+        return value >= 0 && value <= static_cast<std::int64_t>(SurveyProgramTask::Return);
     } else {
         static_assert(std::is_enum_v<EnumT>, "enumFromValue requires an enum type");
         return false;
@@ -109,6 +119,15 @@ template <typename EnumT>
         throw std::runtime_error{std::string{"Save integer is out of range for field: "} + std::string{fieldName}};
     }
     return static_cast<int>(value);
+}
+
+[[nodiscard]] bool checkedBoolFromSql(const Statement& stmt, const int column,
+                                      const std::string_view fieldName) {
+    const std::int64_t value = stmt.columnInt64Strict(column);
+    if (value != 0 && value != 1) {
+        throw std::runtime_error{std::string{"Save boolean is invalid for field: "} + std::string{fieldName}};
+    }
+    return value == 1;
 }
 
 [[nodiscard]] std::int64_t checkedOrdinal(const std::size_t index, const std::string_view scope) {
@@ -166,6 +185,11 @@ void bindOptionalId(Statement& stmt, const int index, const std::optional<IdT> i
     }
 }
 
+void bindOptionalDouble(Statement& stmt, const int index, const std::optional<double> value) {
+    if (value.has_value()) stmt.bindDouble(index, *value);
+    else stmt.bindNull(index);
+}
+
 // Converts a nullable INTEGER column to an optional typed ID.
 template <typename IdT>
 [[nodiscard]] std::optional<IdT> optionalIdFromColumn(const Statement& stmt, const int column) {
@@ -173,6 +197,12 @@ template <typename IdT>
         return std::nullopt;
     }
     return IdT{stmt.columnInt64(column)};
+}
+
+template <typename IdT>
+[[nodiscard]] std::optional<IdT> optionalStrictIdFromColumn(const Statement& stmt, const int column) {
+    if (stmt.columnIsNull(column)) return std::nullopt;
+    return IdT{stmt.columnInt64Strict(column)};
 }
 
 // Resets a reusable insert statement after one row. Keeping this helper avoids
@@ -183,10 +213,15 @@ void reuse(Statement& stmt) {
 }
 
 void clearExistingSave(Database& db) {
-    // Delete child tables first because v12 retains explicit foreign keys
+    // Delete child tables first because v13 retains explicit foreign keys
     // without ON DELETE CASCADE. This all runs inside the write transaction.
     db.execute(R"sql(
         DELETE FROM event_log;
+        DELETE FROM survey_program_reports;
+        DELETE FROM survey_program_receipts;
+        DELETE FROM survey_program_targets;
+        DELETE FROM survey_programs;
+        DELETE FROM survey_teams;
         DELETE FROM appointments;
         DELETE FROM ships;
         DELETE FROM fleet_order_queue;
@@ -248,6 +283,8 @@ void saveIdCounters(Database& db, const IdCounters& ids) {
     insertCounter("next_ship_id", ids.nextShipId);
     insertCounter("next_fleet_id", ids.nextFleetId);
     insertCounter("next_event_id", ids.nextEventId);
+    insertCounter("next_survey_program_id", ids.nextSurveyProgramId);
+    insertCounter("next_survey_team_id", ids.nextSurveyTeamId);
 }
 
 void saveStarSystems(Database& db, const GameState& state) {
@@ -281,8 +318,8 @@ void savePeople(Database& db, const GameState& state) {
             id, name, institution_id, logistics, industry, survey, command,
             administration, engineering, intelligence, crisis_management,
             seniority_level, successful_assignments, failed_assignments,
-            commendations, controversies, ordinal
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+            commendations, controversies, survey_planning_approach, ordinal
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
     )sql"};
 
     for (std::size_t ordinal = 0; ordinal < state.people.size(); ++ordinal) {
@@ -303,7 +340,8 @@ void savePeople(Database& db, const GameState& state) {
         stmt.bindInt64(14, person.serviceRecord.failedAssignments);
         stmt.bindInt64(15, person.serviceRecord.commendations);
         stmt.bindInt64(16, person.serviceRecord.controversies);
-        stmt.bindInt64(17, checkedOrdinal(ordinal, "people"));
+        stmt.bindInt64(17, enumValue(person.surveyPlanningApproach));
+        stmt.bindInt64(18, checkedOrdinal(ordinal, "people"));
         stmt.execute();
         reuse(stmt);
     }
@@ -607,6 +645,160 @@ void saveShips(Database& db, const GameState& state) {
     }
 }
 
+void saveSurveyTeams(Database& db, const GameState& state) {
+    Statement stmt{db, R"sql(
+        INSERT INTO survey_teams(id, ordinal, name, location_kind, colony_id, fleet_id)
+        VALUES (?, ?, ?, ?, ?, ?);
+    )sql"};
+    for (std::size_t ordinal = 0; ordinal < state.surveyTeams.size(); ++ordinal) {
+        const SurveyTeam& team = state.surveyTeams.at(ordinal);
+        stmt.bindInt64(1, idValue(team.id));
+        stmt.bindInt64(2, checkedOrdinal(ordinal, "survey_teams"));
+        stmt.bindText(3, team.name);
+        stmt.bindInt64(4, enumValue(team.locationKind));
+        bindOptionalId(stmt, 5, team.colonyId);
+        bindOptionalId(stmt, 6, team.fleetId);
+        stmt.execute();
+        reuse(stmt);
+    }
+}
+
+void saveSurveyPrograms(Database& db, const GameState& state) {
+    Statement program{db, R"sql(
+        INSERT INTO survey_programs(
+            id, ordinal, name, home_colony_id, requested_fleet_id, requested_leader_id,
+            requested_team_id, max_additional_propellant, home_stock_floor,
+            return_contingency_fraction, created_day, charter_revision, lifecycle, closure,
+            leased_fleet_id, leased_team_id, task, task_body_id, task_fleet_id,
+            task_team_id, task_leader_id, task_approach, task_pass_number,
+            work_days_completed, first_work_day, last_selection_reason, fuel_loaded, fuel_burned, total_work_days,
+            next_report_day, report_start_day, reported_fuel_loaded, reported_fuel_burned,
+            reported_work_days, reported_visits, issue_signature, issue_message, issue_acknowledged,
+            pending_home_colony_id
+        ) VALUES (
+            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+        );
+    )sql"};
+    Statement target{db, R"sql(
+        INSERT INTO survey_program_targets(program_id, ordinal, body_id, priority, requested_passes)
+        VALUES (?, ?, ?, ?, ?);
+    )sql"};
+    Statement receipt{db, R"sql(
+        INSERT INTO survey_program_receipts(
+            program_id, ordinal, body_id, pass_number, fleet_id, team_id, leader_id, approach,
+            first_work_day, completed_day, work_days, deposits_improved,
+            average_confidence_before, average_confidence_after
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+    )sql"};
+    Statement report{db, R"sql(
+        INSERT INTO survey_program_reports(
+            program_id, ordinal, start_day, end_day, is_ninety_day_review, charter_revision,
+            leader_id, approach, visits_completed, work_days, fuel_loaded, fuel_burned,
+            fleet_id, team_id, fleet_body_id, waiting_reason
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+    )sql"};
+
+    for (std::size_t ordinal = 0; ordinal < state.surveyPrograms.size(); ++ordinal) {
+        const SurveyProgram& item = state.surveyPrograms.at(ordinal);
+        int p = 1;
+        program.bindInt64(p++, idValue(item.id));
+        program.bindInt64(p++, checkedOrdinal(ordinal, "survey_programs"));
+        program.bindText(p++, item.charter.name);
+        program.bindInt64(p++, idValue(item.charter.homeColonyId));
+        bindOptionalId(program, p++, item.charter.requestedFleetId);
+        bindOptionalId(program, p++, item.charter.requestedLeaderId);
+        bindOptionalId(program, p++, item.charter.requestedTeamId);
+        bindOptionalDouble(program, p++, item.charter.policy.maxAdditionalPropellant);
+        program.bindDouble(p++, item.charter.policy.homeStockFloor);
+        program.bindDouble(p++, item.charter.policy.returnContingencyFraction);
+        program.bindInt64(p++, item.createdDay);
+        program.bindInt64(p++, item.charterRevision);
+        program.bindInt64(p++, enumValue(item.lifecycle));
+        program.bindInt64(p++, enumValue(item.closure));
+        bindOptionalId(program, p++, item.leasedFleetId);
+        bindOptionalId(program, p++, item.leasedTeamId);
+        program.bindInt64(p++, enumValue(item.task));
+        bindOptionalId(program, p++, item.taskBodyId);
+        bindOptionalId(program, p++, item.taskFleetId);
+        bindOptionalId(program, p++, item.taskTeamId);
+        bindOptionalId(program, p++, item.taskLeaderId);
+        program.bindInt64(p++, enumValue(item.taskApproach));
+        program.bindInt64(p++, item.taskPassNumber);
+        program.bindInt64(p++, item.workDaysCompleted);
+        program.bindInt64(p++, item.firstWorkDay);
+        program.bindText(p++, item.lastSelectionReason);
+        program.bindDouble(p++, item.fuelLoaded);
+        program.bindDouble(p++, item.fuelBurned);
+        program.bindInt64(p++, item.totalWorkDays);
+        program.bindInt64(p++, item.nextReportDay);
+        program.bindInt64(p++, item.reportStartDay);
+        program.bindDouble(p++, item.reportedFuelLoaded);
+        program.bindDouble(p++, item.reportedFuelBurned);
+        program.bindInt64(p++, item.reportedWorkDays);
+        program.bindInt64(p++, item.reportedVisits);
+        program.bindText(p++, item.issue.signature);
+        program.bindText(p++, item.issue.message);
+        program.bindInt64(p++, item.issue.acknowledged ? 1 : 0);
+        bindOptionalId(program, p++, item.pendingHomeColonyId);
+        program.execute();
+        reuse(program);
+
+        for (std::size_t child = 0; child < item.charter.targets.size(); ++child) {
+            const SurveyProgramTarget& value = item.charter.targets.at(child);
+            target.bindInt64(1, idValue(item.id));
+            target.bindInt64(2, checkedOrdinal(child, "survey_program_targets"));
+            target.bindInt64(3, idValue(value.bodyId));
+            target.bindInt64(4, value.priority);
+            target.bindInt64(5, value.requestedPasses);
+            target.execute();
+            reuse(target);
+        }
+        for (std::size_t child = 0; child < item.receipts.size(); ++child) {
+            const SurveyVisitReceipt& value = item.receipts.at(child);
+            int r = 1;
+            receipt.bindInt64(r++, idValue(item.id));
+            receipt.bindInt64(r++, checkedOrdinal(child, "survey_program_receipts"));
+            receipt.bindInt64(r++, idValue(value.bodyId));
+            receipt.bindInt64(r++, value.passNumber);
+            receipt.bindInt64(r++, idValue(value.fleetId));
+            receipt.bindInt64(r++, idValue(value.teamId));
+            bindOptionalId(receipt, r++, value.leaderId);
+            receipt.bindInt64(r++, enumValue(value.approach));
+            receipt.bindInt64(r++, value.firstWorkDay);
+            receipt.bindInt64(r++, value.completedDay);
+            receipt.bindInt64(r++, value.workDays);
+            receipt.bindInt64(r++, value.depositsImproved);
+            receipt.bindDouble(r++, value.averageConfidenceBefore);
+            receipt.bindDouble(r++, value.averageConfidenceAfter);
+            receipt.execute();
+            reuse(receipt);
+        }
+        for (std::size_t child = 0; child < item.reports.size(); ++child) {
+            const SurveyProgramReport& value = item.reports.at(child);
+            int r = 1;
+            report.bindInt64(r++, idValue(item.id));
+            report.bindInt64(r++, checkedOrdinal(child, "survey_program_reports"));
+            report.bindInt64(r++, value.startDay);
+            report.bindInt64(r++, value.endDay);
+            report.bindInt64(r++, value.isNinetyDayReview ? 1 : 0);
+            report.bindInt64(r++, value.charterRevision);
+            bindOptionalId(report, r++, value.leaderId);
+            report.bindInt64(r++, enumValue(value.approach));
+            report.bindInt64(r++, value.visitsCompleted);
+            report.bindInt64(r++, value.workDays);
+            report.bindDouble(r++, value.fuelLoaded);
+            report.bindDouble(r++, value.fuelBurned);
+            bindOptionalId(report, r++, value.fleetId);
+            bindOptionalId(report, r++, value.teamId);
+            bindOptionalId(report, r++, value.fleetBodyId);
+            report.bindText(r++, value.waitingReason);
+            report.execute();
+            reuse(report);
+        }
+    }
+}
+
 void saveEvents(Database& db, const GameState& state) {
     Statement stmt{db, "INSERT INTO event_log(id, day, severity, event_type, payload_json) VALUES (?, ?, ?, ?, ?);"};
     for (const SimEvent& event : state.eventLog) {
@@ -671,6 +863,8 @@ void loadIdCounters(Database& db, IdCounters& ids) {
     ids.nextShipId = loadCounter(db, "next_ship_id");
     ids.nextFleetId = loadCounter(db, "next_fleet_id");
     ids.nextEventId = loadCounter(db, "next_event_id");
+    ids.nextSurveyProgramId = loadCounter(db, "next_survey_program_id");
+    ids.nextSurveyTeamId = loadCounter(db, "next_survey_team_id");
 }
 
 void loadStarSystems(Database& db, GameState& state) {
@@ -703,14 +897,14 @@ void loadPeople(Database& db, GameState& state) {
         SELECT id, name, institution_id, logistics, industry, survey, command,
                administration, engineering, intelligence, crisis_management,
                seniority_level, successful_assignments, failed_assignments,
-               commendations, controversies, ordinal
+               commendations, controversies, survey_planning_approach, ordinal
         FROM people
         ORDER BY ordinal;
     )sql"};
 
     std::int64_t nextOrdinal = 0;
     while (stmt.step()) {
-        requireNextOrdinal(stmt, 16, nextOrdinal, "people");
+        requireNextOrdinal(stmt, 17, nextOrdinal, "people");
         state.people.push_back(Person{
             .id = PersonId{stmt.columnInt64(0)},
             .name = stmt.columnText(1),
@@ -731,7 +925,8 @@ void loadPeople(Database& db, GameState& state) {
                 .failedAssignments = checkedIntFromSql(stmt.columnInt64(13), "people.failed_assignments"),
                 .commendations = checkedIntFromSql(stmt.columnInt64(14), "people.commendations"),
                 .controversies = checkedIntFromSql(stmt.columnInt64(15), "people.controversies")
-            }
+            },
+            .surveyPlanningApproach = enumFromValue<SurveyPlanningApproach>(stmt.columnInt64(16))
         });
     }
 }
@@ -837,7 +1032,7 @@ void loadColonies(Database& db, GameState& state) {
     for (const Colony& colony : state.colonies) {
         if (mineralRows[colony.id.value] != mineralCount() ||
             materialRows[colony.id.value] != processedMaterialCount()) {
-            throw std::runtime_error{"v12 colony resource rows must be complete"};
+            throw std::runtime_error{"v13 colony resource rows must be complete"};
         }
     }
 
@@ -881,7 +1076,7 @@ void loadMineralDeposits(Database& db, GameState& state) {
     }
 }
 
-void loadV12ShipComponentsAndClasses(Database& db, GameState& state) {
+void loadShipComponentsAndClasses(Database& db, GameState& state) {
     Statement components{db, R"sql(
         SELECT id, name, kind, mass, volume, internal_volume_capacity,
                power_generation, power_demand, propellant_capacity,
@@ -912,7 +1107,7 @@ void loadV12ShipComponentsAndClasses(Database& db, GameState& state) {
     }
     for (const ShipComponentDefinition& row : state.shipComponents) {
         if (costRows[row.id.value] != processedMaterialCount()) {
-            throw std::runtime_error{"v12 component cost rows must be complete"};
+            throw std::runtime_error{"v13 component cost rows must be complete"};
         }
     }
     Statement classes{db, R"sql(
@@ -1077,6 +1272,168 @@ void loadShips(Database& db, GameState& state) {
     }
 }
 
+void loadSurveyTeams(Database& db, GameState& state) {
+    Statement stmt{db, R"sql(
+        SELECT id, name, location_kind, colony_id, fleet_id, ordinal
+        FROM survey_teams ORDER BY ordinal;
+    )sql"};
+    std::int64_t nextOrdinal = 0;
+    while (stmt.step()) {
+        requireNextOrdinal(stmt, 5, nextOrdinal, "survey_teams");
+        state.surveyTeams.push_back(SurveyTeam{
+            .id = SurveyTeamId{stmt.columnInt64Strict(0)},
+            .name = stmt.columnText(1),
+            .locationKind = enumFromValue<SurveyTeamLocationKind>(stmt.columnInt64Strict(2)),
+            .colonyId = optionalStrictIdFromColumn<ColonyId>(stmt, 3),
+            .fleetId = optionalStrictIdFromColumn<FleetId>(stmt, 4)
+        });
+    }
+}
+
+void loadSurveyPrograms(Database& db, GameState& state) {
+    Statement stmt{db, R"sql(
+        SELECT id, name, home_colony_id, requested_fleet_id, requested_leader_id,
+               requested_team_id, max_additional_propellant, home_stock_floor,
+               return_contingency_fraction, created_day, charter_revision, lifecycle, closure,
+               leased_fleet_id, leased_team_id, task, task_body_id, task_fleet_id,
+               task_team_id, task_leader_id, task_approach, task_pass_number,
+               work_days_completed, first_work_day, last_selection_reason, fuel_loaded, fuel_burned, total_work_days,
+               next_report_day, report_start_day, reported_fuel_loaded, reported_fuel_burned,
+               reported_work_days, reported_visits, issue_signature, issue_message,
+               issue_acknowledged, pending_home_colony_id, ordinal
+        FROM survey_programs ORDER BY ordinal;
+    )sql"};
+    std::int64_t nextOrdinal = 0;
+    while (stmt.step()) {
+        requireNextOrdinal(stmt, 38, nextOrdinal, "survey_programs");
+        state.surveyPrograms.push_back(SurveyProgram{
+            .id = SurveyProgramId{stmt.columnInt64Strict(0)},
+            .charter = SurveyProgramCharter{
+                .name = stmt.columnText(1),
+                .homeColonyId = ColonyId{stmt.columnInt64Strict(2)},
+                .requestedFleetId = optionalStrictIdFromColumn<FleetId>(stmt, 3),
+                .requestedLeaderId = optionalStrictIdFromColumn<PersonId>(stmt, 4),
+                .requestedTeamId = optionalStrictIdFromColumn<SurveyTeamId>(stmt, 5),
+                .targets = {},
+                .policy = SurveyProgramPolicy{
+                    .maxAdditionalPropellant = stmt.columnIsNull(6)
+                        ? std::nullopt : std::optional<double>{stmt.columnDoubleStrict(6)},
+                    .homeStockFloor = stmt.columnDoubleStrict(7),
+                    .returnContingencyFraction = stmt.columnDoubleStrict(8)
+                }
+            },
+            .pendingHomeColonyId = optionalStrictIdFromColumn<ColonyId>(stmt, 37),
+            .createdDay = stmt.columnInt64Strict(9),
+            .charterRevision = checkedIntFromSql(stmt.columnInt64Strict(10), "survey_programs.charter_revision"),
+            .lifecycle = enumFromValue<SurveyProgramLifecycle>(stmt.columnInt64Strict(11)),
+            .closure = enumFromValue<SurveyProgramClosure>(stmt.columnInt64Strict(12)),
+            .leasedFleetId = optionalStrictIdFromColumn<FleetId>(stmt, 13),
+            .leasedTeamId = optionalStrictIdFromColumn<SurveyTeamId>(stmt, 14),
+            .task = enumFromValue<SurveyProgramTask>(stmt.columnInt64Strict(15)),
+            .taskBodyId = optionalStrictIdFromColumn<BodyId>(stmt, 16),
+            .taskFleetId = optionalStrictIdFromColumn<FleetId>(stmt, 17),
+            .taskTeamId = optionalStrictIdFromColumn<SurveyTeamId>(stmt, 18),
+            .taskLeaderId = optionalStrictIdFromColumn<PersonId>(stmt, 19),
+            .taskApproach = enumFromValue<SurveyPlanningApproach>(stmt.columnInt64Strict(20)),
+            .taskPassNumber = checkedIntFromSql(stmt.columnInt64Strict(21), "survey_programs.task_pass_number"),
+            .workDaysCompleted = checkedIntFromSql(stmt.columnInt64Strict(22), "survey_programs.work_days_completed"),
+            .firstWorkDay = stmt.columnInt64Strict(23),
+            .lastSelectionReason = stmt.columnText(24),
+            .receipts = {},
+            .fuelLoaded = stmt.columnDoubleStrict(25),
+            .fuelBurned = stmt.columnDoubleStrict(26),
+            .totalWorkDays = stmt.columnInt64Strict(27),
+            .nextReportDay = stmt.columnInt64Strict(28),
+            .reportStartDay = stmt.columnInt64Strict(29),
+            .reportedFuelLoaded = stmt.columnDoubleStrict(30),
+            .reportedFuelBurned = stmt.columnDoubleStrict(31),
+            .reportedWorkDays = stmt.columnInt64Strict(32),
+            .reportedVisits = checkedIntFromSql(stmt.columnInt64Strict(33), "survey_programs.reported_visits"),
+            .reports = {},
+            .issue = SurveyProgramIssue{
+                .signature = stmt.columnText(34),
+                .message = stmt.columnText(35),
+                .acknowledged = checkedBoolFromSql(stmt, 36, "survey_programs.issue_acknowledged")
+            }
+        });
+    }
+
+    Statement targets{db, R"sql(
+        SELECT program_id, body_id, priority, requested_passes, ordinal
+        FROM survey_program_targets ORDER BY program_id, ordinal;
+    )sql"};
+    std::unordered_map<std::int64_t, std::int64_t> nextTargetOrdinal;
+    while (targets.step()) {
+        const SurveyProgramId programId{targets.columnInt64Strict(0)};
+        requireNextOrdinal(targets, 4, nextTargetOrdinal[idValue(programId)], "survey_program_targets");
+        SurveyProgram* item = findById(state.surveyPrograms, programId);
+        if (item == nullptr) throw std::runtime_error{"Save target references an unknown survey program"};
+        item->charter.targets.push_back(SurveyProgramTarget{
+            .bodyId = BodyId{targets.columnInt64Strict(1)},
+            .priority = checkedIntFromSql(targets.columnInt64Strict(2), "survey_program_targets.priority"),
+            .requestedPasses = checkedIntFromSql(targets.columnInt64Strict(3), "survey_program_targets.requested_passes")
+        });
+    }
+
+    Statement receipts{db, R"sql(
+        SELECT program_id, body_id, pass_number, fleet_id, team_id, leader_id, approach,
+               first_work_day, completed_day, work_days, deposits_improved,
+               average_confidence_before, average_confidence_after, ordinal
+        FROM survey_program_receipts ORDER BY program_id, ordinal;
+    )sql"};
+    std::unordered_map<std::int64_t, std::int64_t> nextReceiptOrdinal;
+    while (receipts.step()) {
+        const SurveyProgramId programId{receipts.columnInt64Strict(0)};
+        requireNextOrdinal(receipts, 13, nextReceiptOrdinal[idValue(programId)], "survey_program_receipts");
+        SurveyProgram* item = findById(state.surveyPrograms, programId);
+        if (item == nullptr) throw std::runtime_error{"Save receipt references an unknown survey program"};
+        item->receipts.push_back(SurveyVisitReceipt{
+            .bodyId = BodyId{receipts.columnInt64Strict(1)},
+            .passNumber = checkedIntFromSql(receipts.columnInt64Strict(2), "survey_program_receipts.pass_number"),
+            .fleetId = FleetId{receipts.columnInt64Strict(3)},
+            .teamId = SurveyTeamId{receipts.columnInt64Strict(4)},
+            .leaderId = optionalStrictIdFromColumn<PersonId>(receipts, 5),
+            .approach = enumFromValue<SurveyPlanningApproach>(receipts.columnInt64Strict(6)),
+            .firstWorkDay = receipts.columnInt64Strict(7),
+            .completedDay = receipts.columnInt64Strict(8),
+            .workDays = checkedIntFromSql(receipts.columnInt64Strict(9), "survey_program_receipts.work_days"),
+            .depositsImproved = checkedIntFromSql(receipts.columnInt64Strict(10), "survey_program_receipts.deposits_improved"),
+            .averageConfidenceBefore = receipts.columnDoubleStrict(11),
+            .averageConfidenceAfter = receipts.columnDoubleStrict(12)
+        });
+    }
+
+    Statement reports{db, R"sql(
+        SELECT program_id, start_day, end_day, is_ninety_day_review, charter_revision,
+               leader_id, approach, visits_completed, work_days, fuel_loaded, fuel_burned,
+               fleet_id, team_id, fleet_body_id, waiting_reason, ordinal
+        FROM survey_program_reports ORDER BY program_id, ordinal;
+    )sql"};
+    std::unordered_map<std::int64_t, std::int64_t> nextReportOrdinal;
+    while (reports.step()) {
+        const SurveyProgramId programId{reports.columnInt64Strict(0)};
+        requireNextOrdinal(reports, 15, nextReportOrdinal[idValue(programId)], "survey_program_reports");
+        SurveyProgram* item = findById(state.surveyPrograms, programId);
+        if (item == nullptr) throw std::runtime_error{"Save report references an unknown survey program"};
+        item->reports.push_back(SurveyProgramReport{
+            .startDay = reports.columnInt64Strict(1),
+            .endDay = reports.columnInt64Strict(2),
+            .isNinetyDayReview = checkedBoolFromSql(reports, 3, "survey_program_reports.is_ninety_day_review"),
+            .charterRevision = checkedIntFromSql(reports.columnInt64Strict(4), "survey_program_reports.charter_revision"),
+            .leaderId = optionalStrictIdFromColumn<PersonId>(reports, 5),
+            .approach = enumFromValue<SurveyPlanningApproach>(reports.columnInt64Strict(6)),
+            .visitsCompleted = checkedIntFromSql(reports.columnInt64Strict(7), "survey_program_reports.visits_completed"),
+            .workDays = reports.columnInt64Strict(8),
+            .fuelLoaded = reports.columnDoubleStrict(9),
+            .fuelBurned = reports.columnDoubleStrict(10),
+            .fleetId = optionalStrictIdFromColumn<FleetId>(reports, 11),
+            .teamId = optionalStrictIdFromColumn<SurveyTeamId>(reports, 12),
+            .fleetBodyId = optionalStrictIdFromColumn<BodyId>(reports, 13),
+            .waitingReason = reports.columnText(14)
+        });
+    }
+}
+
 void loadEvents(Database& db, GameState& state) {
     Statement stmt{db, "SELECT id, day, severity, event_type, payload_json FROM event_log ORDER BY id;"};
     while (stmt.step()) {
@@ -1102,10 +1459,12 @@ void loadEvents(Database& db, GameState& state) {
     loadBodies(db, state);
     loadColonies(db, state);
     loadMineralDeposits(db, state);
-    loadV12ShipComponentsAndClasses(db, state);
+    loadShipComponentsAndClasses(db, state);
     loadShipyardOrders(db, state);
     loadFleets(db, state);
     loadShips(db, state);
+    loadSurveyTeams(db, state);
+    loadSurveyPrograms(db, state);
     loadAppointments(db, state);
     loadEvents(db, state);
 
@@ -1133,12 +1492,12 @@ void SaveGameRepository::save(const std::filesystem::path& path, const GameState
     if (hasUserSchema(db)) {
         const std::int64_t version = readSchemaVersion(db);
         if (version != kSchemaVersion) throw std::runtime_error{"Unsupported save schema version"};
-        requireV12Structure(db);
+        requireV13Structure(db);
         (void)readSnapshot(db);
     } else {
         // DDL and rows share this transaction. A failed new-path save may
         // leave an empty file, but not a partially initialized schema.
-        createSchemaV12(db);
+        createSchemaV13(db);
     }
     clearExistingSave(db);
     saveSchemaVersion(db);
@@ -1162,6 +1521,8 @@ void SaveGameRepository::save(const std::filesystem::path& path, const GameState
     saveShipyardOrders(db, state);
     saveFleets(db, state);
     saveShips(db, state);
+    saveSurveyTeams(db, state);
+    saveSurveyPrograms(db, state);
     saveEvents(db, state);
     // Re-read on this connection before commit. This catches incomplete rows,
     // ordinal gaps, and foreign-key problems while rollback can still restore
@@ -1183,7 +1544,7 @@ GameState SaveGameRepository::load(const std::filesystem::path& path) {
     Transaction transaction{db, Transaction::Mode::Read};
     const std::int64_t version = readSchemaVersion(db);
     if (version != kSchemaVersion) throw std::runtime_error{"Unsupported save schema version"};
-    requireV12Structure(db, true);
+    requireV13Structure(db, true);
     GameState state = readSnapshot(db);
 
     transaction.commit();

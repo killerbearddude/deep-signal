@@ -6,6 +6,7 @@
 
 #include "sim/Domain.h"
 #include "sim/IdTypes.h"
+#include "sim/SurveyProgram.h"
 
 #include <cstdint>
 #include <optional>
@@ -78,6 +79,30 @@ struct ResourceSurveyCommand {
     BodyId bodyId;
 };
 
+// Authorizes durable delegated intent. Current lack of fleet/team/leader/fuel
+// is a waiting condition; supplied references and charter policy must be valid.
+struct CreateSurveyProgramCommand {
+    SurveyProgramCharter charter;
+};
+
+// Replaces the requested charter with a dated revision. Current physical work
+// keeps its stored task/route until the next safe planning boundary.
+struct AmendSurveyProgramCommand {
+    SurveyProgramId programId;
+    SurveyProgramCharter charter;
+};
+
+struct SuspendSurveyProgramCommand { SurveyProgramId programId; };
+struct ResumeSurveyProgramCommand { SurveyProgramId programId; };
+struct CancelSurveyProgramCommand { SurveyProgramId programId; };
+
+// Acknowledges one stable issue identity without relaxing its fuel or assignment
+// constraint, permitting later time advancement under the same limitation.
+struct AcknowledgeSurveyProgramIssueCommand {
+    SurveyProgramId programId;
+    std::string signature;
+};
+
 
 // Assigns or replaces the current person responsible for one appointment slot.
 // The target scope is identified by its scope type and raw typed-ID value so one
@@ -110,6 +135,12 @@ using SimCommand = std::variant<
     ClearFleetOrderQueueCommand,
     CancelFleetOrderCommand,
     ResourceSurveyCommand,
+    CreateSurveyProgramCommand,
+    AmendSurveyProgramCommand,
+    SuspendSurveyProgramCommand,
+    ResumeSurveyProgramCommand,
+    CancelSurveyProgramCommand,
+    AcknowledgeSurveyProgramIssueCommand,
     AssignAppointmentCommand,
     SetColonyProcessingPolicyCommand
 >;

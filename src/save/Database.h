@@ -103,6 +103,10 @@ public:
     // checked here. Domain validation happens after repository reconstruction.
     [[nodiscard]] double columnDouble(int column) const;
 
+    // Reads a finite REAL or INTEGER value without SQLite's permissive TEXT
+    // conversion. New program accounting fields use this at the save boundary.
+    [[nodiscard]] double columnDoubleStrict(int column) const;
+
     // Copies SQLite's text representation into an owned string. NULL yields an
     // empty string; use columnIsNull when that distinction matters.
     [[nodiscard]] std::string columnText(int column) const;
