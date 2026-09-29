@@ -14,9 +14,11 @@ First buildable headless simulation slice for **Deep Signal Prototype 0.1 - Home
 - Immutable component-based ship designs and derived build/survey capability
 - Persistent home-supported survey programs with finite teams, real refueling,
   timed visits, reports, and interruption-aware time advancement
+- Delegated two-colony freight programs with per-hull cargo, powered handling,
+  source-only operating refueling, repeated shipments and safe cargo settlement
 - Ship and fleet creation
-- Fixed-duration fleet movement
-- SQLite schema v13 save/load layer; older development saves are unsupported
+- Prototype sustained-burn fleet movement; loaded cargo does not change its fuel/time model
+- SQLite schema v14 save/load layer; older development saves are unsupported
 - Full-save/full-load transactions
 - Prepared statements for value-bearing SQL
 - CLI smoke runner
@@ -28,11 +30,23 @@ First buildable headless simulation slice for **Deep Signal Prototype 0.1 - Home
 
 ## Architecture status
 
+For a current-format UI inspection save of the P3B proof loop, run:
+
+```sh
+./build-p3b/deep_signal_cli --write-freight-fixture /tmp/deep-signal-p3b.sqlite
+```
+
+Load that file in the desktop shell. It has a 500-unit Propellant delivery
+program, a reference freighter, and a separately authorized receiving survey
+fleet/team waiting for real supply. Open **Freight / Supply Programs** to inspect
+the repeated trips, physical manifests and settlement controls. Cargo uses
+normalized units; the prototype transit model ignores payload mass.
+
 The project has three active CMake libraries by default:
 
 ```text
 deep_signal_sim   # pure deterministic simulation; no SQLite/UI/platform deps
-deep_signal_save  # SQLite C API repository and schema v13 mapping
+deep_signal_save  # SQLite C API repository and schema v14 mapping
 deep_signal_app   # application service wrapping simulation plus save/load
 ```
 
@@ -45,7 +59,7 @@ The simulation library now owns domain validation through `src/sim/GameStateVali
 The persistence layer is intentionally isolated under `src/save`:
 
 - `Database.*` owns the SQLite connection, prepared statements, and transactions.
-- `Schema.*` creates and validates only the active schema v13 structure.
+- `Schema.*` creates and validates only the active schema v14 structure.
 - `SaveGameRepository.*` maps `GameState` to/from SQLite rows.
 - `EventJson.*` owns event payload JSON serialization/parsing so the repository does not contain event-specific JSON grammar.
 
@@ -77,7 +91,7 @@ The source also follows the current project C++ direction:
 - no raw owning pointers,
 - warning-clean CMake targets with `-Wall -Wextra -Wpedantic -Wconversion` on GCC/Clang.
 
-## SQLite schema v13 coverage
+## SQLite schema v14 coverage
 
 The save file persists:
 
@@ -92,12 +106,14 @@ The save file persists:
 - immutable ship-class revisions and component installations,
 - component processed-material construction costs,
 - survey teams, charters, assignments, receipts, issues, and 30/90-day reports,
+- freight charters, committed per-hull manifests, actual cargo lots, transfer
+  receipts, issues, closure dates, and reports,
 - shipyard orders,
 - fleets and active movement orders,
 - ships,
 - typed event log rows with JSON payload text.
 
-The current writer uses a replace-all save strategy inside one write transaction. Loading uses one read transaction, runs `PRAGMA foreign_key_check`, parses integer metadata strictly as canonical text, validates enum ordinals, validates the fully assembled `GameState`, and rejects missing, duplicate, or unsupported schema metadata. Schema v13 includes `CHECK` constraints for core non-negative quantities, enum ranges, ID counters, production-order invariants, fleet-order consistency, and program references.
+The current writer uses a replace-all save strategy inside one write transaction. Loading uses one read transaction, runs `PRAGMA foreign_key_check`, parses integer metadata strictly as canonical text, validates enum ordinals, validates the fully assembled `GameState`, and rejects missing, duplicate, or unsupported schema metadata. Schema v14 includes `CHECK` constraints for core non-negative quantities, enum ranges, ID counters, production-order invariants, fleet-order consistency, and program references.
 
 ## Zero-trust hardening status
 

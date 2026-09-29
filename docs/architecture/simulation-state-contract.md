@@ -1,7 +1,8 @@
 # Simulation state contract
 
 This document records the H1A processing-configuration, H1B save-continuity,
-P1 shipyard-intent, P2 vessel-design, and P3A delegated-survey contracts. The in-memory `GameState` remains the authority for
+P1 shipyard-intent, P2 vessel-design, P3A delegated-survey and P3B freight contracts.
+The in-memory `GameState` remains the authority for
 gameplay; SQLite stores explicit snapshots, not a second live world or a replay
 stream.
 
@@ -115,6 +116,7 @@ vectors:
 | `shipComponents` (v12) | `ship_components` |
 | `surveyTeams` (v13) | `survey_teams` |
 | `surveyPrograms` (v13) | `survey_programs` |
+| `freightPrograms` (v14) | `freight_programs` |
 | `shipClasses` | `ship_classes` |
 | `shipyardOrders` | `shipyard_orders` |
 | `ships` | `ships` |
@@ -123,7 +125,11 @@ vectors:
 Ordered child collections have their own scope. `appointments` keeps its global
 ordinal; `colony_processing_allocations` keeps an ordinal per colony; and
 `fleet_order_queue` keeps an ordinal per fleet. P3A target, receipt, and report
-rows keep an ordinal per program. A Ship row has **two independent
+rows keep an ordinal per program. P3B manifests, transfer receipts, and freight
+reports also retain per-program ordinals. The optional `freight_shipments` row
+holds the committed participants and limits; `ship_cargo` holds the one physical
+lot on each carrying ship. These lots reference the exact program and active
+shipment number. A Ship row has **two independent
 positions**: `ships.ordinal` reconstructs `GameState::ships`, while
 `ships.fleet_ordinal`, unique within its `fleet_id`, reconstructs that Fleet's
 `shipIds` roster. Reconstructing the roster by global Ship order would lose a
@@ -132,42 +138,44 @@ by mineral/material enum index, while metadata and ID counters remain keyed by
 name. `event_log` remains ordered by Event ID, with strictly increasing IDs and
 nondecreasing event days validated; it has no second ordinal.
 
-The current v13 writer assigns contiguous ordinals beginning at zero. Schema
+The current v14 writer assigns contiguous ordinals beginning at zero. Schema
 constraints require non-null integer, nonnegative, unique values in each scope;
 the reader also checks storage type and contiguity before accepting a sequence.
 Every ordered read uses explicit `ORDER BY`. Missing, duplicate, fractional,
-negative, or gapped v13 order data is rejected rather than reconstructed in
+negative, or gapped v14 order data is rejected rather than reconstructed in
 legacy ID order. Empty collections are valid.
 
 ## Schema versions and destination policy
 
-H1A wrote schema v10, H1B wrote v11, and P2 wrote v12. P3A writes and reads
-**v13 only**. Deep Signal is in active pre-release development: development
+H1A wrote schema v10, H1B wrote v11, P2 wrote v12, and P3A wrote v13. P3B writes and reads
+**v14 only**. Deep Signal is in active pre-release development: development
 save files are disposable, and compatibility across schema versions is not
 guaranteed unless a future milestone explicitly establishes it. This is the
 current development policy, not a permanent release policy. An older file,
-including v12, fails with an unsupported-schema error before gameplay
+including v13, fails with an unsupported-schema error before gameplay
 reconstruction. Load opens it read-only and does not modify it. Save refuses to
 overwrite older or unknown schemas. No automatic migration or in-place repair
 is performed.
 
-The v13 reader requires the current table, column, key, and foreign-key shape,
+The v14 reader requires the current table, column, key, and foreign-key shape,
 complete component and material-cost rows, class revision identity, ordered
 installations, program/team references, scoped target/receipt/report ordinals,
-and all H1B ordering checks. A version marker alone does not make a file valid.
+freight commitment/custody/history references, and all H1B ordering checks. New
+freight numeric values and enums use strict SQLite storage-type readers. A
+version marker alone does not make a file valid.
 Destination recognition compares the user schema object set and each table's
-`table_xinfo`, `foreign_key_list`, and index shape with a freshly built v13
+`table_xinfo`, `foreign_key_list`, and index shape with a freshly built v14
 reference. Save rejects user triggers even on known tables because their write
 effects are not trusted. Read-only Load may tolerate triggers on known tables.
 The check does not require byte-identical `CREATE TABLE` text or silently add
 missing columns.
 
 Save accepts a new path, a schema-empty database, or an existing compatible,
-valid v13 save. It validates its input state before opening the destination.
+valid v14 save. It validates its input state before opening the destination.
 The connection enables foreign keys before an immediate write transaction.
-Inside that transaction it verifies an existing v13 snapshot before replacement,
-creates v13 schema only if empty, replaces rows, rereads the new snapshot, and
-commits only after validation. Load opens read-only, checks v13 structure and
+Inside that transaction it verifies an existing v14 snapshot before replacement,
+creates v14 schema only if empty, replaces rows, rereads the new snapshot, and
+commits only after validation. Load opens read-only, checks v14 structure and
 foreign keys, and validates a detached snapshot within one read transaction.
 A failed replacement rolls back the previous valid save's **logical** contents
 and schema. A failed first save may leave an empty new file; neither path
@@ -185,16 +193,16 @@ references, processing-editor drafts, and window geometry are also outside the
 game snapshot. Successful Load replaces the world and clears old-world
 interaction and editor state through the existing lifecycle.
 
-The H1B ordering contract, retained in v13, supports comparisons of durable state, ordered
+The H1B ordering contract, retained in v14, supports comparisons of durable state, ordered
 children, counters, and meaningful event order when an unsaved and reloaded
 simulation continue under the **same build and same inputs**. It does not
 promise bitwise identical floating-point results across compilers, platforms,
-or build flags, or unchanged outcomes after gameplay rules change. The H1A processing checks remain in force for current v13 snapshots.
+or build flags, or unchanged outcomes after gameplay rules change. The H1A processing checks remain in force for current v14 snapshots.
 
 ## Review evidence
 
 H1A processing-allocation and H1B durable-ordering tests remain part of the
-current suite. Current persistence evidence covers v13 round trips,
+current suite. Current persistence evidence covers v14 round trips,
 same-build continuation, malformed-state rejection, transactional rollback,
 and explicit rejection of older development schemas without changing their
 source files. Historical v10/v11 fixtures remain documented as evidence of
@@ -225,7 +233,7 @@ sufficient. P2 does not change sustained-burn transit physics.
 
 P2's v12 schema replaced class aggregate cost/BP/tank columns with component
 tables, ordered installations, and revision lineage. P3A retains those records
-in v13 alongside new program state. Old v10/v11/v12 fixtures remain useful for
+in v14 alongside survey and freight program state. Old v10/v11/v12 fixtures remain useful for
 proving current rejection is clean and leaves source files unchanged.
 
 ## P3A: delegated home-supported survey programs
@@ -274,3 +282,102 @@ P3A does not model cargo freight, tender maintenance, final propulsion,
 scientific analysis/claims, research, or site development. A successful
 program closes only after its requested visits and home return. The existing
 manual transit cancellation shortcut remains unchanged for unleased fleets.
+
+## P3B: delegated processed-material freight
+
+A freight charter identifies one source colony, one distinct destination colony,
+and one processed material. Its finite quantity is cumulative delivery intent.
+Authorizing it does not reserve stock, fuel tanks, or acquire busy assets. Missing
+fleet, leader, stock, tankage or handling remains a visible waiting condition.
+The amendment command contains only name, quantity, requested fleet/leader and
+resource policies: route and commodity require a different program. Historical
+delivery and current shipment commitments may exceed a later lowered target.
+
+`Ship::cargo` is the only onboard cargo inventory. An optional positive lot
+identifies its freight program, shipment, material and quantity. Engine fuel is
+separate, including when the cargo is Propellant. There is no cargo-to-tank
+conversion or destination refueling. Cargo uses normalized units: one unit of
+any processed material occupies one unit of cargo capacity. Loaded mass does
+not change the retained prototype transit/fuel equations.
+
+The shared ship evaluator derives cargo capacity and installed handling rate.
+Each hull must have enough generation for its own total power demand to operate
+its handling equipment. Another hull cannot lend it handling power or unload its
+hold. Transfer limits apply per hull in stored roster order. Each debit has an
+equal physical credit; positive dated receipts distinguish cargo load, delivery,
+source return and operating fuel. Cumulative loaded cargo equals delivered plus
+returned plus currently aboard. Destination consumption does not undo delivery.
+
+The reference freighter installs the existing hull, reactor, tank and general
+systems plus two Standard Cargo Bays. Each bay contributes 100 cargo units and
+25 handling units/day, with mass 60, volume 200, demand 20, BP 60 and construction
+cost 40 Alloys / 10 Electronics / 20 Composites. The resulting hull derives mass
+590, volume 670/1000, generation/demand 120/60, tankage 1000, cargo 200, handling
+50/day and 550 BP. It has no survey equipment. Existing cutter totals remain.
+
+### Shared control and day phases
+
+`ProgramController` distinguishes typed survey and freight IDs even when their
+numeric values coincide. Reverse fleet ownership is derived from canonical
+program leases. All manual movement, queue edits, cancellation and survey guards
+use that same ownership boundary; internal departures verify their actual owner
+before using common route planning and engine-fuel payment.
+
+Opening dispatch is a stable merge of the stored survey and freight vectors.
+Only their next unvisited heads are compared by creation day; equal days visit
+survey first. Neither vector is sorted. Existing leases occupy assets for the
+whole opening phase, so release cannot enable a second controller that day.
+A temporary per-colony/material budget captures actual opening stock. Each
+withdrawal reduces actual stock and budget; inbound credit increases only actual
+stock. Every program therefore waits until the next opening to spend new inbound
+goods. Mining, processing, shipyards and movement then run in their existing
+order; industry may use goods actually unloaded earlier that day. End-of-day
+arrival/issue/report bookkeeping never dispatches another physical action.
+
+### Repeated trips, resource limits and disposition
+
+One fleet action per opening day can refill tanks, load, unload, depart, or
+perform survey work. Last loading, departure, arrival, unloading and return
+departure cannot be collapsed into one recursive action. Distinct colonies on
+the same body skip transit but retain separate handling days.
+
+Batch planning bounds the next shipment by unmet demand, real available stock
+and operational per-hull capacity. It records finite per-hull planned limits,
+which are not inventory reservations. Fuel estimates include rate-limited
+loading, a required refueling day, outward transit, rate-limited unloading and
+next-day return departure. Return fuel uses that projected date and the existing
+commander modifier. Actual departures reprice and pay their actual leg.
+The deterministic search evaluates at most 14 candidates: the maximum, a
+fuel-adjusted smaller candidate when Propellant is shared, then bounded halves.
+It is a readiness estimate, not an optimizer or guaranteed completion ETA.
+
+Source-only operating fuel has priority over payload, is limited by actual tank
+room, stock and remaining lifetime allowance, and is counted only when actually
+transferred. If payload is Propellant, its stock floor and operating fuel floor
+use their maximum, not their sum. With 120 stock, floor 20 and operating transfer
+10, at most 90 remains for payload. Floors constrain each program's withdrawals;
+they are not global reservations against unrelated consumers.
+
+Suspension preserves cargo and paid transit, stops transfers/departures, and
+retains custody while any cargo is aboard. Empty stationary fleets can release
+safely without refunding engine fuel. A retained return task must reacquire the
+same fleet. Fleet amendments take effect at an empty source planning boundary.
+Cancellation stops future pickups and authorizes only bounded settlement:
+unshipped source cargo returns through real handling days; already dispatched
+cargo reaches its original destination and unloads there, with no new mandatory
+empty return. An already active empty leg reaches its paid destination. Cargo is
+never erased, teleported, or counted as delivered at departure/arrival.
+
+Normal completion requires actual delivery, empty holds and physical source
+return before release. Unfinished completion return and cancellation settlement
+remain actionable through amendment, suspension/resumption and acknowledgment.
+Suspending freight retains cancellation intent so resumption cannot restart
+pickups. `Closed` is terminal and has `closedDay`; periodic freight reports stop
+after closure. A scheduled report due on closure day is still published once.
+Reports snapshot their resource floors, operating allowance and contingency;
+later charter amendments do not change those historical limits.
+P3A's existing post-closure report policy is retained separately.
+
+Freight does not lease a survey team. An already embarked unleased team follows
+its physical fleet. No remote support/rescue, cargo market, crew system, density
+model, final propulsion, tender maintenance, P4 or P5 mechanics are introduced.
