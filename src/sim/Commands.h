@@ -9,6 +9,7 @@
 #include "sim/SurveyProgram.h"
 #include "sim/FreightProgram.h"
 #include "sim/MaintenanceProgram.h"
+#include "sim/AnalysisProgram.h"
 
 #include <cstdint>
 #include <optional>
@@ -125,6 +126,14 @@ struct CancelMaintenanceProgramCommand { MaintenanceProgramId programId; };
 struct AcknowledgeMaintenanceIssueCommand { MaintenanceProgramId programId; std::string signature; };
 
 
+// Analysis authorization records intent; only daily lab work publishes findings.
+struct CreateAnalysisProgramCommand { AnalysisCharter charter; };
+struct AmendAnalysisProgramCommand { AnalysisProgramId programId; AnalysisAmendment amendment; };
+struct SuspendAnalysisProgramCommand { AnalysisProgramId programId; };
+struct ResumeAnalysisProgramCommand { AnalysisProgramId programId; };
+struct CancelAnalysisProgramCommand { AnalysisProgramId programId; };
+struct AcknowledgeAnalysisIssueCommand { AnalysisProgramId programId; std::string signature; };
+
 // Assigns or replaces the current person responsible for one appointment slot.
 // The target scope is identified by its scope type and raw typed-ID value so one
 // command can cover fleets, colonies, and institutions without a variant payload.
@@ -174,6 +183,12 @@ using SimCommand = std::variant<
     ResumeMaintenanceProgramCommand,
     CancelMaintenanceProgramCommand,
     AcknowledgeMaintenanceIssueCommand,
+    CreateAnalysisProgramCommand,
+    AmendAnalysisProgramCommand,
+    SuspendAnalysisProgramCommand,
+    ResumeAnalysisProgramCommand,
+    CancelAnalysisProgramCommand,
+    AcknowledgeAnalysisIssueCommand,
     AssignAppointmentCommand,
     SetColonyProcessingPolicyCommand
 >;

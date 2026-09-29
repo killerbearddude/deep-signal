@@ -10,6 +10,7 @@
 #include "sim/SurveyProgram.h"
 #include "sim/FreightProgram.h"
 #include "sim/MaintenanceProgram.h"
+#include "sim/AnalysisProgram.h"
 
 #include <cstdint>
 #include <vector>
@@ -36,6 +37,11 @@ struct IdCounters {
     std::int64_t nextEquipmentFamilyId = 1;
     std::int64_t nextMaintenanceTeamId = 1;
     std::int64_t nextMaintenanceProgramId = 1;
+    std::int64_t nextMeasurementProfileId = 1;
+    std::int64_t nextObservationBatchId = 1;
+    std::int64_t nextAnalysisProgramId = 1;
+    std::int64_t nextAnalysisJobId = 1;
+    std::int64_t nextAssessmentId = 1;
 };
 
 // Complete state snapshot for the headless simulation. Public vectors are kept
@@ -66,6 +72,11 @@ struct GameState {
     std::vector<EquipmentFamily> equipmentFamilies;
     std::vector<MaintenanceTeam> maintenanceTeams;
     std::vector<MaintenanceProgram> maintenancePrograms;
+    std::vector<MeasurementProfile> measurementProfiles;
+    std::vector<ObservationBatch> observations;
+    std::vector<AnalysisProgram> analysisPrograms;
+    std::vector<AnalysisFinding> analysisFindings;
+    std::vector<AssessmentRevision> assessments;
 
     // Runtime-only economy telemetry is separated from the audit log so routine
     // mining can feed current-session UI, forecasts, and debugging without

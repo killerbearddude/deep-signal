@@ -5,6 +5,7 @@
 // reports, and issues record what physical execution actually accomplished.
 
 #include "sim/Domain.h"
+#include "sim/Observation.h"
 
 #include <cstdint>
 #include <optional>
@@ -65,9 +66,7 @@ struct SurveyVisitReceipt {
     std::int64_t firstWorkDay = 0;
     std::int64_t completedDay = 0;
     int workDays = 0;
-    int depositsImproved = 0;
-    double averageConfidenceBefore = 0.0;
-    double averageConfidenceAfter = 0.0;
+    ObservationBatchId observationBatchId{};
 };
 
 struct SurveyProgramReport {
@@ -123,6 +122,8 @@ struct SurveyProgram {
     int workDaysCompleted = 0;
     std::int64_t firstWorkDay = 0;
     std::string lastSelectionReason{};
+    std::vector<InstrumentExposure> exposures{};
+    std::vector<std::int64_t> workDates{};
     // A maintenance return preserves the original partial visit and participants.
     // It is cleared only when home is reached, not by finishing transit elsewhere.
     bool maintenanceReturn = false;

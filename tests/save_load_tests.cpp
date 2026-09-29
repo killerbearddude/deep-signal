@@ -130,9 +130,7 @@ bool samePayload(const deep::SimEventPayload& lhs, const deep::SimEventPayload& 
         } else if constexpr (std::is_same_v<Left, deep::ResourceSurveyCompletedEvent>) {
             return left.fleetId == right.fleetId &&
                    left.bodyId == right.bodyId &&
-                   left.depositsImproved == right.depositsImproved &&
-                   almostEqual(left.averageConfidenceBefore, right.averageConfidenceBefore) &&
-                   almostEqual(left.averageConfidenceAfter, right.averageConfidenceAfter);
+                   left.observationBatchId == right.observationBatchId;
         } else if constexpr (std::is_same_v<Left, deep::SurveyProgramAuditEvent>) {
             return left.programId == right.programId && left.kind == right.kind &&
                    left.fleetId == right.fleetId && left.bodyId == right.bodyId &&
@@ -154,6 +152,8 @@ bool samePayload(const deep::SimEventPayload& lhs, const deep::SimEventPayload& 
         } else if constexpr (std::is_same_v<Left, deep::MaintenanceProgramAuditEvent>) {
             return left.programId == right.programId && left.kind == right.kind &&
                    left.jobNumber == right.jobNumber && left.detail == right.detail;
+        } else if constexpr (std::is_same_v<Left, deep::AnalysisProgramAuditEvent>) {
+            return left.programId==right.programId && left.kind==right.kind && left.jobId==right.jobId && left.detail==right.detail;
         } else if constexpr (std::is_same_v<Left, deep::CommandRejectedEvent>) {
             return left.reason == right.reason;
         }
@@ -290,7 +290,7 @@ void requireSameState(const deep::GameState& expected, const deep::GameState& ac
         require(left.mineral == right.mineral, "deposit mineral round-trips");
         require(almostEqual(left.remaining, right.remaining), "deposit remaining amount round-trips");
         require(almostEqual(left.accessibility, right.accessibility), "deposit accessibility round-trips");
-        require(almostEqual(left.confidence, right.confidence), "deposit confidence round-trips");
+        require(left.bodyId == right.bodyId, "physical deposit identity round-trips separately from knowledge");
     }
 
     require(expected.shipComponents.size() == actual.shipComponents.size(), "component row count round-trips");
@@ -449,9 +449,7 @@ void requireSameState(const deep::GameState& expected, const deep::GameState& ac
                     a.fleetId == b.fleetId && a.teamId == b.teamId && a.leaderId == b.leaderId &&
                     a.approach == b.approach && a.firstWorkDay == b.firstWorkDay &&
                     a.completedDay == b.completedDay && a.workDays == b.workDays &&
-                    a.depositsImproved == b.depositsImproved &&
-                    almostEqual(a.averageConfidenceBefore, b.averageConfidenceBefore) &&
-                    almostEqual(a.averageConfidenceAfter, b.averageConfidenceAfter),
+                    a.observationBatchId == b.observationBatchId,
                     "survey visit receipt order and facts round-trip");
         }
         require(almostEqual(left.fuelLoaded, right.fuelLoaded) &&
@@ -822,7 +820,7 @@ void test_malformed_survey_history_rows_are_rejected() {
         bool ignoreChecks = false;
         bool disableForeignKeys = false;
     } corruptions[] = {
-        {"receipt_gap", "UPDATE survey_program_receipts SET ordinal=7 WHERE ordinal=2;"},
+        {"receipt_gap", "UPDATE survey_program_receipts SET ordinal=7 WHERE ordinal=2;", false, true},
         {"report_gap", "UPDATE survey_program_reports SET ordinal=7 WHERE ordinal=0;"},
         {"receipt_overlap", "UPDATE survey_program_receipts SET first_work_day=5 WHERE ordinal=1;"},
         {"receipt_pass", "UPDATE survey_program_receipts SET pass_number=9 WHERE ordinal=0;"},
@@ -832,7 +830,7 @@ void test_malformed_survey_history_rows_are_rejected() {
         {"report_work_sum_mismatch", "UPDATE survey_program_reports SET work_days=14;"},
         {"report_bad_review", "UPDATE survey_program_reports SET is_ninety_day_review=2;", true},
         {"report_bad_real", "UPDATE survey_program_reports SET fuel_loaded='1junk';", true},
-        {"receipt_bad_real", "UPDATE survey_program_receipts SET average_confidence_before='1junk' WHERE ordinal=0;", true},
+        {"receipt_bad_real", "UPDATE survey_program_receipts SET work_days='1junk' WHERE ordinal=0;", true},
         {"pending_home_unknown", "UPDATE survey_programs SET pending_home_colony_id=999;", false, true}
     };
     for (const Corruption& test : corruptions) {
@@ -1035,7 +1033,7 @@ void test_design_revision_round_trip() {
     require(service.execute(deep::AssignShipyardBuildCommand{colonyId, original.id, 1}).ok,
             "later order binds original revision before save");
     const deep::GameState expected = service.state();
-    require(service.saveGame(path).ok, "v15 component revision snapshot saves");
+    require(service.saveGame(path).ok, "v16 component revision snapshot saves");
     const deep::GameState loaded = deep::save::SaveGameRepository::load(path);
     requireSameState(expected, loaded);
     require(loaded.shipClasses.back().components == draft &&

@@ -27,6 +27,7 @@
 #include "ui_imgui/SurveyProgramsPanel.h"
 #include "ui_imgui/FreightProgramsPanel.h"
 #include "ui_imgui/MaintenanceProgramsPanel.h"
+#include "ui_imgui/SciencePanel.h"
 #include "ui_imgui/TimeControlPanel.h"
 
 #include <optional>
@@ -92,6 +93,7 @@ private:
     SurveyProgramsPanel surveyProgramsPanel_;
     FreightProgramsPanel freightProgramsPanel_;
     MaintenanceProgramsPanel maintenanceProgramsPanel_;
+    SciencePanel sciencePanel_;
     EventLogPanel eventLogPanel_;
     InspectorPanel inspectorPanel_;
     InformationPanel informationPanel_;

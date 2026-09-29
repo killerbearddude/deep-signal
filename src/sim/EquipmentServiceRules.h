@@ -31,6 +31,9 @@ struct SurveyDutyEvaluation {
     double usableCapability = 0.0;
     double requiredDuty = 1.0;
     std::vector<OperatingDutyChange> changes{};
+    // All actual contributors, including unmanaged instruments without a wear
+    // delta. Exposure is earned by work, never inferred from the ending fleet.
+    std::vector<InstrumentExposure> contributors{};
     std::string condition;
 };
 

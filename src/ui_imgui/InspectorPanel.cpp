@@ -58,15 +58,15 @@ void drawBodyDetails(const SimulationQueries& queries, const BodyId bodyId) {
     const std::vector<BodyDepositSummary> deposits = queries.bodyDeposits(bodyId);
     if (!deposits.empty()) {
         ImGui::Separator();
-        ImGui::Text("Deposits");
+        ImGui::Text("Declared resource channels / assessments");
         if (ImGui::BeginTable("InspectorBodyDeposits", 8, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
             ImGui::TableSetupColumn("Mineral");
             ImGui::TableSetupColumn("Status");
-            ImGui::TableSetupColumn("Confidence");
-            ImGui::TableSetupColumn("Confirmed");
-            ImGui::TableSetupColumn("Estimated");
-            ImGui::TableSetupColumn("Uncertain");
-            ImGui::TableSetupColumn("Accessibility");
+            ImGui::TableSetupColumn("Accessibility class");
+            ImGui::TableSetupColumn("Reserve quantity");
+            ImGui::TableSetupColumn("Site suitability");
+            ImGui::TableSetupColumn("Observation date");
+            ImGui::TableSetupColumn("Limitations");
             ImGui::TableSetupColumn("Strategic relevance");
             ImGui::TableHeadersRow();
 
@@ -75,17 +75,19 @@ void drawBodyDetails(const SimulationQueries& queries, const BodyId bodyId) {
                 ImGui::TableSetColumnIndex(0);
                 ImGui::TextUnformatted(deposit.mineralName.c_str());
                 ImGui::TableSetColumnIndex(1);
-                ImGui::TextUnformatted(deposit.surveyStateName.c_str());
+                ImGui::TextUnformatted(deposit.indication.c_str());
                 ImGui::TableSetColumnIndex(2);
-                ImGui::Text("%.0f%%", deposit.confidence * 100.0);
+                ImGui::TextUnformatted(deposit.accessibility.c_str());
                 ImGui::TableSetColumnIndex(3);
-                ImGui::Text("%.0f", deposit.confirmedQuantity);
+                ImGui::TextUnformatted("Unmeasured");
                 ImGui::TableSetColumnIndex(4);
-                ImGui::Text("%.0f", deposit.estimatedQuantity);
+                ImGui::TextUnformatted("Unassessed");
                 ImGui::TableSetColumnIndex(5);
-                ImGui::Text("%.0f", deposit.uncertainQuantity);
+                if(deposit.asOfDay) ImGui::Text("Day %lld",static_cast<long long>(*deposit.asOfDay));
+                else ImGui::TextUnformatted("No applicable reading");
+                if(deposit.accessibilityAsOfDay)ImGui::Text("Accessibility day %lld",static_cast<long long>(*deposit.accessibilityAsOfDay));
                 ImGui::TableSetColumnIndex(6);
-                ImGui::Text("%.2f", deposit.accessibility);
+                ImGui::TextUnformatted("Non-detection is not absence");
                 ImGui::TableSetColumnIndex(7);
                 ImGui::TextWrapped("%s", deposit.strategicRelevance.c_str());
             }

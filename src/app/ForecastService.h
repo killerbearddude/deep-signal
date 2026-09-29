@@ -4,7 +4,7 @@
 // ForecastService borrows live SimulationService state without mutating it. It
 // does not advance a copied Simulation, reserve resources, or guarantee outcomes.
 // Amounts use the simulation's abstract resource units; rates are units per game
-// day, confidence is a fraction in [0, 1], and modifier percentages use points.
+// day; modifier percentages use points. Geological reserves remain unmeasured.
 
 #include "app/SimulationService.h"
 #include "sim/Domain.h"
@@ -24,9 +24,9 @@ struct ForecastModifierBreakdownRow {
     double percent = 0.0;
 };
 
-// Next-day mineral production forecast for one colony/deposit pair.
-// incomePerDay uses the same prototype mining formula and shared-deposit
-// consumption order as Simulation::simulateMining.
+// Current-session observed mining output for each colony/declared channel.
+// incomePerDay projects that recorded rate only; zero without a telemetry row
+// is not a claim that no deposit exists. No physical geology is inspected.
 struct MineralIncomeForecast {
     ColonyId colonyId;
     BodyId bodyId;
@@ -34,26 +34,23 @@ struct MineralIncomeForecast {
     std::string colonyName;
     std::string bodyName;
     std::string mineralName;
-    double confidence = 1.0;
-    std::string surveyStateName;
-    double confirmedQuantity = 0.0;
-    double estimatedQuantity = 0.0;
-    double uncertainQuantity = 0.0;
+    std::string knowledgeLimit = "Reserve quantity unmeasured";
     double incomePerDay = 0.0;
     std::string explanation;
+    bool operator==(const MineralIncomeForecast&) const = default;
 };
 
 // One explanation row in a forecast cause chain. Flow rows use signed units per
-// game day. The raw-mineral reserve rows also use amountPerDay for total reserve
-// quantities, despite its name; those rows must not be summed into daily flow.
+// game day. Geological reserve amounts are not measured by P4A profiles.
 struct MineralForecastCauseRow {
     std::string label;
     double amountPerDay = 0.0;
     std::string explanation;
+    bool operator==(const MineralForecastCauseRow&) const = default;
 };
 
 // Empire-level raw mineral forecast with simple cause rows for UI explanation.
-// Uses current mining income and processing estimates from existing stockpiles.
+// Uses recorded current-session mining output and known processing inputs.
 // Runout extrapolates a constant net rate; it does not simulate policy changes,
 // future depletion, or transport between colonies. nullopt means the current net
 // rate does not predict runout, not that supply is guaranteed indefinitely.
@@ -61,17 +58,13 @@ struct MineralForecastCauseChain {
     Mineral mineral = Mineral::Iron;
     std::string mineralName;
     double stockpile = 0.0;
-    double confirmedDepositQuantity = 0.0;
-    double estimatedDepositQuantity = 0.0;
-    double unknownPotentialQuantity = 0.0;
-    double uncertainDepositQuantity = 0.0;
     double miningIncomePerDay = 0.0;
     double committedDemandPerDay = 0.0;
     double netPerDay = 0.0;
     std::optional<int> stockpileRunoutDays;
-    bool dependsMostlyOnEstimatedSupply = false;
     std::string uncertaintyWarning;
     std::vector<MineralForecastCauseRow> causes;
+    bool operator==(const MineralForecastCauseChain&) const = default;
 };
 
 // Empire-level processed-material forecast. Processing income comes from current
@@ -89,24 +82,19 @@ struct ProcessedMaterialForecastCauseChain {
     std::vector<MineralForecastCauseRow> causes;
 };
 
-// Deposit lifetime estimate for each deposit, including unsurveyed deposits.
-// Uses physical remaining quantity and the present extraction rate; confidence
-// describes survey knowledge rather than changing the extraction calculation.
-// exhaustionDays is zero for exhausted deposits and empty without extraction.
+// Knowledge-limited lifetime advisory per public body and declared channel.
+// P4A has no reserve quantity measurement, so exhaustionDays remains absent;
+// this view never inspects hidden remaining quantity or accessibility.
 struct DepositExhaustionForecast {
     BodyId bodyId;
     Mineral mineral = Mineral::Iron;
     std::string bodyName;
     std::string mineralName;
-    double confidence = 1.0;
-    std::string surveyStateName;
-    double remainingDeposit = 0.0;
-    double confirmedDeposit = 0.0;
-    double estimatedDeposit = 0.0;
-    double uncertainDeposit = 0.0;
+    std::string knowledgeLimit = "Reserve quantity unmeasured";
     double incomePerDay = 0.0;
     std::optional<int> exhaustionDays;
     std::string explanation;
+    bool operator==(const DepositExhaustionForecast&) const = default;
 };
 
 // Capacity-only shipyard completion estimate for one production order.
@@ -202,8 +190,7 @@ public:
     // the referenced service alive longer than this object.
     explicit ForecastService(const SimulationService& service) noexcept;
 
-    // Returns next-day mineral income rows for each colony/deposit pair. Rows
-    // share deposit remaining in deterministic colony/deposit order.
+    // Returns declared colony/channel rows with current-session observed output.
     [[nodiscard]] std::vector<MineralIncomeForecast> mineralIncomePerDay() const;
 
     // Returns empire-level raw mineral cause chains showing mining income,
@@ -214,7 +201,7 @@ public:
     // output, active shipyard demand, net flow, and runout where applicable.
     [[nodiscard]] std::vector<ProcessedMaterialForecastCauseChain> processedMaterialForecastCauseChains() const;
 
-    // Returns deposit lifetime estimates using current daily extraction rates.
+    // Returns explicit insufficient-evidence rows without geological ETAs.
     [[nodiscard]] std::vector<DepositExhaustionForecast> depositExhaustionEstimates() const;
 
     // Returns standalone capacity-only ETAs, ignoring other queued orders.

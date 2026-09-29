@@ -1,3 +1,5 @@
+#include "sim/ObservationAcquisition.h"
+#include "sim/ObservationRules.h"
 #include "sim/SurveyProgramExecution.h"
 
 // Implements one bounded home-supported sortie at a time. The runner reads only
@@ -272,6 +274,8 @@ void clearTask(SurveyProgram& program) noexcept {
     program.taskApproach = SurveyPlanningApproach::CoverageFirst;
     program.taskPassNumber = 0;
     program.workDaysCompleted = 0;
+    program.exposures.clear();
+    program.workDates.clear();
     program.firstWorkDay = 0;
     program.maintenanceReturn = false;
 }
@@ -364,6 +368,8 @@ void selectTask(GameState& state, SurveyProgram& program, const Fleet& fleet,
     program.taskApproach = decisionApproach;
     program.taskPassNumber = choice.passNumber;
     program.workDaysCompleted = 0;
+    program.exposures.clear();
+    program.workDates.clear();
     program.firstWorkDay = 0;
     program.lastSelectionReason = choice.reason;
     audit(state, program, SurveyProgramAuditKind::TaskSelected, hooks,
@@ -380,21 +386,41 @@ void performSurveyWork(GameState& state, SurveyProgram& program, const Fleet& fl
 
     const auto duty = prepareSurveyDuty(state, fleet, 1.0);
     if (duty.usableCapability <= 0.0) return;
-    applySurveyDuty(state, duty);
-    for (const auto& change : duty.changes) {
-        hooks.emit(EventSeverity::Info, EquipmentDutyUsedEvent{
-            fleet.id, change.shipId, change.componentId, program.id, 1.0,
-            change.beforeUsedDuty, change.afterUsedDuty});
+    auto exposures=program.exposures;
+    auto dates=program.workDates;
+    dates.push_back(state.date.day);
+    for (const auto& contributor : duty.contributors)
+        accumulateObservationExposure(exposures,contributor,state.date.day,1);
+    std::optional<ObservationBatch> batch;
+    if (program.workDaysCompleted+1 == kP3ASurveyWorkDaysPerPass) {
+        batch=prepareObservationBatch(state,fleet.id,*program.taskBodyId,exposures,dates,
+            program.id,team.id,program.taskPassNumber);
+        state.observations.reserve(state.observations.size()+1);
+        program.receipts.reserve(program.receipts.size()+1);
     }
+    const auto eventCount=duty.changes.size()+(batch?2U:0U);
+    if(hooks.prepareEvents)hooks.prepareEvents(eventCount);
+    state.eventLog.reserve(state.eventLog.size()+eventCount);
+    applySurveyDuty(state, duty);
+    program.exposures.swap(exposures);
+    program.workDates.swap(dates);
     if (program.workDaysCompleted == 0) program.firstWorkDay = state.date.day;
     ++program.workDaysCompleted;
     ++program.totalWorkDays;
-    if (program.workDaysCompleted < kP3ASurveyWorkDaysPerPass) return;
+    if (program.workDaysCompleted < kP3ASurveyWorkDaysPerPass) {
+        for (const auto& change : duty.changes) {
+            hooks.emit(EventSeverity::Info, EquipmentDutyUsedEvent{
+                fleet.id, change.shipId, change.componentId, program.id, 1.0,
+                change.beforeUsedDuty, change.afterUsedDuty});
+        }
+        return;
+    }
 
-    // This is the only hidden-geology access in the executor. It runs once at
-    // the timed completion boundary, after physical team/equipment checks.
-    const ResourceSurveyCompletedEvent result = applyResourceSurveyResult(
-        state, fleet.id, *program.taskBodyId);
+    const auto batchId=batch->id;
+    state.observations.push_back(std::move(*batch));
+    ++state.ids.nextObservationBatchId;
+    const ResourceSurveyCompletedEvent result{
+        .fleetId=fleet.id,.bodyId=*program.taskBodyId,.observationBatchId=batchId};
     program.receipts.push_back(SurveyVisitReceipt{
         .bodyId = *program.taskBodyId,
         .passNumber = program.taskPassNumber,
@@ -405,21 +431,29 @@ void performSurveyWork(GameState& state, SurveyProgram& program, const Fleet& fl
         .firstWorkDay = program.firstWorkDay,
         .completedDay = state.date.day,
         .workDays = kP3ASurveyWorkDaysPerPass,
-        .depositsImproved = result.depositsImproved,
-        .averageConfidenceBefore = result.averageConfidenceBefore,
-        .averageConfidenceAfter = result.averageConfidenceAfter
+        .observationBatchId = batchId
     });
-    hooks.emit(EventSeverity::Info, result);
-    audit(state, program, SurveyProgramAuditKind::VisitCompleted, hooks,
-          result.depositsImproved == 0 ? "No new information from this pass" : "Timed survey pass completed",
-          program.taskBodyId, program.taskPassNumber);
     program.task = SurveyProgramTask::Return;
     program.workDaysCompleted = 0;
+    program.exposures.clear();
+    program.workDates.clear();
     program.firstWorkDay = 0;
     if (surveyCharterFinished(program)) {
         program.lifecycle = SurveyProgramLifecycle::Closing;
         program.closure = SurveyProgramClosure::Completed;
     }
+    // Commit retained work/task state before emitting prepared physical audits.
+    // A later diagnostic allocation cannot make a retry charge this work twice.
+    for (const auto& change : duty.changes) {
+        hooks.emit(EventSeverity::Info, EquipmentDutyUsedEvent{
+            fleet.id, change.shipId, change.componentId, program.id, 1.0,
+            change.beforeUsedDuty, change.afterUsedDuty});
+    }
+    hooks.emit(EventSeverity::Info, result);
+    audit(state, program, SurveyProgramAuditKind::VisitCompleted, hooks,
+          "Timed survey pass acquired raw observations; analysis is separate",
+          program.taskBodyId, program.taskPassNumber);
+
 }
 
 void dispatchTargetFromHome(GameState& state, SurveyProgram& program, Fleet& fleet,
@@ -790,12 +824,9 @@ std::string surveyProgramExecutionCondition(const GameState& state, const Survey
             owner && *owner != ProgramController{program.id}) {
             return "Waiting: requested fleet is controlled by " + programControllerLabel(state, *owner);
         }
-        for (const SurveyProgram& other : state.surveyPrograms) {
-            // Teams remain a survey-only lease even though fleets are shared.
-            if (other.id != program.id && other.leasedTeamId == desiredTeam) {
-                return "Waiting: requested fleet or team is committed to another program";
-            }
-        }
+        if (const auto owner=controllingScientificTeam(state,*desiredTeam);
+            owner && *owner!=ProgramController{program.id})
+            return "Waiting: requested scientist team is controlled by "+programControllerLabel(state,*owner);
         if (!stationary(*fleet) || !fleet->queuedOrders.empty()) {
             return "Waiting: requested fleet has manual movement or a queued order";
         }

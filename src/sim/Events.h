@@ -88,13 +88,11 @@ struct FleetArrivedEvent {
 };
 
 // Emitted after an immediate survey or completed timed visit. A valid pass may
-// improve zero deposits; then both confidence averages are zero.
+// contain no full-profile readings or only limited non-detections.
 struct ResourceSurveyCompletedEvent {
     FleetId fleetId;
     BodyId bodyId;
-    int depositsImproved = 0;
-    double averageConfidenceBefore = 0.0;
-    double averageConfidenceAfter = 0.0;
+    ObservationBatchId observationBatchId;
 };
 
 enum class SurveyProgramAuditKind {
@@ -170,6 +168,19 @@ struct MaintenanceProgramAuditEvent {
     std::string detail;
 };
 
+// Stable analysis audit identity; jobId is unassigned for charter/report actions.
+enum class AnalysisAuditKind {
+    Authorized, Amended, Suspended, Resumed, Cancelled, LeaseAcquired,
+    JobStarted, WorkPerformed, JobCompleted, Completed,
+    ReportPublished, IssueRaised, IssueAcknowledged
+};
+struct AnalysisProgramAuditEvent {
+    AnalysisProgramId programId;
+    AnalysisAuditKind kind = AnalysisAuditKind::Authorized;
+    AnalysisJobId jobId;
+    std::string detail;
+};
+
 // Emitted when validation rejects a command or a daily process detects invalid
 // state. The reason should be precise enough for UI display and test assertions.
 struct CommandRejectedEvent {
@@ -190,6 +201,7 @@ using SimEventPayload = std::variant<
     FreightProgramAuditEvent,
     EquipmentDutyUsedEvent,
     MaintenanceProgramAuditEvent,
+    AnalysisProgramAuditEvent,
     CommandRejectedEvent
 >;
 

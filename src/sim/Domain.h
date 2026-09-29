@@ -41,11 +41,6 @@ inline constexpr double kSustainedBurnRouteCurveMaxMapUnits = 120.0;
 // Shared tolerance for fleet fuel affordability and post-consumption clamping.
 inline constexpr double kFuelComparisonEpsilon = 1.0e-6;
 
-// Resource survey v1 improves existing hand-authored deposit knowledge without
-// generating new deposits. Unknown deposits become actionable estimates, while
-// partially estimated deposits can advance to fully known state.
-inline constexpr double kResourceSurveyConfidenceGain = 0.50;
-inline constexpr double kResourceSurveyMinimumRevealedConfidence = 0.50;
 
 
 // Coarse institutional roles for the mature home-system start. These are
@@ -309,67 +304,15 @@ struct Body {
     double y = 0.0;
 };
 
-// Coarse survey knowledge state for one mineral deposit. The simulation stores a
-// confidence value and derives this display state so resource surveys can
-// improve knowledge without maintaining a second authoritative state field.
-enum class DepositSurveyState {
-    Unknown,
-    Estimated,
-    Known
-};
-
-// A mineable deposit on a body. Accessibility is a multiplier in [0, 1+] for now;
-// values above 1.0 can model unusually rich deposits in later scenario data.
-// confidence models survey knowledge: 0.0 is hidden/unknown, partial values are
-// estimates, and 1.0 is fully confirmed. The physical remaining amount is still
-// stored so deterministic saves can reveal it later without procedural rolls.
-// Quantities use abstract mineral units. (bodyId, mineral) must be unique;
-// remaining/accessibility are finite and non-negative, confidence is in [0, 1].
+// Physical mineable resource. Accessibility and remaining are finite and
+// nonnegative; accessibility above one remains valid for the physical economy.
+// Player knowledge lives exclusively in acquired observations and assessments.
 struct MineralDeposit {
     BodyId bodyId;
     Mineral mineral = Mineral::Iron;
     double remaining = 0.0;
     double accessibility = 1.0;
-    double confidence = 1.0;
 };
-
-[[nodiscard]] inline bool isDepositSurveyed(const MineralDeposit& deposit) noexcept {
-    return deposit.confidence > 0.0;
-}
-
-[[nodiscard]] inline bool isDepositKnown(const MineralDeposit& deposit) noexcept {
-    return deposit.confidence >= 1.0;
-}
-
-[[nodiscard]] inline DepositSurveyState depositSurveyState(const MineralDeposit& deposit) noexcept {
-    if (!isDepositSurveyed(deposit)) {
-        return DepositSurveyState::Unknown;
-    }
-    if (isDepositKnown(deposit)) {
-        return DepositSurveyState::Known;
-    }
-    return DepositSurveyState::Estimated;
-}
-
-// Confidence partitions the displayed reserve; it does not reserve separate
-// physical material or reduce the amount available to the mining tick.
-[[nodiscard]] inline double confirmedDepositQuantity(const MineralDeposit& deposit) noexcept {
-    return deposit.remaining * deposit.confidence;
-}
-
-[[nodiscard]] inline double uncertainDepositQuantity(const MineralDeposit& deposit) noexcept {
-    return deposit.remaining - confirmedDepositQuantity(deposit);
-}
-
-[[nodiscard]] inline double estimatedDepositQuantity(const MineralDeposit& deposit) noexcept {
-    return isDepositSurveyed(deposit) ? deposit.remaining : 0.0;
-}
-
-[[nodiscard]] inline double surveyedDepositConfidence(const MineralDeposit& deposit) noexcept {
-    return std::min(1.0, std::max(deposit.confidence + kResourceSurveyConfidenceGain,
-                                  kResourceSurveyMinimumRevealedConfidence));
-}
-
 
 // High-level policy used to distribute one colony's daily processing capacity
 // across processed materials. Manual uses explicit user-provided weights, while
@@ -407,6 +350,8 @@ struct Colony {
     double mines = 0.0;
     double processorCapacity = 0.0;
     double shipyardCapacity = 0.0;
+    // Installed scientific team-workdays/day, shared by local analysis programs.
+    double analysisCapacity = 0.0;
     ProcessingPolicy processingPolicy = ProcessingPolicy::Balanced;
     std::vector<ProcessingAllocation> manualProcessingAllocations;
     // Optional owner/influence reference used to identify which home-system
@@ -478,6 +423,8 @@ struct ShipComponentDefinition {
     double buildPoints = 0.0;
     std::optional<EquipmentServiceProfile> serviceProfile = std::nullopt;
     std::vector<WorkshopFamilyRate> workshopRates{};
+    // Explicit measurement identity, independent of service family or ship role.
+    std::optional<MeasurementProfileId> measurementProfileId = std::nullopt;
 };
 
 struct ShipComponentInstall {

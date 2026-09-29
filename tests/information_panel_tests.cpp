@@ -186,7 +186,7 @@ void native_overviews_and_literal_names() {
     contains(bodyText, body.strategicZoneName);
     contains(bodyText, "Colonies " + std::to_string(body.colonyCount));
     contains(bodyText, "Fleets referenced " + std::to_string(body.fleetCount));
-    contains(bodyText, "Deposits " + std::to_string(body.mineralDepositCount));
+    contains(bodyText, "Observation batches " + std::to_string(body.observationBatchCount));
     contains(bodyText, "COLONIES");
     contains(bodyText, colony.name);
     contains(bodyText, "STATIONED FLEETS");
@@ -195,7 +195,7 @@ void native_overviews_and_literal_names() {
     require(bodyText.find("Configure processing") == std::string::npos,
             "Body overview has no Colony processing control");
     contains(bodyText, "RESOURCE KNOWLEDGE");
-    contains(bodyText, "Confirmed quantity " + decimal(body.confirmedDepositQuantity) + " units");
+    contains(bodyText, "Reserve quantity Unmeasured");
 
     fixture.select(colony.id);
     const auto colonyText = fixture.render();

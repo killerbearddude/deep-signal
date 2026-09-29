@@ -231,6 +231,10 @@ void exhausted_partial_visit_detour_and_return_fuel() {
     require(sim.state().surveyPrograms.front().receipts.size() == 1 &&
                 sim.state().surveyPrograms.front().totalWorkDays == 5,
             "resumption earns only three remaining days and produces one receipt");
+    require(sim.state().observations.size()==1 && sim.state().observations.front().workDates.size()==5 &&
+        sim.state().observations.front().instruments.front().exposure.workdays==5 &&
+        sim.state().observations.front().workDates[2]>sim.state().observations.front().workDates[1]+1,
+        "P4A exposure retains real interrupted fieldwork through physical service detour");
     near(sim.state().ships.front().equipmentCondition.front().usedDuty, 3,
          "initial8 plus actual5 minus restored10 equals3");
     std::int64_t arrivedHome = -1;

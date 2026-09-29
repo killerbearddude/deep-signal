@@ -185,18 +185,8 @@ void validateSurveyProgramState(const GameState& state) {
                   "survey receipt pass identity or work interval is invalid");
             previousReceiptDay = receipt.completedDay;
             check(receipt.approach >= SurveyPlanningApproach::CoverageFirst &&
-                  receipt.approach <= SurveyPlanningApproach::PriorityFirst &&
-                  receipt.depositsImproved >= 0 &&
-                  std::isfinite(receipt.averageConfidenceBefore) &&
-                  std::isfinite(receipt.averageConfidenceAfter) &&
-                  receipt.averageConfidenceBefore >= 0.0 && receipt.averageConfidenceBefore <= 1.0 &&
-                  receipt.averageConfidenceAfter >= receipt.averageConfidenceBefore &&
-                  receipt.averageConfidenceAfter <= 1.0,
-                  "survey receipt result or approach is invalid");
-            if (receipt.depositsImproved == 0) {
-                check(receipt.averageConfidenceBefore == 0.0 && receipt.averageConfidenceAfter == 0.0,
-                      "zero-information survey receipt averages must be zero");
-            }
+                  receipt.approach <= SurveyPlanningApproach::PriorityFirst && bool(receipt.observationBatchId),
+                  "survey receipt needs valid approach and acquired batch");
         }
         if (program.workDaysCompleted > 0) {
             check(program.firstWorkDay > previousReceiptDay,

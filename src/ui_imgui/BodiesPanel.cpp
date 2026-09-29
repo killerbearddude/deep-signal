@@ -51,9 +51,9 @@ void BodiesPanel::render(const SimulationQueries& queries, InformationInteractio
         ImGui::TableSetupColumn("Period");
         ImGui::TableSetupColumn("Owner / Institution");
         ImGui::TableSetupColumn("Colonies");
-        ImGui::TableSetupColumn("Deposits");
-        ImGui::TableSetupColumn("Known / Est / Unknown");
-        ImGui::TableSetupColumn("Confirmed / Est / Uncertain");
+        ImGui::TableSetupColumn("Observations");
+        ImGui::TableSetupColumn("Assessments");
+        ImGui::TableSetupColumn("Reserve knowledge");
         ImGui::TableSetupColumn("Fleets");
         ImGui::TableHeadersRow();
 
@@ -84,11 +84,11 @@ void BodiesPanel::render(const SimulationQueries& queries, InformationInteractio
             ImGui::TableSetColumnIndex(7);
             ImGui::Text("%zu", body.colonyCount);
             ImGui::TableSetColumnIndex(8);
-            ImGui::Text("%zu", body.mineralDepositCount);
+            ImGui::Text("%zu", body.observationBatchCount);
             ImGui::TableSetColumnIndex(9);
-            ImGui::Text("%zu / %zu / %zu", body.knownDepositCount, body.estimatedDepositCount, body.unknownDepositCount);
+            ImGui::Text("%zu", body.assessmentRevisionCount);
             ImGui::TableSetColumnIndex(10);
-            ImGui::Text("%.0f / %.0f / %.0f", body.confirmedDepositQuantity, body.estimatedDepositQuantity, body.uncertainDepositQuantity);
+            ImGui::TextUnformatted("Unmeasured");
             ImGui::TableSetColumnIndex(11);
             ImGui::Text("%zu", body.fleetCount);
         }
@@ -100,42 +100,42 @@ void BodiesPanel::render(const SimulationQueries& queries, InformationInteractio
     const ExplorationIntelligenceSummary intelligence = queries.explorationIntelligence();
     ImGui::TextUnformatted("Exploration Intelligence");
     if (intelligence.warnings.empty()) {
-        ImGui::TextUnformatted("No mineral forecast currently depends mostly on estimated reserves.");
+        ImGui::TextUnformatted("Reserve quantities are unmeasured.");
     } else {
         for (const std::string& warning : intelligence.warnings) {
             ImGui::BulletText("%s", warning.c_str());
         }
     }
 
-    const std::size_t depositRows = std::min<std::size_t>(intelligence.lowConfidenceDeposits.size(), 8U);
-    ImGui::Text("Low-confidence survey targets: %zu", intelligence.lowConfidenceDeposits.size());
+    const std::size_t depositRows = std::min<std::size_t>(intelligence.declaredChannels.size(), 8U);
+    ImGui::Text("Declared resource channels: %zu", intelligence.declaredChannels.size());
     if (depositRows == 0U) {
-        ImGui::TextUnformatted("All known deposits are fully confirmed.");
-    } else if (ImGui::BeginTable("ExplorationLowConfidenceDeposits", 7, kBodyTableFlags)) {
+        ImGui::TextUnformatted("No known astronomical subjects.");
+    } else if (ImGui::BeginTable("ExplorationDeclaredChannels", 7, kBodyTableFlags)) {
         ImGui::TableSetupColumn("Body");
         ImGui::TableSetupColumn("Mineral");
         ImGui::TableSetupColumn("Status");
-        ImGui::TableSetupColumn("Confidence");
-        ImGui::TableSetupColumn("Confirmed");
-        ImGui::TableSetupColumn("Est / Unknown");
+        ImGui::TableSetupColumn("Accessibility");
+        ImGui::TableSetupColumn("Reserve");
+        ImGui::TableSetupColumn("Site suitability");
         ImGui::TableSetupColumn("Relevance");
         ImGui::TableHeadersRow();
 
         for (std::size_t i = 0; i < depositRows; ++i) {
-            const ExplorationDepositIntelligenceRow& row = intelligence.lowConfidenceDeposits[i];
+            const ExplorationDepositIntelligenceRow& row = intelligence.declaredChannels[i];
             ImGui::TableNextRow();
             ImGui::TableSetColumnIndex(0);
             ImGui::TextUnformatted(row.bodyName.c_str());
             ImGui::TableSetColumnIndex(1);
             ImGui::TextUnformatted(row.mineralName.c_str());
             ImGui::TableSetColumnIndex(2);
-            ImGui::TextUnformatted(row.surveyStateName.c_str());
+            ImGui::TextUnformatted(row.indication.c_str());
             ImGui::TableSetColumnIndex(3);
-            ImGui::Text("%.0f%%", row.confidence * 100.0);
+            ImGui::TextUnformatted(row.accessibility.c_str());
             ImGui::TableSetColumnIndex(4);
-            ImGui::Text("%.0f", row.confirmedQuantity);
+            ImGui::TextUnformatted("Unmeasured");
             ImGui::TableSetColumnIndex(5);
-            ImGui::Text("%.0f / %.0f", row.estimatedQuantity, row.unknownPotentialQuantity);
+            ImGui::TextUnformatted("Unassessed");
             ImGui::TableSetColumnIndex(6);
             ImGui::TextWrapped("%s", row.strategicRelevance.c_str());
         }

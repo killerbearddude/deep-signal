@@ -1,6 +1,6 @@
 #pragma once
 
-// Shared identity and opening-phase resource scratch space for survey/freight.
+// Shared identity and opening-phase resource scratch space for four purpose-specific programs.
 // Leases remain on programs; neither reverse ownership nor daily budgets are saved.
 #include "sim/GameState.h"
 
@@ -11,11 +11,14 @@
 
 namespace deep {
 
-using ProgramController = std::variant<SurveyProgramId, FreightProgramId, MaintenanceProgramId>;
+using ProgramController = std::variant<SurveyProgramId, FreightProgramId, MaintenanceProgramId, AnalysisProgramId>;
 
 // Derives the unique controller from canonical leases. Kind is part of identity.
 [[nodiscard]] std::optional<ProgramController> controllingProgram(const GameState& state, FleetId fleetId);
 [[nodiscard]] std::string programControllerLabel(const GameState& state, const ProgramController& owner);
+
+// Derives exclusive ownership of the shared field/laboratory scientific workforce.
+[[nodiscard]] std::optional<ProgramController> controllingScientificTeam(const GameState&, SurveyTeamId);
 
 struct ProgramPendingIssue {
     ProgramController controller;
@@ -42,6 +45,9 @@ struct OpeningProgramContext {
     std::unordered_set<std::int64_t> serviceHolds;
     std::unordered_set<std::int64_t> eligibleServiceClients;
     std::vector<ColonyOpeningBudget> stock;
+    // Opening-only information eligibility and finite local lab throughput.
+    std::unordered_set<std::int64_t> availableObservations;
+    std::vector<std::pair<ColonyId,double>> analysisThroughput;
 
     // Snapshots real stock and all existing leases once per opening phase.
     explicit OpeningProgramContext(const GameState& state);

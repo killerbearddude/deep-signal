@@ -1,7 +1,8 @@
 #include "save/Schema.h"
 #include "save/MaintenancePersistence.h"
+#include "save/SciencePersistence.h"
 
-// Responsibility: define the active v15 schema and inspect its structure.
+// Responsibility: define the active v16 schema and inspect its structure.
 // Tables mirror durable GameState records; event payloads remain inspectable JSON
 // text. Foreign keys and CHECK constraints provide a first line of validation,
 // not complete type/graph validation. Repository reconstruction and the domain
@@ -125,11 +126,11 @@ struct IndexShape {
 
 } // namespace
 
-void createSchemaV15(Database& db) {
+void createSchemaV16(Database& db) {
     db.execute(R"sql(
         CREATE TABLE schema_version (
             id INTEGER PRIMARY KEY CHECK(id = 1),
-            version INTEGER NOT NULL CHECK(version = 15)
+            version INTEGER NOT NULL CHECK(version = 16)
         );
 
         CREATE TABLE game_meta (
@@ -251,7 +252,6 @@ void createSchemaV15(Database& db) {
             mineral INTEGER NOT NULL CHECK(mineral BETWEEN 0 AND 13),
             remaining REAL NOT NULL CHECK(remaining >= 0.0),
             accessibility REAL NOT NULL CHECK(accessibility >= 0.0),
-            confidence REAL NOT NULL CHECK(confidence >= 0.0 AND confidence <= 1.0),
             PRIMARY KEY(body_id, mineral),
             FOREIGN KEY(body_id) REFERENCES bodies(id)
         );
@@ -486,9 +486,6 @@ void createSchemaV15(Database& db) {
             first_work_day INTEGER NOT NULL CHECK(first_work_day >= 0),
             completed_day INTEGER NOT NULL CHECK(completed_day >= first_work_day),
             work_days INTEGER NOT NULL CHECK(work_days > 0),
-            deposits_improved INTEGER NOT NULL CHECK(deposits_improved >= 0),
-            average_confidence_before REAL NOT NULL CHECK(average_confidence_before BETWEEN 0.0 AND 1.0),
-            average_confidence_after REAL NOT NULL CHECK(average_confidence_after BETWEEN 0.0 AND 1.0),
             PRIMARY KEY(program_id, ordinal),
             UNIQUE(program_id, body_id, pass_number),
             FOREIGN KEY(program_id) REFERENCES survey_programs(id),
@@ -689,6 +686,7 @@ void createSchemaV15(Database& db) {
         CREATE INDEX idx_events_day ON event_log(day);
     )sql");
     createMaintenanceSchema(db);
+    createScienceSchema(db);
 }
 
 
@@ -718,10 +716,10 @@ std::int64_t readSchemaVersion(Database& db) {
 namespace {
 
 void requireStructure(Database& db, const bool allowKnownTableTriggers) {
-    // Compare against a fresh v15 declaration. Load permits known-table
+    // Compare against a fresh v16 declaration. Load permits known-table
     // triggers only because it is read-only; Save rejects their write effects.
     Database reference{std::filesystem::path{":memory:"}};
-    createSchemaV15(reference);
+    createSchemaV16(reference);
     const auto expectedObjects = readUserObjects(reference);
     std::vector<std::string> tables;
     for (const auto& object : expectedObjects) {
@@ -744,7 +742,7 @@ void requireStructure(Database& db, const bool allowKnownTableTriggers) {
 
 } // namespace
 
-void requireV15Structure(Database& db, const bool allowKnownTableTriggers) {
+void requireV16Structure(Database& db, const bool allowKnownTableTriggers) {
     requireStructure(db, allowKnownTableTriggers);
 }
 

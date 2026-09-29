@@ -1,7 +1,7 @@
 #pragma once
 
 // Pure, known-data decisions for the bounded P3A home-supported planner.
-// This API deliberately cannot inspect mineral deposits or survey confidence.
+// This API deliberately cannot inspect mineral deposits or unacquired scientific knowledge.
 
 #include "sim/GameState.h"
 

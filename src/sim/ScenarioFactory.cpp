@@ -1,6 +1,7 @@
 #include "sim/ScenarioFactory.h"
 #include "sim/ShipDesignRules.h"
 #include "sim/EquipmentServiceRules.h"
+#include "sim/ObservationRules.h"
 
 // Builds the deterministic mature home-system scenario used by new games and
 // tests. The scenario is hand-authored so geography, ownership, and deposits
@@ -15,14 +16,12 @@ void addDeposit(GameState& state,
                 const BodyId bodyId,
                 const Mineral mineral,
                 const double remaining,
-                const double accessibility,
-                const double confidence = 1.0) {
+                const double accessibility) {
     state.mineralDeposits.push_back(MineralDeposit{
         .bodyId = bodyId,
         .mineral = mineral,
         .remaining = remaining,
-        .accessibility = accessibility,
-        .confidence = confidence
+        .accessibility = accessibility
     });
 }
 
@@ -480,7 +479,7 @@ GameState createHomeSystemScenario() {
 
     // Deposits are distributed by strategic role: core bodies have legacy
     // industrial reserves, Mars has shipbuilding inputs, the belt has bulk ore,
-    // Titan carries volatiles, and the frontier object contains low-confidence
+    // Titan carries volatiles, and the frontier object contains unobserved
     // exploration targets for resource survey commands.
     addDeposit(state, terraId, Mineral::Iron, 1'000'000.0, 1.0);
     addDeposit(state, terraId, Mineral::Nickel, 600'000.0, 0.8);
@@ -497,7 +496,7 @@ GameState createHomeSystemScenario() {
 
     addDeposit(state, lunaId, Mineral::Aluminum, 120'000.0, 0.35);
     addDeposit(state, lunaId, Mineral::Silicon, 150'000.0, 0.4);
-    addDeposit(state, lunaId, Mineral::PlatinumGroupMetals, 30'000.0, 0.25, 0.70);
+    addDeposit(state, lunaId, Mineral::PlatinumGroupMetals, 30'000.0, 0.25);
 
     addDeposit(state, ceresId, Mineral::Iron, 1'400'000.0, 0.95);
     addDeposit(state, ceresId, Mineral::Nickel, 900'000.0, 0.85);
@@ -507,21 +506,28 @@ GameState createHomeSystemScenario() {
 
     addDeposit(state, vestaId, Mineral::Iron, 700'000.0, 0.8);
     addDeposit(state, vestaId, Mineral::Titanium, 600'000.0, 0.7);
-    addDeposit(state, vestaId, Mineral::RareEarthElements, 90'000.0, 0.45, 0.65);
+    addDeposit(state, vestaId, Mineral::RareEarthElements, 90'000.0, 0.45);
 
-    addDeposit(state, pallasId, Mineral::Uranium, 80'000.0, 0.35, 0.45);
-    addDeposit(state, pallasId, Mineral::Thorium, 95'000.0, 0.4, 0.40);
-    addDeposit(state, pallasId, Mineral::RareEarthElements, 120'000.0, 0.5, 0.35);
+    addDeposit(state, pallasId, Mineral::Uranium, 80'000.0, 0.35);
+    addDeposit(state, pallasId, Mineral::Thorium, 95'000.0, 0.4);
+    addDeposit(state, pallasId, Mineral::RareEarthElements, 120'000.0, 0.5);
 
     addDeposit(state, titanId, Mineral::WaterIce, 4'500'000.0, 0.95);
     addDeposit(state, titanId, Mineral::CarbonCompounds, 1'000'000.0, 0.75);
     addDeposit(state, titanId, Mineral::Volatiles, 3'200'000.0, 0.9);
 
-    addDeposit(state, frontierObjectId, Mineral::Lithium, 160'000.0, 0.25, 0.15);
-    addDeposit(state, frontierObjectId, Mineral::RareEarthElements, 110'000.0, 0.2, 0.0);
-    addDeposit(state, frontierObjectId, Mineral::Volatiles, 600'000.0, 0.3, 0.20);
+    addDeposit(state, frontierObjectId, Mineral::Lithium, 160'000.0, 0.25);
+    addDeposit(state, frontierObjectId, Mineral::RareEarthElements, 110'000.0, 0.2);
+    addDeposit(state, frontierObjectId, Mineral::Volatiles, 600'000.0, 0.3);
 
     state.shipComponents = standardShipComponentCatalog();
+    state.measurementProfiles=referenceMeasurementProfiles();
+    state.ids.nextMeasurementProfileId=3;
+    for (auto& c : state.shipComponents)
+        if (c.surveyCapability > 0)
+            c.measurementProfileId=MeasurementProfileId{c.id.value == 7 ? 2 : 1};
+    // Only the authored home laboratory has throughput; other colonies wait.
+    state.colonies.front().analysisCapacity=1.0;
     state.ids.nextShipComponentId = 10;
     state.equipmentFamilies = {{EquipmentFamilyId{1}, "Standard Survey Instruments"},
                               {EquipmentFamilyId{2}, "Specialist Survey Instruments"}};
@@ -600,7 +606,7 @@ GameState createDelegatedSurveyScenario() {
     // The third body deliberately has no deposit rows. Its timed visit can
     // complete without claiming that the whole body is resource-free.
     addDeposit(state, state.bodies.at(state.bodies.size() - 3).id,
-               Mineral::Iron, 100.0, 1.0, 0.1);
+               Mineral::Iron, 100.0, 1.0);
 
     const FleetId fleetId{state.ids.nextFleetId++};
     const ShipId shipId{state.ids.nextShipId++};

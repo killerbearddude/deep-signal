@@ -141,7 +141,7 @@ void bodyOverview(const SimulationQueries& queries, const BodyId id,
     if (beginFacts("##body_overview")) {
         fact("Colonies", std::to_string(body->colonyCount));
         fact("Fleets referenced", std::to_string(body->fleetCount));
-        fact("Deposits", std::to_string(body->mineralDepositCount));
+        fact("Observation batches", std::to_string(body->observationBatchCount));
         ImGui::EndTable();
     }
     renderInformationRelationshipRows(informationRelationships(queries, {world, id}), inspections);
@@ -156,12 +156,9 @@ void bodyOverview(const SimulationQueries& queries, const BodyId id,
     }
     section("RESOURCE KNOWLEDGE");
     if (beginFacts("##body_resource_knowledge")) {
-        fact("Known deposits", std::to_string(body->knownDepositCount));
-        fact("Estimated deposits", std::to_string(body->estimatedDepositCount));
-        fact("Unknown deposits", std::to_string(body->unknownDepositCount));
-        fact("Confirmed quantity", quantity(body->confirmedDepositQuantity, 1, "units"));
-        fact("Estimated quantity", quantity(body->estimatedDepositQuantity, 1, "units"));
-        fact("Uncertain quantity", quantity(body->uncertainDepositQuantity, 1, "units"));
+        fact("Assessments",std::to_string(body->assessmentRevisionCount));
+        fact("Reserve quantity","Unmeasured");
+        fact("Site suitability","Unassessed");
         ImGui::EndTable();
     }
 }

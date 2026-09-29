@@ -1,6 +1,7 @@
+#include "save/SciencePersistence.h"
 #include "save/SaveGameRepository.h"
 
-// Responsibility: map durable simulation records to active v15 rows.
+// Responsibility: map durable simulation records to active v16 rows.
 // Older development schemas are rejected without modifying their files.
 // Each operation owns its connection and reconstructed data; the input snapshot
 // is borrowed unchanged during save. Parameter binding separates values from SQL.
@@ -215,8 +216,9 @@ void reuse(Statement& stmt) {
 }
 
 void clearExistingSave(Database& db) {
+    clearScienceState(db);
     clearMaintenanceState(db);
-    // Delete child tables first because v15 retains explicit foreign keys
+    // Delete child tables first because v16 retains explicit foreign keys
     // without ON DELETE CASCADE. This all runs inside the write transaction.
     db.execute(R"sql(
         DELETE FROM event_log;
@@ -298,6 +300,11 @@ void saveIdCounters(Database& db, const IdCounters& ids) {
     insertCounter("next_equipment_family_id", ids.nextEquipmentFamilyId);
     insertCounter("next_maintenance_team_id", ids.nextMaintenanceTeamId);
     insertCounter("next_maintenance_program_id", ids.nextMaintenanceProgramId);
+    insertCounter("next_assessment_id",ids.nextAssessmentId);
+    insertCounter("next_analysis_job_id",ids.nextAnalysisJobId);
+    insertCounter("next_analysis_program_id",ids.nextAnalysisProgramId);
+    insertCounter("next_observation_batch_id",ids.nextObservationBatchId);
+    insertCounter("next_measurement_profile_id",ids.nextMeasurementProfileId);
 }
 
 void saveStarSystems(Database& db, const GameState& state) {
@@ -463,15 +470,14 @@ void saveColonies(Database& db, const GameState& state) {
 }
 
 void saveMineralDeposits(Database& db, const GameState& state) {
-    Statement stmt{db, "INSERT INTO mineral_deposits(body_id, mineral, remaining, accessibility, confidence, ordinal) VALUES (?, ?, ?, ?, ?, ?);"};
+    Statement stmt{db, "INSERT INTO mineral_deposits(body_id, mineral, remaining, accessibility, ordinal) VALUES (?, ?, ?, ?, ?);"};
     for (std::size_t ordinal = 0; ordinal < state.mineralDeposits.size(); ++ordinal) {
         const MineralDeposit& deposit = state.mineralDeposits.at(ordinal);
         stmt.bindInt64(1, idValue(deposit.bodyId));
         stmt.bindInt64(2, enumValue(deposit.mineral));
         stmt.bindDouble(3, deposit.remaining);
         stmt.bindDouble(4, deposit.accessibility);
-        stmt.bindDouble(5, deposit.confidence);
-        stmt.bindInt64(6, checkedOrdinal(ordinal, "mineral_deposits"));
+        stmt.bindInt64(5, checkedOrdinal(ordinal, "mineral_deposits"));
         stmt.execute();
         reuse(stmt);
     }
@@ -704,9 +710,8 @@ void saveSurveyPrograms(Database& db, const GameState& state) {
     Statement receipt{db, R"sql(
         INSERT INTO survey_program_receipts(
             program_id, ordinal, body_id, pass_number, fleet_id, team_id, leader_id, approach,
-            first_work_day, completed_day, work_days, deposits_improved,
-            average_confidence_before, average_confidence_after
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+            first_work_day, completed_day, work_days
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
     )sql"};
     Statement report{db, R"sql(
         INSERT INTO survey_program_reports(
@@ -785,9 +790,6 @@ void saveSurveyPrograms(Database& db, const GameState& state) {
             receipt.bindInt64(r++, value.firstWorkDay);
             receipt.bindInt64(r++, value.completedDay);
             receipt.bindInt64(r++, value.workDays);
-            receipt.bindInt64(r++, value.depositsImproved);
-            receipt.bindDouble(r++, value.averageConfidenceBefore);
-            receipt.bindDouble(r++, value.averageConfidenceAfter);
             receipt.execute();
             reuse(receipt);
         }
@@ -886,6 +888,11 @@ void loadIdCounters(Database& db, IdCounters& ids) {
     ids.nextEquipmentFamilyId = loadCounter(db, "next_equipment_family_id");
     ids.nextMaintenanceTeamId = loadCounter(db, "next_maintenance_team_id");
     ids.nextMaintenanceProgramId = loadCounter(db, "next_maintenance_program_id");
+    ids.nextAssessmentId=loadCounter(db,"next_assessment_id");
+    ids.nextAnalysisJobId=loadCounter(db,"next_analysis_job_id");
+    ids.nextAnalysisProgramId=loadCounter(db,"next_analysis_program_id");
+    ids.nextObservationBatchId=loadCounter(db,"next_observation_batch_id");
+    ids.nextMeasurementProfileId=loadCounter(db,"next_measurement_profile_id");
 }
 
 void loadStarSystems(Database& db, GameState& state) {
@@ -1053,7 +1060,7 @@ void loadColonies(Database& db, GameState& state) {
     for (const Colony& colony : state.colonies) {
         if (mineralRows[colony.id.value] != mineralCount() ||
             materialRows[colony.id.value] != processedMaterialCount()) {
-            throw std::runtime_error{"v15 colony resource rows must be complete"};
+            throw std::runtime_error{"v16 colony resource rows must be complete"};
         }
     }
 
@@ -1083,16 +1090,15 @@ void loadColonies(Database& db, GameState& state) {
 }
 
 void loadMineralDeposits(Database& db, GameState& state) {
-    Statement stmt{db, "SELECT body_id, mineral, remaining, accessibility, confidence, ordinal FROM mineral_deposits ORDER BY ordinal;"};
+    Statement stmt{db, "SELECT body_id, mineral, remaining, accessibility, ordinal FROM mineral_deposits ORDER BY ordinal;"};
     std::int64_t nextOrdinal = 0;
     while (stmt.step()) {
-        requireNextOrdinal(stmt, 5, nextOrdinal, "mineral_deposits");
+        requireNextOrdinal(stmt, 4, nextOrdinal, "mineral_deposits");
         state.mineralDeposits.push_back(MineralDeposit{
             .bodyId = BodyId{stmt.columnInt64(0)},
             .mineral = enumFromValue<Mineral>(stmt.columnInt64(1)),
             .remaining = stmt.columnDouble(2),
-            .accessibility = stmt.columnDouble(3),
-            .confidence = stmt.columnDouble(4)
+            .accessibility = stmt.columnDoubleStrict(3)
         });
     }
 }
@@ -1130,7 +1136,7 @@ void loadShipComponentsAndClasses(Database& db, GameState& state) {
     }
     for (const ShipComponentDefinition& row : state.shipComponents) {
         if (costRows[row.id.value] != processedMaterialCount()) {
-            throw std::runtime_error{"v15 component cost rows must be complete"};
+            throw std::runtime_error{"v16 component cost rows must be complete"};
         }
     }
     Statement classes{db, R"sql(
@@ -1400,14 +1406,13 @@ void loadSurveyPrograms(Database& db, GameState& state) {
 
     Statement receipts{db, R"sql(
         SELECT program_id, body_id, pass_number, fleet_id, team_id, leader_id, approach,
-               first_work_day, completed_day, work_days, deposits_improved,
-               average_confidence_before, average_confidence_after, ordinal
+               first_work_day, completed_day, work_days, ordinal
         FROM survey_program_receipts ORDER BY program_id, ordinal;
     )sql"};
     std::unordered_map<std::int64_t, std::int64_t> nextReceiptOrdinal;
     while (receipts.step()) {
         const SurveyProgramId programId{receipts.columnInt64Strict(0)};
-        requireNextOrdinal(receipts, 13, nextReceiptOrdinal[idValue(programId)], "survey_program_receipts");
+        requireNextOrdinal(receipts, 10, nextReceiptOrdinal[idValue(programId)], "survey_program_receipts");
         SurveyProgram* item = findById(state.surveyPrograms, programId);
         if (item == nullptr) throw std::runtime_error{"Save receipt references an unknown survey program"};
         item->receipts.push_back(SurveyVisitReceipt{
@@ -1420,9 +1425,6 @@ void loadSurveyPrograms(Database& db, GameState& state) {
             .firstWorkDay = receipts.columnInt64Strict(7),
             .completedDay = receipts.columnInt64Strict(8),
             .workDays = checkedIntFromSql(receipts.columnInt64Strict(9), "survey_program_receipts.work_days"),
-            .depositsImproved = checkedIntFromSql(receipts.columnInt64Strict(10), "survey_program_receipts.deposits_improved"),
-            .averageConfidenceBefore = receipts.columnDoubleStrict(11),
-            .averageConfidenceAfter = receipts.columnDoubleStrict(12)
         });
     }
 
@@ -1490,6 +1492,7 @@ void loadEvents(Database& db, GameState& state) {
     loadSurveyPrograms(db, state);
     loadFreightState(db, state);
     loadMaintenanceState(db, state);
+    loadScienceState(db,state);
     loadAppointments(db, state);
     loadEvents(db, state);
 
@@ -1517,12 +1520,12 @@ void SaveGameRepository::save(const std::filesystem::path& path, const GameState
     if (hasUserSchema(db)) {
         const std::int64_t version = readSchemaVersion(db);
         if (version != kSchemaVersion) throw std::runtime_error{"Unsupported save schema version"};
-        requireV15Structure(db);
+        requireV16Structure(db);
         (void)readSnapshot(db);
     } else {
         // DDL and rows share this transaction. A failed new-path save may
         // leave an empty file, but not a partially initialized schema.
-        createSchemaV15(db);
+        createSchemaV16(db);
     }
     clearExistingSave(db);
     saveSchemaVersion(db);
@@ -1550,6 +1553,7 @@ void SaveGameRepository::save(const std::filesystem::path& path, const GameState
     saveSurveyPrograms(db, state);
     saveFreightState(db, state);
     saveMaintenanceState(db, state);
+    saveScienceState(db,state);
     saveEvents(db, state);
     // Re-read on this connection before commit. This catches incomplete rows,
     // ordinal gaps, and foreign-key problems while rollback can still restore
@@ -1571,7 +1575,7 @@ GameState SaveGameRepository::load(const std::filesystem::path& path) {
     Transaction transaction{db, Transaction::Mode::Read};
     const std::int64_t version = readSchemaVersion(db);
     if (version != kSchemaVersion) throw std::runtime_error{"Unsupported save schema version"};
-    requireV15Structure(db, true);
+    requireV16Structure(db, true);
     GameState state = readSnapshot(db);
 
     transaction.commit();

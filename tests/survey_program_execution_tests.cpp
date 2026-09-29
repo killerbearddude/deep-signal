@@ -471,7 +471,7 @@ void test_hidden_deposits_do_not_change_target_decisions() {
                     receiptsA[i].passNumber == receiptsB[i].passNumber,
                 "visit identities match across hidden-geology variants");
     }
-    require(receiptsA.front().depositsImproved > 0 && receiptsB.front().depositsImproved == 0,
+    require(a.state().observations.front().instruments.front().channels != b.state().observations.front().instruments.front().channels,
             "only the encountered survey result differs when a hidden deposit is removed");
 }
 
@@ -487,16 +487,14 @@ void test_barren_and_already_known_visits_have_zero_information_receipts() {
         sim.advanceDays(30);
         const auto& receipts = programById(sim.state(), id).receipts;
         require(receipts.size() == 1U && receipts.front().bodyId == barren.bodyId &&
-                    receipts.front().depositsImproved == 0 && receipts.front().workDays == 5,
+                    bool(receipts.front().observationBatchId) && receipts.front().workDays == 5,
                 "barren target completes one five-day zero-information visit");
-        near(receipts.front().averageConfidenceBefore, 0.0, "barren receipt has zero before average");
-        near(receipts.front().averageConfidenceAfter, 0.0, "barren receipt has zero after average");
     }
     {
         deep::GameState state = deep::createDelegatedSurveyScenario();
         const deep::BodyId firstTarget = state.bodies.at(state.bodies.size() - 3U).id;
         for (deep::MineralDeposit& row : state.mineralDeposits) {
-            if (row.bodyId == firstTarget) row.confidence = 1.0;
+            if (row.bodyId == firstTarget) row.remaining = 0.0;
         }
         deep::Simulation sim{std::move(state)};
         auto charter = charterFor(sim.state(), "Dr. Nia Okafor", 1);
@@ -504,7 +502,7 @@ void test_barren_and_already_known_visits_have_zero_information_receipts() {
         const deep::SurveyProgramId id = authorize(sim, std::move(charter));
         sim.advanceDays(30);
         const auto& receipts = programById(sim.state(), id).receipts;
-        require(receipts.size() == 1U && receipts.front().depositsImproved == 0 &&
+        require(receipts.size() == 1U && bool(receipts.front().observationBatchId) &&
                     receipts.front().workDays == 5,
                 "already-known target completes one timed zero-information visit");
     }
@@ -529,7 +527,7 @@ void compareDurableProgramState(const deep::GameState& bulk, const deep::GameSta
         const auto& right = b.receipts[i];
         require(left.bodyId == right.bodyId && left.passNumber == right.passNumber &&
                     left.firstWorkDay == right.firstWorkDay && left.completedDay == right.completedDay &&
-                    left.depositsImproved == right.depositsImproved,
+                    left.observationBatchId == right.observationBatchId,
                 "bulk and daily visit receipts retain the same identity and timing");
     }
     for (std::size_t i = 0; i < a.reports.size(); ++i) {
