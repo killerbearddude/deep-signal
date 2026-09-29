@@ -7,8 +7,6 @@
 #include <stdexcept>
 #include <unordered_set>
 
-#include "sim/ShipDesignRules.h"
-
 namespace deep {
 
 std::optional<SurveyTargetChoice> chooseSurveyTarget(const SurveyPlanningInputs& inputs) {
@@ -99,61 +97,6 @@ std::optional<std::string> validateSurveyProgramCharter(const GameState& state,
         return "Survey program fuel policy must be finite and non-negative";
     }
     return std::nullopt;
-}
-
-std::string surveyProgramCondition(const GameState& state, const SurveyProgram& program) {
-    if (program.lifecycle == SurveyProgramLifecycle::Closed) {
-        return program.closure == SurveyProgramClosure::Completed ? "Completed" : "Cancelled";
-    }
-    if (program.lifecycle == SurveyProgramLifecycle::Closing) {
-        return "Closing after current transit";
-    }
-    if (program.lifecycle == SurveyProgramLifecycle::Suspended) {
-        return program.leasedFleetId.has_value() ? "Suspending after current transit" : "Suspended";
-    }
-    if (!program.issue.signature.empty() && !program.issue.acknowledged) {
-        return "Decision needed: " + program.issue.message;
-    }
-    if (!program.charter.requestedFleetId.has_value()) return "Waiting: no fleet requested";
-    if (!program.charter.requestedTeamId.has_value()) return "Waiting: no survey team requested";
-    if (!program.charter.requestedLeaderId.has_value()) return "Waiting: no leader requested";
-    if (!program.leasedFleetId.has_value()) {
-        const auto requestedFleet = std::find_if(state.fleets.begin(), state.fleets.end(),
-            [&program](const Fleet& row) { return row.id == *program.charter.requestedFleetId; });
-        const auto requestedTeam = std::find_if(state.surveyTeams.begin(), state.surveyTeams.end(),
-            [&program](const SurveyTeam& row) { return row.id == *program.charter.requestedTeamId; });
-        const auto home = std::find_if(state.colonies.begin(), state.colonies.end(),
-            [&program](const Colony& row) { return row.id == program.charter.homeColonyId; });
-        if (requestedFleet == state.fleets.end() || requestedTeam == state.surveyTeams.end() ||
-            home == state.colonies.end()) return "Waiting: requested assets are unavailable";
-        const bool teamCoLocated = (requestedTeam->locationKind == SurveyTeamLocationKind::Fleet &&
-                                    requestedTeam->fleetId == requestedFleet->id) ||
-            (requestedTeam->locationKind == SurveyTeamLocationKind::Colony &&
-             requestedTeam->colonyId == home->id && requestedFleet->currentBodyId == home->bodyId &&
-             requestedFleet->activeOrder.type == FleetOrderType::None);
-        const bool anotherLease = std::any_of(state.surveyPrograms.begin(), state.surveyPrograms.end(),
-            [&program, &requestedFleet, &requestedTeam](const SurveyProgram& row) {
-                return row.id != program.id &&
-                    (row.leasedFleetId == requestedFleet->id || row.leasedTeamId == requestedTeam->id);
-            });
-        if (!teamCoLocated || anotherLease || requestedFleet->activeOrder.type != FleetOrderType::None ||
-            !requestedFleet->queuedOrders.empty()) return "Waiting: requested assets are unavailable";
-        if (evaluateFleetSurvey(state, *requestedFleet).operationalCapability <= 0.0) {
-            return "Waiting: no operational survey capability";
-        }
-        return "Awaiting next program dispatch";
-    }
-    const auto fleet = std::find_if(state.fleets.begin(), state.fleets.end(),
-        [&program](const Fleet& row) { return row.id == *program.leasedFleetId; });
-    if (fleet == state.fleets.end()) return "Waiting: leased fleet is unavailable";
-    if (fleet->activeOrder.type == FleetOrderType::MoveToBody) return "Traveling on committed transit";
-    if (evaluateFleetSurvey(state, *fleet).operationalCapability <= 0.0) {
-        return "Waiting: no operational survey capability";
-    }
-    if (program.task == SurveyProgramTask::Survey) return "Surveying timed visit";
-    if (program.task == SurveyProgramTask::Return) return "Returning to home support";
-    if (program.task == SurveyProgramTask::Outbound) return "At survey target";
-    return "Planning next home-supported sortie";
 }
 
 } // namespace deep

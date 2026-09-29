@@ -202,3 +202,75 @@ No archive is synthesized on New/Load. Profiles are fictional declared prototype
 Publication preparation protects duty and final analyst work on the tested failure boundaries. The existing simulation tick is not globally transactional: an unexpected preparation exception may leave the calendar advanced without that physical/scientific action. Persistence retains transactional replacement and failed-Load preservation.
 
 P4A addresses R04's bounded shared field/analysis expertise. It does not complete requirements/design staffing or the broader parent expedition vision. The historical residual register remains explicit. **No P3D, site-development, research, final propulsion, remote tender/Mission Control or other deferred system was started.**
+
+
+## PR #11 review revision — shared laboratory readiness
+
+Reviewed starting head: `540a6b226c6161469372e859fe6550de743221c5`.
+The correction remains on `p4a-observations-analysis-assessments` and keeps PR #11 open for re-review.
+
+The executor's finite laboratory accounting was correct, but the former condition
+helper checked installed capacity without accounting for earlier eligible analysis
+work. Queries suppressed an ETA while continuing to say Ready, and execution
+compared that English string as a control-flow predicate.
+
+The revision adds transient `AnalysisReadiness` / `AnalysisWaitCause` results.
+Mechanical eligibility is shared with drafts; opening readiness additionally
+checks the actual occupancy, delivered-input snapshot and remaining lab budget,
+and supplies the exact work quantum used by execution. Live conditions and report
+waiting reasons project one next opening in the existing head-only program order.
+They use current leases and already acquired batches available by D+1, without
+simulating future field movements or reserving anything. A zero share explicitly
+reports laboratory contention. A reduced positive share reports its amount and
+remains executable; it has no invented completion ETA. No gameplay branch depends
+on the display wording.
+
+A repository call-site audit found `surveyProgramCondition` only in its declaration
+and definition. That unused, stale survey-only helper was removed. The authoritative
+`surveyProgramExecutionCondition` and shared typed scientific ownership remain.
+
+### Focused regression
+
+`analysis_readiness_tests.cpp` uses two actual local scientists, an observation
+acquired through the real command, and program vector order deliberately different
+from ID order. It verifies:
+
+- both intents remain valid and both teams and delivered input are available;
+- the earlier program receives 1.0 workday and the later program receives zero;
+- the later query names laboratory contention and has no ETA;
+- the same program becomes executable after the earlier job completes, without
+  reauthorization or charter change;
+- a day-30 durable report records the continuing laboratory constraint and is
+  unchanged by later recovery;
+- Save/Load preserves vector priority, the explanation, historical report and
+  resulting continuation;
+- with an earlier .25-workday remainder, a later active job receives exactly .75,
+  is described as executable with partial capacity, and has no completion ETA;
+- an earlier mechanically ineligible program does not reserve throughput;
+- read-only projections do not change programs or acquire scientist leases.
+
+Changed files: `AnalysisProgramRules.*`, `AnalysisProgramExecution.cpp`,
+`ScienceQueries.cpp`, the ETA caption in `SciencePanel.cpp`, removal of the stale
+helper from `SurveyProgramRules.*`, the focused test and CMake registration,
+and these two architecture documents. No schema, persisted scheduling state,
+priorities, preemption, dispatch ordering, physical science or assessment rules changed.
+
+### Revision verification
+
+Commands (the existing configured headless and UI-enabled build directories were
+reused, and the suites ran sequentially):
+
+```sh
+cmake --build build-p4a -j 2
+ctest --test-dir build-p4a --output-on-failure -j 2
+cmake --build build-p4a-ui -j 2
+ctest --test-dir build-p4a-ui --output-on-failure -j 2
+git diff --check
+git diff --cached --check
+```
+
+Final revision results: **35/35 headless passed** (10.54 seconds) and
+**44/44 UI-enabled passed** (10.55 seconds). Both builds completed without
+project-code warnings. Working-tree and staged diff checks passed.
+No prior tests or historical SQL fixtures were removed. No additional milestone
+work or native click-through was performed for this readiness-only revision.

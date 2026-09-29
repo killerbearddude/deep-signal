@@ -31,7 +31,7 @@ AnalysisDraftPreview SimulationQueries::analysisDraftPreview(const AnalysisChart
         return {false, *error, {}};
     AnalysisProgram p;
     p.charter = c;
-    return {true, {}, analysisExecutionCondition(service_.state(), p)};
+    return {true, {}, analysisReadiness(service_.state(), p).explanation};
 }
 std::vector<AnalysisProgramSummary> SimulationQueries::analysisPrograms() const {
     const auto& s = service_.state();
@@ -39,7 +39,8 @@ std::vector<AnalysisProgramSummary> SimulationQueries::analysisPrograms() const 
     for (const auto& p : s.analysisPrograms) {
         AnalysisProgramSummary r;
         r.program = p;
-        r.condition = analysisExecutionCondition(s, p);
+        const auto readiness = analysisNextOpeningReadiness(s, p);
+        r.condition = readiness.explanation;
         r.sourceStatus = analysisSourceStatus(s, p);
         r.requestedTeam = "Unassigned";
         r.actualTeam = "None";
@@ -64,12 +65,8 @@ std::vector<AnalysisProgramSummary> SimulationQueries::analysisPrograms() const 
             r.remainingAllowance = std::max(0.0, *p.charter.workAllowance - r.workPerformed);
         if (const auto* job = activeAnalysisJob(p)) {
             r.activeWorkRemaining = std::max(0.0, job->requiredWork - analysisWork(p, job->id));
-            const bool contested =
-                std::any_of(s.analysisPrograms.begin(), s.analysisPrograms.end(), [&](const auto& other) {
-                    return other.id != p.id && other.charter.colonyId == p.charter.colonyId &&
-                           analysisExecutionCondition(s, other) == "Ready for finite laboratory work";
-                });
-            if (!contested && r.condition == "Ready for finite laboratory work" && r.laboratoryCapacity > 0 &&
+            if (readiness.canAttemptWork && readiness.cause == AnalysisWaitCause::None &&
+                r.laboratoryCapacity > 0 &&
                 r.activeWorkRemaining / std::min(1.0, r.laboratoryCapacity) <=
                     static_cast<double>(std::numeric_limits<int>::max()) &&
                 (!r.remainingAllowance || *r.remainingAllowance >= r.activeWorkRemaining))

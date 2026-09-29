@@ -49,8 +49,4 @@ struct SurveyTargetChoice {
 // Checks structural input and supplied references without requiring readiness.
 [[nodiscard]] std::optional<std::string> validateSurveyProgramCharter(
     const GameState& state, const SurveyProgramCharter& charter);
-// Basic lifecycle/readiness description; full known route/fuel advice lives in
-// surveyProgramExecutionCondition alongside the physical executor.
-[[nodiscard]] std::string surveyProgramCondition(const GameState& state, const SurveyProgram& program);
-
 } // namespace deep

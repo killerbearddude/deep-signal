@@ -148,7 +148,7 @@ void SciencePanel::render(const SimulationQueries& queries, SimulationService& s
             if (row.remainingAllowance)
                 ImGui::Text("Remaining authorized work: %.3f", *row.remainingAllowance);
             if (row.currentJobEta)
-                ImGui::Text("Current job ETA: %d d at current uncontested team/lab capacity",
+                ImGui::Text("Current job ETA: %d d if this opening allocation continues",
                             *row.currentJobEta);
             else
                 ImGui::TextUnformatted("Current job ETA unavailable; no promise for future follower inputs");

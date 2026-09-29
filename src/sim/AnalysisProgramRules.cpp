@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <cmath>
 #include <set>
+#include <limits>
+#include <sstream>
 namespace deep {
 namespace {
 template <class T, class ID> const T* find(const std::vector<T>& rows, ID id) {
@@ -78,38 +80,122 @@ std::string analysisSourceStatus(const GameState& s, const AnalysisProgram& p) {
         return "Source returning; not yet closed";
     return "Following survey acquisition";
 }
-std::string analysisExecutionCondition(const GameState& s, const AnalysisProgram& p) {
+namespace {
+AnalysisReadiness wait(AnalysisWaitCause cause, std::string text) {
+    return {false, cause, std::move(text), std::nullopt, 0.0};
+}
+AnalysisReadiness readinessAtDay(const GameState& s, const AnalysisProgram& p, std::int64_t day) {
     if (p.lifecycle == AnalysisLifecycle::Closed)
-        return "Closed: " + analysisSourceStatus(s, p);
+        return wait(AnalysisWaitCause::Closed, "Closed: " + analysisSourceStatus(s, p));
     if (p.lifecycle == AnalysisLifecycle::Suspended)
-        return "Suspended; documented work retained";
-    bool hasInput = activeAnalysisJob(p) != nullptr;
-    for (auto id : analysisSourceBatches(s, p)) {
-        if (std::any_of(p.jobs.begin(), p.jobs.end(), [&](const auto& j) { return j.batchId == id; }))
-            continue;
-        const auto* b = find(s.observations, id);
-        if (b && b->availableDay <= s.date.day)
-            hasInput = true;
-        break; // Fixed source order never skips an undelivered selected input.
-    }
-    if (!hasInput)
-        return "Waiting: no eligible observation input; " + analysisSourceStatus(s, p);
+        return wait(AnalysisWaitCause::Suspended, "Suspended; documented work retained");
+    std::optional<ObservationBatchId> input;
+    if (const auto* job = activeAnalysisJob(p))
+        input = job->batchId;
+    else
+        for (auto id : analysisSourceBatches(s, p)) {
+            if (std::any_of(p.jobs.begin(), p.jobs.end(), [&](const auto& j) { return j.batchId == id; }))
+                continue;
+            const auto* batch = find(s.observations, id);
+            if (batch && batch->availableDay <= day)
+                input = id;
+            break; // Fixed source order never skips an undelivered selected input.
+        }
+    if (!input)
+        return wait(AnalysisWaitCause::NoInput,
+                    "Waiting: no eligible observation input; " + analysisSourceStatus(s, p));
     if (!p.charter.requestedLeaderId)
-        return "Waiting: no responsible analysis leader";
+        return wait(AnalysisWaitCause::NoLeader, "Waiting: no responsible analysis leader");
     if (!p.charter.requestedTeamId)
-        return "Waiting: no scientist team requested";
+        return wait(AnalysisWaitCause::NoTeam, "Waiting: no scientist team requested");
     if (const auto owner = controllingScientificTeam(s, *p.charter.requestedTeamId);
         owner && *owner != ProgramController{p.id})
-        return "Waiting: scientist team is controlled by " + programControllerLabel(s, *owner);
+        return wait(AnalysisWaitCause::TeamControlled,
+                    "Waiting: scientist team is controlled by " + programControllerLabel(s, *owner));
     const auto* team = find(s.surveyTeams, *p.charter.requestedTeamId);
     if (!team || team->locationKind != SurveyTeamLocationKind::Colony || team->colonyId != p.charter.colonyId)
-        return "Waiting: scientist team is not physically at the laboratory colony";
+        return wait(AnalysisWaitCause::TeamLocation,
+                    "Waiting: scientist team is not physically at the laboratory colony");
     const auto* colony = find(s.colonies, p.charter.colonyId);
     if (!colony || colony->analysisCapacity <= 0)
-        return "Waiting: no laboratory throughput";
+        return wait(AnalysisWaitCause::NoLaboratory, "Waiting: no laboratory throughput");
     if (p.charter.workAllowance && analysisWork(p) >= *p.charter.workAllowance)
-        return "Waiting: analyst-work allowance exhausted";
-    return "Ready for finite laboratory work";
+        return wait(AnalysisWaitCause::WorkAllowance, "Waiting: analyst-work allowance exhausted");
+    return {true, AnalysisWaitCause::None, "Ready for finite laboratory work", input, 0.0};
+}
+} // namespace
+AnalysisReadiness analysisReadiness(const GameState& s, const AnalysisProgram& p) {
+    return readinessAtDay(s, p, s.date.day);
+}
+AnalysisReadiness analysisOpeningReadiness(const GameState& s, const AnalysisProgram& p,
+                                           const OpeningProgramContext& opening, std::int64_t day) {
+    auto result = readinessAtDay(s, p, day);
+    if (!result.canAttemptWork)
+        return result;
+    if (!p.leasedTeamId && opening.occupiedTeams.contains(p.charter.requestedTeamId->value))
+        return wait(AnalysisWaitCause::TeamOccupied, "Waiting: scientist team is occupied for this opening");
+    if (!opening.availableObservations.contains(result.batchId->value))
+        return wait(AnalysisWaitCause::InputUnavailable,
+                    "Waiting: observation input is not available in this opening snapshot");
+    const auto budget = std::find_if(opening.analysisThroughput.begin(), opening.analysisThroughput.end(),
+                                     [&](const auto& value) { return value.first == p.charter.colonyId; });
+    if (budget == opening.analysisThroughput.end() || budget->second <= 0)
+        return wait(AnalysisWaitCause::LaboratoryContention,
+                    "Waiting: laboratory throughput is committed to earlier analysis work this opening.");
+    const auto* active = activeAnalysisJob(p);
+    const double completed = active ? analysisWork(p, active->id) : 0.0;
+    const double remaining = (active ? active->requiredWork : kAnalysisJobWorkdays) - completed;
+    const double spent = analysisWork(p);
+    const double authority =
+        p.charter.workAllowance ? std::max(0.0, *p.charter.workAllowance - spent) : remaining;
+    const double work = std::min({remaining, 1.0, budget->second, authority});
+    if (!std::isfinite(work) || work <= 0 || completed + work == completed || spent + work == spent ||
+        budget->second - work == budget->second)
+        return wait(AnalysisWaitCause::NumericLimit,
+                    "Waiting: analyst work cannot be represented within current numerical limits");
+    result.workThisOpening = work;
+    const double uncontended =
+        std::min({remaining, 1.0, find(s.colonies, p.charter.colonyId)->analysisCapacity, authority});
+    if (work < uncontended) {
+        result.cause = AnalysisWaitCause::PartialLaboratoryShare;
+        std::ostringstream out;
+        out << "Executable with partial laboratory throughput: " << work
+            << " team-workdays available after earlier analysis work this opening.";
+        result.explanation = out.str();
+    }
+    return result;
+}
+AnalysisReadiness analysisNextOpeningReadiness(const GameState& s, const AnalysisProgram& p) {
+    // Drafts have no dispatch position. Their preview remains mechanical; live
+    // programs project only one pass over existing heads, never a future plan.
+    if (p.lifecycle != AnalysisLifecycle::Authorized || !find(s.analysisPrograms, p.id))
+        return analysisReadiness(s, p);
+    if (s.date.day == std::numeric_limits<std::int64_t>::max())
+        return wait(AnalysisWaitCause::NumericLimit, "Waiting: next opening date cannot be represented");
+    const auto day = s.date.day + 1;
+    OpeningProgramContext opening(s);
+    for (const auto& batch : s.observations)
+        if (batch.availableDay <= day)
+            opening.availableObservations.insert(batch.id.value);
+    for (const auto& owner : programOpeningOrder(s)) {
+        const auto* id = std::get_if<AnalysisProgramId>(&owner);
+        if (!id)
+            continue;
+        const auto& candidate = *find(s.analysisPrograms, *id);
+        auto readiness = analysisOpeningReadiness(s, candidate, opening, day);
+        if (candidate.id == p.id)
+            return readiness;
+        if (!readiness.canAttemptWork)
+            continue;
+        opening.occupiedTeams.insert(candidate.charter.requestedTeamId->value);
+        for (auto& budget : opening.analysisThroughput)
+            if (budget.first == candidate.charter.colonyId)
+                budget.second -= readiness.workThisOpening;
+    }
+    return analysisReadiness(s, p);
+}
+std::string analysisExecutionCondition(const GameState& s, const AnalysisProgram& p) {
+    return analysisNextOpeningReadiness(s, p).explanation;
 }
 void acknowledgeKnownAnalysisLimit(const GameState& s, AnalysisProgram& p) {
     // An explicitly inadequate allowance is accepted intent. Remember it before

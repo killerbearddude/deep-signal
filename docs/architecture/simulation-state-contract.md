@@ -615,9 +615,25 @@ Save/Load remains transactional and never silently repairs scientific records.
 Ordinary body/detail/intelligence previews enumerate public bodies and declared
 channels, never hidden deposit existence. Stock and output telemetry remain
 visible. Geological lifetime forecasts report insufficient evidence. A current
-job ETA is shown only with positive capacity/authority and no current competing
-ready analyst; it is conditional on those resources remaining unchanged, not a
-completion forecast for future follower inputs.
+job ETA is shown only with positive capacity/authority and a full projected
+opening allocation; zero and partial laboratory shares have no completion ETA.
+It is conditional on that allocation continuing, not a completion forecast for
+future follower inputs.
+
+`AnalysisReadiness` separates eligibility, typed wait cause, explanatory text,
+selected input and the transient work quantum. The executor consumes that result
+against its actual opening occupancy, delivered-input set and remaining lab
+budget; it never compares display strings. Live queries and report waiting reasons
+project one next-opening analysis pass in the existing head-only order, using
+current canonical leases and already acquired inputs available by D+1. Earlier
+eligible work consumes only local scratch throughput and scientist occupancy in
+that projection. Zero share reports laboratory contention; a reduced positive
+share remains executable and reports its partial allocation. Drafts have no
+stored dispatch position and use the shared mechanical eligibility rules.
+The projection does not simulate future survey movements, arrivals or releases,
+allocate jobs, reserve resources, or persist a calculated share. The unused
+survey-only `surveyProgramCondition` helper was removed; the authoritative survey
+execution explanation retains the shared scientific-team owner lookup.
 
 P4A implements only the bounded field/analysis team tradeoff. Requirements/design
 staffing, staffed Mission Control, remote tender support, final propulsion, site

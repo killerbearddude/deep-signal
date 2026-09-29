@@ -44,46 +44,28 @@ void runAnalysisOpeningDay(GameState& s, AnalysisProgram& p, OpeningProgramConte
     closeIfDone(s, p, hooks);
     if (p.lifecycle == AnalysisLifecycle::Closed)
         return;
-    if (analysisExecutionCondition(s, p) != "Ready for finite laboratory work")
+    const auto readiness = analysisOpeningReadiness(s, p, opening, s.date.day);
+    if (!readiness.canAttemptWork)
         return;
     const auto team = *p.charter.requestedTeamId;
-    if (!p.leasedTeamId && opening.occupiedTeams.contains(team.value))
-        return;
     auto budget = std::find_if(opening.analysisThroughput.begin(), opening.analysisThroughput.end(),
                                [&](const auto& value) { return value.first == p.charter.colonyId; });
-    if (budget == opening.analysisThroughput.end() || budget->second <= 0)
-        return;
     const AnalysisJob* active = activeAnalysisJob(p);
     std::optional<AnalysisJob> newJob;
     if (!active) {
-        for (auto batch : analysisSourceBatches(s, p)) {
-            if (std::any_of(p.jobs.begin(), p.jobs.end(), [&](const auto& j) { return j.batchId == batch; }))
-                continue;
-            if (!opening.availableObservations.contains(batch.value))
-                return;
-            if (s.ids.nextAnalysisJobId <= 0 ||
-                s.ids.nextAnalysisJobId == std::numeric_limits<std::int64_t>::max())
-                throw std::runtime_error("Analysis job identity limit reached");
-            newJob = AnalysisJob{AnalysisJobId{s.ids.nextAnalysisJobId},
-                                 batch,
-                                 s.date.day,
-                                 std::nullopt,
-                                 AnalysisJobOutcome::Active,
-                                 kAnalysisJobWorkdays};
-            active = &*newJob;
-            break;
-        }
+        if (s.ids.nextAnalysisJobId <= 0 ||
+            s.ids.nextAnalysisJobId == std::numeric_limits<std::int64_t>::max())
+            throw std::runtime_error("Analysis job identity limit reached");
+        newJob = AnalysisJob{AnalysisJobId{s.ids.nextAnalysisJobId},
+                             *readiness.batchId,
+                             s.date.day,
+                             std::nullopt,
+                             AnalysisJobOutcome::Active,
+                             kAnalysisJobWorkdays};
+        active = &*newJob;
     }
-    if (!active)
-        return;
-    const double completed = analysisWork(p, active->id), spent = analysisWork(p);
-    const double remaining = active->requiredWork - completed;
-    const double authority =
-        p.charter.workAllowance ? std::max(0.0, *p.charter.workAllowance - spent) : remaining;
-    const double work = std::min({remaining, 1.0, budget->second, authority});
-    if (!std::isfinite(work) || work <= 0 || completed + work == completed || spent + work == spent ||
-        budget->second - work == budget->second)
-        return;
+    const double remaining = active->requiredWork - analysisWork(p, active->id);
+    const double work = readiness.workThisOpening;
     // Equality uses the actual remaining delta. Never round a tiny shortage up
     // into a free completion; a partial receipt remains partial.
     const bool completes = work == remaining;
