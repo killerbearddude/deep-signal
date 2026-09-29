@@ -58,6 +58,12 @@ struct EventPrinter {
                   << " deposits=" << event.depositsImproved << '\n';
     }
 
+    void operator()(const deep::SurveyProgramAuditEvent& event) const {
+        std::cout << "  Survey program " << event.programId.value
+                  << " audit " << static_cast<int>(event.kind)
+                  << ": " << event.detail << '\n';
+    }
+
     void operator()(const deep::CommandRejectedEvent& event) const {
         std::cout << "  Command rejected: " << event.reason << '\n';
     }

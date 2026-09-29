@@ -1,4 +1,4 @@
-# Schema v10 compatibility fixture
+# Historical schema v10 fixture
 
 `schema_v10_39fa628.sqlite` is a small, valid SQLite save written by
 `SaveGameRepository::save()` from the exact pre-H1B commit
@@ -13,7 +13,7 @@ has a ten-point daily pool. `validateGameState()` accepts the state. Schema v10
 has no order ordinal for `shipyard_orders`, so its loader's `ORDER BY id`
 reconstructs **[ID 1, ID 2]**. The original order cannot be recovered from this
 file. Historical H1B tests verified truthful reconstruction at that baseline;
-the current v12 loader rejects this development save without modifying it.
+the current v13 loader rejects this development save without modifying it.
 
 ## Provenance and reproduction
 
@@ -72,3 +72,16 @@ the dump orders tables alphabetically. The current contract test reconstructs a
 throwaway file and verifies that v11 Load rejects it without changing the file.
 The P1 source save reported schema version 11 and its
 Survey Cutter row carried 500 build points and 1000 fuel capacity.
+
+## P2 v12 reference save for P3A
+
+`schema_v12_p2_reference.sql` is a text dump of a valid home-system save made
+with the pinned `2f1385c0250c4a0b9b17a0c6280e777174ae58a1` v12
+save/simulation libraries. A small standalone program compiled against that
+commit's headers saved `createHomeSystemScenario()`, loaded the result through
+the v12 repository, and confirmed day 0 and nine bodies. Python's SQLite
+`iterdump()` produced the checked-in SQL. The generated database reported
+`schema_version = 12` and `PRAGMA integrity_check = ok`. The current contract
+test reconstructs a disposable copy and verifies v13 Load and Save reject the
+old version without modifying it; no migration or default program synthesis
+is implied.

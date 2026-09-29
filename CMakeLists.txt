@@ -31,6 +31,9 @@ add_library(deep_signal_sim
     src/sim/Simulation.cpp
     src/sim/ScenarioFactory.cpp
     src/sim/ShipDesignRules.cpp
+    src/sim/SurveyProgramExecution.cpp
+    src/sim/SurveyProgramRules.cpp
+    src/sim/SurveyProgramValidation.cpp
     src/sim/TransitPlanning.cpp
 )
 
@@ -124,6 +127,7 @@ if(DEEP_SIGNAL_BUILD_UI)
         src/ui_imgui/ShipyardPanel.cpp
         src/ui_imgui/ShellLayout.cpp
         src/ui_imgui/StrategicMapPanel.cpp
+        src/ui_imgui/SurveyProgramsPanel.cpp
         src/ui_imgui/TimeControlPanel.cpp
     )
 
@@ -219,6 +223,17 @@ if(DEEP_SIGNAL_BUILD_TESTS)
             PRIVATE deep_signal_app ${DEEP_SIGNAL_UI_DEPENDENCY_TARGET})
         target_compile_options(deep_signal_information_reveal_tests PRIVATE ${DEEP_SIGNAL_WARNINGS})
         add_test(NAME deep_signal_information_reveal_tests COMMAND deep_signal_information_reveal_tests)
+
+        add_executable(deep_signal_survey_program_ui_tests
+            tests/survey_program_ui_tests.cpp
+            src/ui_imgui/SurveyProgramsPanel.cpp
+            src/ui_imgui/OperationalWindow.cpp
+            src/ui_imgui/ShellLayout.cpp
+        )
+        target_link_libraries(deep_signal_survey_program_ui_tests
+            PRIVATE deep_signal_app ${DEEP_SIGNAL_UI_DEPENDENCY_TARGET})
+        target_compile_options(deep_signal_survey_program_ui_tests PRIVATE ${DEEP_SIGNAL_WARNINGS})
+        add_test(NAME deep_signal_survey_program_ui_tests COMMAND deep_signal_survey_program_ui_tests)
     endif()
 
     # Compile the identity-only model directly so its boundary tests also run
@@ -241,10 +256,25 @@ if(DEEP_SIGNAL_BUILD_TESTS)
 
     add_test(NAME deep_signal_sim_tests COMMAND deep_signal_sim_tests)
 
+    add_executable(deep_signal_survey_program_execution_tests tests/survey_program_execution_tests.cpp)
+    target_link_libraries(deep_signal_survey_program_execution_tests PRIVATE deep_signal_sim)
+    target_compile_options(deep_signal_survey_program_execution_tests PRIVATE ${DEEP_SIGNAL_WARNINGS})
+    add_test(NAME deep_signal_survey_program_execution_tests COMMAND deep_signal_survey_program_execution_tests)
+
     add_executable(deep_signal_ship_design_tests tests/ship_design_tests.cpp)
     target_link_libraries(deep_signal_ship_design_tests PRIVATE deep_signal_sim)
     target_compile_options(deep_signal_ship_design_tests PRIVATE ${DEEP_SIGNAL_WARNINGS})
     add_test(NAME deep_signal_ship_design_tests COMMAND deep_signal_ship_design_tests)
+
+    add_executable(deep_signal_survey_program_rules_tests tests/survey_program_rules_tests.cpp)
+    target_link_libraries(deep_signal_survey_program_rules_tests PRIVATE deep_signal_sim)
+    target_compile_options(deep_signal_survey_program_rules_tests PRIVATE ${DEEP_SIGNAL_WARNINGS})
+    add_test(NAME deep_signal_survey_program_rules_tests COMMAND deep_signal_survey_program_rules_tests)
+
+    add_executable(deep_signal_survey_program_command_tests tests/survey_program_command_tests.cpp)
+    target_link_libraries(deep_signal_survey_program_command_tests PRIVATE deep_signal_sim)
+    target_compile_options(deep_signal_survey_program_command_tests PRIVATE ${DEEP_SIGNAL_WARNINGS})
+    add_test(NAME deep_signal_survey_program_command_tests COMMAND deep_signal_survey_program_command_tests)
 
     add_executable(deep_signal_processing_allocation_rules_tests
         tests/processing_allocation_rules_tests.cpp
@@ -297,6 +327,11 @@ if(DEEP_SIGNAL_BUILD_TESTS)
         target_compile_options(deep_signal_app_query_tests PRIVATE ${DEEP_SIGNAL_WARNINGS})
 
         add_test(NAME deep_signal_app_query_tests COMMAND deep_signal_app_query_tests)
+
+        add_executable(deep_signal_survey_program_app_tests tests/survey_program_app_tests.cpp)
+        target_link_libraries(deep_signal_survey_program_app_tests PRIVATE deep_signal_app)
+        target_compile_options(deep_signal_survey_program_app_tests PRIVATE ${DEEP_SIGNAL_WARNINGS})
+        add_test(NAME deep_signal_survey_program_app_tests COMMAND deep_signal_survey_program_app_tests)
 
         add_executable(deep_signal_forecast_tests
             tests/forecast_tests.cpp

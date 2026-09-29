@@ -867,9 +867,9 @@ void test_resource_survey_increases_deposit_confidence() {
             "accepted survey emits a resource-survey completion event");
 }
 
-void test_resource_survey_does_not_change_fully_known_body() {
-    // Fully known bodies should not accumulate meaningless survey events or
-    // churn confidence values. This keeps survey commands tied to unknowns.
+void test_resource_survey_completes_on_fully_known_body_without_new_information() {
+    // A requested pass is valid even when existing records are already known.
+    // It must preserve confidence and report an explicit zero-information result.
     deep::GameState state = deep::createHomeSystemScenario();
     const deep::BodyId terraId = bodyIdByName(state, "Terra");
     const deep::FleetId fleetId = addTestFleetAt(state, terraId);
@@ -887,13 +887,38 @@ void test_resource_survey_does_not_change_fully_known_body() {
         .bodyId = terraId
     });
 
-    require(!result.ok, "surveying a fully known body is rejected");
+    require(result.ok, "surveying a fully known body completes");
+    require(result.message.find("No new information from this pass") != std::string::npos,
+            "command result describes the zero-information completion");
     std::size_t index = 0;
     for (const deep::MineralDeposit& deposit : sim.state().mineralDeposits) {
         if (deposit.bodyId == terraId) {
             requireNear(deposit.confidence, before.at(index++), "fully known deposit confidence is unchanged");
         }
     }
+    const auto* completed = std::get_if<deep::ResourceSurveyCompletedEvent>(&sim.state().eventLog.back().payload);
+    require(completed != nullptr && completed->depositsImproved == 0,
+            "fully known body records one zero-information survey result");
+    requireNear(completed->averageConfidenceBefore, 0.0, "empty result has zero before average");
+    requireNear(completed->averageConfidenceAfter, 0.0, "empty result has zero after average");
+}
+
+void test_resource_survey_completes_on_body_without_deposits() {
+    // An empty deposit collection models a barren visit without treating the
+    // absence of a confidence update as invalid physical survey work.
+    deep::GameState state = deep::createHomeSystemScenario();
+    const deep::BodyId terraId = bodyIdByName(state, "Terra");
+    const deep::FleetId fleetId = addTestFleetAt(state, terraId);
+    state.mineralDeposits.clear();
+    deep::Simulation sim{std::move(state)};
+
+    const auto result = sim.execute(deep::ResourceSurveyCommand{.fleetId = fleetId, .bodyId = terraId});
+    require(result.ok, "surveying a body without deposits completes");
+    const auto* completed = std::get_if<deep::ResourceSurveyCompletedEvent>(&sim.state().eventLog.back().payload);
+    require(completed != nullptr && completed->depositsImproved == 0,
+            "barren visit records one zero-information survey result");
+    requireNear(completed->averageConfidenceBefore, 0.0, "barren visit has zero before average");
+    requireNear(completed->averageConfidenceAfter, 0.0, "barren visit has zero after average");
 }
 
 void test_resource_survey_rejects_invalid_targets() {
@@ -1192,7 +1217,8 @@ int main() {
         test_fleet_movement_rejects_insufficient_fuel();
         test_fleet_commander_reduces_move_fuel_cost_within_cap();
         test_resource_survey_increases_deposit_confidence();
-        test_resource_survey_does_not_change_fully_known_body();
+        test_resource_survey_completes_on_fully_known_body_without_new_information();
+        test_resource_survey_completes_on_body_without_deposits();
         test_resource_survey_rejects_invalid_targets();
         test_resource_survey_rejects_fleet_not_at_body();
         test_cancel_fleet_order();

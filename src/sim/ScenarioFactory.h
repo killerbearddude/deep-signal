@@ -14,4 +14,9 @@ namespace deep {
 // snapshot; Simulation validates it when taking ownership.
 [[nodiscard]] GameState createHomeSystemScenario();
 
+// Dedicated P3A proof fixture: a fixed home base, one real survey fleet/team,
+// two equally skilled leaders with different planning approaches, and three
+// nearby public targets. No program is pre-authorized; tests submit commands.
+[[nodiscard]] GameState createDelegatedSurveyScenario();
+
 } // namespace deep

@@ -6,7 +6,7 @@
 #include "sim/ShipDesignRules.h"
 #include "sim/Simulation.h"
 
-// Destination and failure contracts for v12 full-snapshot persistence. Every
+// Destination and failure contracts for v13 full-snapshot persistence. Every
 // database belongs to a unique temporary directory; no personal save is touched.
 
 #include <algorithm>
@@ -114,6 +114,30 @@ struct ScopedSaveFailureInjection {
                                .fleetId = secondFleet, .fuel = deep::evaluateShipDesign(state.shipComponents, shipClass.components).propellantCapacity});
     state.ships.push_back(Ship{.id = secondShip, .shipClassId = shipClass.id, .name = "Second ship",
                                .fleetId = firstFleet, .fuel = deep::evaluateShipDesign(state.shipComponents, shipClass.components).propellantCapacity});
+    const SurveyTeamId firstTeam{state.ids.nextSurveyTeamId++};
+    const SurveyTeamId secondTeam{state.ids.nextSurveyTeamId++};
+    state.surveyTeams.push_back(SurveyTeam{
+        .id = secondTeam, .name = "Second team", .locationKind = SurveyTeamLocationKind::Colony,
+        .colonyId = state.colonies.front().id, .fleetId = std::nullopt
+    });
+    state.surveyTeams.push_back(SurveyTeam{
+        .id = firstTeam, .name = "First team", .locationKind = SurveyTeamLocationKind::Colony,
+        .colonyId = state.colonies.front().id, .fleetId = std::nullopt
+    });
+    SurveyProgram firstProgram;
+    firstProgram.id = SurveyProgramId{state.ids.nextSurveyProgramId++};
+    firstProgram.charter.name = "First program";
+    firstProgram.charter.homeColonyId = state.colonies.front().id;
+    firstProgram.charter.targets = {
+        SurveyProgramTarget{.bodyId = state.bodies.at(3).id, .priority = 0, .requestedPasses = 1},
+        SurveyProgramTarget{.bodyId = state.bodies.at(4).id, .priority = 1, .requestedPasses = 2}
+    };
+    SurveyProgram secondProgram = firstProgram;
+    secondProgram.id = SurveyProgramId{state.ids.nextSurveyProgramId++};
+    secondProgram.charter.name = "Second program";
+    secondProgram.charter.targets.front().bodyId = state.bodies.at(5).id;
+    state.surveyPrograms.push_back(std::move(secondProgram));
+    state.surveyPrograms.push_back(std::move(firstProgram));
     validateGameState(state);
     return state;
 }
@@ -241,6 +265,22 @@ void requireOrder(const GameState& expected, const GameState& actual) {
     for (std::size_t i = 0; i < expected.ships.size(); ++i) {
         require(expected.ships.at(i).id == actual.ships.at(i).id, "global ship order survives Load");
     }
+    require(expected.surveyTeams.size() == actual.surveyTeams.size(), "survey team count survives Load");
+    for (std::size_t i = 0; i < expected.surveyTeams.size(); ++i) {
+        require(expected.surveyTeams.at(i).id == actual.surveyTeams.at(i).id,
+                "survey team global order survives Load");
+    }
+    require(expected.surveyPrograms.size() == actual.surveyPrograms.size(), "survey program count survives Load");
+    for (std::size_t i = 0; i < expected.surveyPrograms.size(); ++i) {
+        const auto& left = expected.surveyPrograms.at(i);
+        const auto& right = actual.surveyPrograms.at(i);
+        require(left.id == right.id, "survey program global order survives Load");
+        require(left.charter.targets.size() == right.charter.targets.size(), "survey target count survives Load");
+        for (std::size_t j = 0; j < left.charter.targets.size(); ++j) {
+            require(left.charter.targets.at(j).bodyId == right.charter.targets.at(j).bodyId,
+                    "survey target charter order survives Load");
+        }
+    }
 }
 
 void test_new_and_schema_empty_destinations() {
@@ -248,13 +288,13 @@ void test_new_and_schema_empty_destinations() {
     const GameState state = makeOrderedState();
     const auto fresh = temp.path / "fresh.sqlite";
     SaveGameRepository::save(fresh, state);
-    require(versionAt(fresh) == kSchemaVersion, "new path writes v12");
+    require(versionAt(fresh) == kSchemaVersion, "new path writes v13");
     requireOrder(state, SaveGameRepository::load(fresh));
 
     const auto empty = temp.path / "empty.sqlite";
     { Database created{empty}; require(!hasUserSchema(created), "created database has no user schema"); }
     SaveGameRepository::save(empty, state);
-    require(versionAt(empty) == kSchemaVersion, "schema-empty database writes v12");
+    require(versionAt(empty) == kSchemaVersion, "schema-empty database writes v13");
     requireOrder(state, SaveGameRepository::load(empty));
 }
 
@@ -268,7 +308,7 @@ void test_compatible_rewrite_and_invalid_source() {
     GameState invalid = original;
     invalid.bodies.front().name.clear();
     require(!expectSaveReject(path, invalid).empty(), "invalid source is rejected");
-    require(logicalSnapshot(path) == before, "invalid source leaves existing v12 logical contents intact");
+    require(logicalSnapshot(path) == before, "invalid source leaves existing v13 logical contents intact");
     const auto absent = temp.path / "invalid-new.sqlite";
     (void)expectSaveReject(absent, invalid);
     require(!std::filesystem::exists(absent), "invalid source fails before creating a new destination");
@@ -278,7 +318,7 @@ void test_compatible_rewrite_and_invalid_source() {
     replacement.bodies.front().name = "Replacement body";
     validateGameState(replacement);
     SaveGameRepository::save(path, replacement);
-    require(versionAt(path) == kSchemaVersion, "compatible rewrite stays v12");
+    require(versionAt(path) == kSchemaVersion, "compatible rewrite stays v13");
     const GameState loaded = SaveGameRepository::load(path);
     require(loaded.date.day == 3 && loaded.bodies.front().name == "Replacement body",
             "compatible rewrite replaces durable values");
@@ -309,7 +349,7 @@ void test_equivalent_create_table_formatting_is_compatible() {
     {
         Database db{formatted, Database::OpenMode::ReadOnly};
         Transaction transaction{db, Transaction::Mode::Read};
-        requireV12Structure(db);
+        requireV13Structure(db);
         transaction.commit();
     }
     requireOrder(state, SaveGameRepository::load(formatted));
@@ -320,7 +360,7 @@ void test_equivalent_create_table_formatting_is_compatible() {
     SaveGameRepository::save(formatted, replacement);
     const GameState loaded = SaveGameRepository::load(formatted);
     require(loaded.date.day == 2 && loaded.bodies.front().name == "Formatted destination replacement",
-            "equivalent formatted schema accepts a successful v12 overwrite");
+            "equivalent formatted schema accepts a successful v13 overwrite");
     requireOrder(replacement, loaded);
 }
 
@@ -330,13 +370,19 @@ void test_old_schema_rejected_without_mutation() {
     require(std::filesystem::is_regular_file(fixtureV10()), "historical v10 fixture exists");
     std::filesystem::copy_file(fixtureV10(), v10);
 
-    const auto v11Sql = std::filesystem::path{DEEP_SIGNAL_TEST_SOURCE_DIR} /
-        "tests" / "fixtures" / "schema_v11_p1_reference.sql";
-    std::ifstream source{v11Sql};
-    require(source.good(), "historical v11 fixture exists");
-    const std::string script{std::istreambuf_iterator<char>{source}, std::istreambuf_iterator<char>{}};
-    const auto v11 = temp.path / "old-v11.sqlite";
-    executeSql(v11, script);
+    const auto reconstructSqlFixture = [&temp](const std::string_view fileName,
+                                               const std::string_view outputName) {
+        const auto fixture = std::filesystem::path{DEEP_SIGNAL_TEST_SOURCE_DIR} /
+            "tests" / "fixtures" / std::string{fileName};
+        std::ifstream source{fixture};
+        require(source.good(), "historical SQL fixture exists");
+        const std::string script{std::istreambuf_iterator<char>{source}, std::istreambuf_iterator<char>{}};
+        const auto output = temp.path / std::string{outputName};
+        executeSql(output, script);
+        return output;
+    };
+    const auto v11 = reconstructSqlFixture("schema_v11_p1_reference.sql", "old-v11.sqlite");
+    const auto v12 = reconstructSqlFixture("schema_v12_p2_reference.sql", "old-v12.sqlite");
 
     const auto bytes = [](const std::filesystem::path& path) {
         std::ifstream file{path, std::ios::binary};
@@ -344,7 +390,8 @@ void test_old_schema_rejected_without_mutation() {
     };
     const GameState replacement = makeOrderedState();
     for (const auto& [path, expectedVersion] : {
-             std::pair{v10, std::int64_t{10}}, std::pair{v11, std::int64_t{11}}
+             std::pair{v10, std::int64_t{10}}, std::pair{v11, std::int64_t{11}},
+             std::pair{v12, std::int64_t{12}}
          }) {
         require(versionAt(path) == expectedVersion, "historical fixture has expected old schema marker");
         const std::string beforeBytes = bytes(path);
@@ -371,12 +418,12 @@ void test_incompatible_destinations() {
     (void)expectLoadReject(unrelated);
     require(logicalSnapshot(unrelated) == unrelatedBefore, "unrelated database is not rewritten");
 
-    const auto base = temp.path / "v12-base.sqlite";
+    const auto base = temp.path / "v13-base.sqlite";
     SaveGameRepository::save(base, state);
     const struct Case { const char* name; const char* sql; } cases[] = {
         {"unsupported", "PRAGMA ignore_check_constraints=ON; UPDATE schema_version SET version=999;"},
         {"malformed", "PRAGMA ignore_check_constraints=ON; UPDATE schema_version SET version='11junk';"},
-        {"ambiguous", "PRAGMA ignore_check_constraints=ON; INSERT INTO schema_version(id,version) VALUES (2,12);"},
+        {"ambiguous", "PRAGMA ignore_check_constraints=ON; INSERT INTO schema_version(id,version) VALUES (2,13);"},
         {"missing-index", "DROP INDEX idx_events_day;"},
         {"extra-table", "CREATE TABLE unrelated(value INTEGER);"}
     };
@@ -394,7 +441,7 @@ void test_incompatible_destinations() {
     require(!std::filesystem::exists(missing), "read-only Load does not create a missing file");
 }
 
-void test_v12_revision_and_catalog_order_survives_save() {
+void test_v13_revision_and_catalog_order_survives_save() {
     TempDirectory temp;
     Simulation sim{createHomeSystemScenario()};
     auto draft = sim.state().shipClasses.front().components;
@@ -409,17 +456,17 @@ void test_v12_revision_and_catalog_order_survives_save() {
     std::reverse(source.shipComponents.begin(), source.shipComponents.end());
     std::reverse(source.shipClasses.front().components.begin(), source.shipClasses.front().components.end());
     validateGameState(source);
-    const auto path = temp.path / "reordered-v12.sqlite";
+    const auto path = temp.path / "reordered-v13.sqlite";
     SaveGameRepository::save(path, source);
     const GameState loaded = SaveGameRepository::load(path);
     require(loaded.shipClasses.front().id == source.shipClasses.front().id &&
             loaded.shipClasses.front().basedOnClassId == source.shipClasses.front().basedOnClassId &&
             loaded.shipClasses.front().components == source.shipClasses.front().components &&
             loaded.shipComponents.front().id == source.shipComponents.front().id,
-            "v12 preserves class/catalog/installation order even when lineage ID order differs");
+            "v13 preserves class/catalog/installation order even when lineage ID order differs");
 }
 
-void test_v12_ordinal_failures() {
+void test_v13_ordinal_failures() {
     TempDirectory temp;
     const GameState state = makeOrderedState();
     const auto base = temp.path / "base.sqlite";
@@ -434,7 +481,11 @@ void test_v12_ordinal_failures() {
         {"roster-fractional", "PRAGMA ignore_check_constraints=ON; UPDATE ships SET fleet_ordinal=0.5 WHERE fleet_id=1 AND fleet_ordinal=1;", "non-integer ordinal"},
         {"appointment-gap", "UPDATE appointments SET ordinal=20 WHERE ordinal=(SELECT MAX(ordinal) FROM appointments);", "appointments"},
         {"allocation-gap", "UPDATE colony_processing_allocations SET ordinal=7 WHERE ordinal=1;", "colony_processing_allocations"},
-        {"queue-gap", "UPDATE fleet_order_queue SET ordinal=7 WHERE fleet_id=1 AND ordinal=1;", "fleet_order_queue"}
+        {"queue-gap", "UPDATE fleet_order_queue SET ordinal=7 WHERE fleet_id=1 AND ordinal=1;", "fleet_order_queue"},
+        {"survey-team-gap", "UPDATE survey_teams SET ordinal=7 WHERE ordinal=1;", "survey_teams"},
+        {"survey-program-gap", "UPDATE survey_programs SET ordinal=7 WHERE ordinal=1;", "survey_programs"},
+        {"survey-target-gap", "UPDATE survey_program_targets SET ordinal=7 WHERE program_id=1 AND ordinal=1;", "survey_program_targets"},
+        {"survey-target-fractional", "PRAGMA ignore_check_constraints=ON; UPDATE survey_program_targets SET ordinal=0.5 WHERE program_id=1 AND ordinal=0;", "non-integer ordinal"}
     };
     for (const auto& test : corruptions) {
         const auto path = temp.path / (std::string{test.name} + ".sqlite");
@@ -443,10 +494,10 @@ void test_v12_ordinal_failures() {
         const auto malformedBefore = logicalSnapshot(path);
         const std::string failure = expectLoadReject(path);
         require(failure.find(test.expectedError) != std::string::npos,
-                "the matching v12 ordinal reader rejected the malformed sequence");
+                "the matching v13 ordinal reader rejected the malformed sequence");
         (void)expectSaveReject(path, state);
         require(logicalSnapshot(path) == malformedBefore,
-                "malformed v12 ordinal destination is not replaced by Save");
+                "malformed v13 ordinal destination is not replaced by Save");
     }
 
     const struct Constraint { const char* name; const char* sql; } constraints[] = {
@@ -462,7 +513,7 @@ void test_v12_ordinal_failures() {
         bool rejected = false;
         try { executeSql(path, test.sql); }
         catch (const std::exception&) { rejected = true; }
-        require(rejected, "v12 schema rejects duplicate or NULL ordinal at storage boundary");
+        require(rejected, "v13 schema rejects duplicate or NULL ordinal at storage boundary");
         require(logicalSnapshot(path) == before, "failed ordinal corruption preserves valid save");
         requireOrder(state, SaveGameRepository::load(path));
     }
@@ -482,7 +533,7 @@ void test_contention_and_post_delete_rollback() {
     require(logicalSnapshot(path) == beforeLock, "contention leaves prior logical save intact");
     requireOrder(state, SaveGameRepository::load(path));
 
-    // The test-only repository instance injects failure after the first v12
+    // The test-only repository instance injects failure after the first v13
     // version-row INSERT, which follows clearExistingSave's row deletions. A
     // preflight-only rejection would not exercise rollback of actual mutation.
     const auto beforeFailure = logicalSnapshot(path);
@@ -532,13 +583,13 @@ void test_known_table_trigger_is_load_only() {
 
 int main() {
     const std::pair<std::string_view, void (*)()> tests[] = {
-        {"new and schema-empty v12 destinations", test_new_and_schema_empty_destinations},
+        {"new and schema-empty v13 destinations", test_new_and_schema_empty_destinations},
         {"compatible rewrite and invalid source", test_compatible_rewrite_and_invalid_source},
         {"equivalent CREATE TABLE formatting", test_equivalent_create_table_formatting_is_compatible},
         {"old schema rejected without mutation", test_old_schema_rejected_without_mutation},
         {"incompatible destinations", test_incompatible_destinations},
-        {"v12 revision and catalog ordering", test_v12_revision_and_catalog_order_survives_save},
-        {"v12 ordinal corruption and constraints", test_v12_ordinal_failures},
+        {"v13 revision and catalog ordering", test_v13_revision_and_catalog_order_survives_save},
+        {"v13 ordinal corruption and constraints", test_v13_ordinal_failures},
         {"writer contention and post-delete rollback", test_contention_and_post_delete_rollback},
         {"known-table trigger is load only", test_known_table_trigger_is_load_only}
     };

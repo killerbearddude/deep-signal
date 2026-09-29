@@ -7,6 +7,7 @@
 
 #include "sim/IdTypes.h"
 #include "sim/Minerals.h"
+#include "sim/SurveyProgram.h"
 
 #include <cstdint>
 #include <optional>
@@ -86,15 +87,44 @@ struct FleetArrivedEvent {
     BodyId destinationBodyId;
 };
 
-// Emitted after a resource survey improves one or more low-confidence deposits
-// on the target body. Confidence fields are averages across changed deposits so
-// the event remains compact while still explaining the survey result.
+// Emitted after an immediate survey or completed timed visit. A valid pass may
+// improve zero deposits; then both confidence averages are zero.
 struct ResourceSurveyCompletedEvent {
     FleetId fleetId;
     BodyId bodyId;
     int depositsImproved = 0;
     double averageConfidenceBefore = 0.0;
     double averageConfidenceAfter = 0.0;
+};
+
+enum class SurveyProgramAuditKind {
+    Authorized,
+    Amended,
+    Suspended,
+    Resumed,
+    CancelRequested,
+    Closed,
+    TaskSelected,
+    FuelTransferred,
+    VisitCompleted,
+    ReportPublished,
+    IssueRaised,
+    IssueAcknowledged
+};
+
+// One typed program audit envelope. Optional identities identify the physical
+// action when applicable; detail explains the decision without becoming state.
+struct SurveyProgramAuditEvent {
+    SurveyProgramId programId;
+    SurveyProgramAuditKind kind = SurveyProgramAuditKind::Authorized;
+    std::optional<FleetId> fleetId = std::nullopt;
+    std::optional<BodyId> bodyId = std::nullopt;
+    std::optional<PersonId> leaderId = std::nullopt;
+    SurveyPlanningApproach approach = SurveyPlanningApproach::CoverageFirst;
+    int charterRevision = 1;
+    int passNumber = 0;
+    double fuelAmount = 0.0;
+    std::string detail{};
 };
 
 // Emitted when validation rejects a command or a daily process detects invalid
@@ -113,6 +143,7 @@ using SimEventPayload = std::variant<
     FleetOrderAssignedEvent,
     FleetArrivedEvent,
     ResourceSurveyCompletedEvent,
+    SurveyProgramAuditEvent,
     CommandRejectedEvent
 >;
 

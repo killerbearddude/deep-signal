@@ -31,6 +31,10 @@ std::vector<SimEvent> SimulationService::advanceDays(const int days) {
     return simulation_.advanceDays(days);
 }
 
+AdvanceResult SimulationService::advanceDaysDetailed(const int days) {
+    return simulation_.advanceDaysDetailed(days);
+}
+
 CommandResult SimulationService::newGame() {
     simulation_ = Simulation{createHomeSystemScenario()};
     return CommandResult::success("New game created");

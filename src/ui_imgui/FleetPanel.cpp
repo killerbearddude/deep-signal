@@ -60,7 +60,7 @@ void FleetPanel::render(const SimulationQueries& queries, InformationInteraction
     auto selection = interactions.mainSelection();
     ImGui::Text("Fleets: %zu", fleets.size());
 
-    if (ImGui::BeginTable("FleetSummaryTable", 13, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable |
+    if (ImGui::BeginTable("FleetSummaryTable", 14, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Resizable |
                            ImGuiTableFlags_Reorderable | ImGuiTableFlags_Hideable |
                            ImGuiTableFlags_SizingStretchProp)) {
         ImGui::TableSetupColumn("ID");
@@ -76,6 +76,7 @@ void FleetPanel::render(const SimulationQueries& queries, InformationInteraction
         ImGui::TableSetupColumn("Burn");
         ImGui::TableSetupColumn("Queued");
         ImGui::TableSetupColumn("Route Days");
+        ImGui::TableSetupColumn("Program control");
         ImGui::TableHeadersRow();
 
         for (const FleetSummary& fleet : fleets) {
@@ -122,6 +123,13 @@ void FleetPanel::render(const SimulationQueries& queries, InformationInteraction
             ImGui::Text("%zu", fleet.queuedOrders.size());
             ImGui::TableSetColumnIndex(12);
             ImGui::Text("%d", fleet.totalRouteDurationDays);
+            ImGui::TableSetColumnIndex(13);
+            if (fleet.controllingProgramId) {
+                ImGui::Text("%s (#%lld)", fleet.controllingProgramName.c_str(),
+                    static_cast<long long>(fleet.controllingProgramId->value));
+            } else {
+                ImGui::TextUnformatted("-");
+            }
         }
 
         ImGui::EndTable();

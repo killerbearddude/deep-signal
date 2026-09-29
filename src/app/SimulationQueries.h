@@ -12,6 +12,7 @@
 #include "sim/Events.h"
 #include "sim/IdTypes.h"
 #include "sim/ShipDesignRules.h"
+#include "sim/SurveyProgram.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -179,6 +180,8 @@ struct PersonSummary {
     PersonCompetencies competencies;
     int seniorityLevel = 0;
     PersonServiceRecord serviceRecord;
+    SurveyPlanningApproach surveyPlanningApproach = SurveyPlanningApproach::CoverageFirst;
+    std::string surveyPlanningApproachName;
 };
 
 
@@ -274,6 +277,10 @@ struct FleetSummary {
     std::size_t shipCount = 0;
     std::optional<InstitutionId> ownerInstitutionId;
     std::string ownerInstitutionName;
+    // Actual execution ownership, derived from program leases rather than a
+    // second mutable assignment on the fleet.
+    std::optional<SurveyProgramId> controllingProgramId;
+    std::string controllingProgramName;
     FleetOrderType activeOrderType = FleetOrderType::None;
     std::string activeOrderName;
     bool hasActiveOrder = false;
@@ -297,6 +304,103 @@ struct FleetSummary {
     std::string activeOrderRouteVisualStyleName;
     std::string activeOrderBurnPhase;
     std::vector<FleetQueuedOrderSummary> queuedOrders;
+};
+
+// Owned program projections. Charters are copied values so an editor can amend
+// an existing program without borrowing records from the running GameState.
+struct SurveyTeamSummary {
+    SurveyTeamId id;
+    std::string name;
+    SurveyTeamLocationKind locationKind = SurveyTeamLocationKind::Colony;
+    std::string locationName;
+    std::optional<SurveyProgramId> controllingProgramId;
+};
+
+struct SurveyProgramTargetSummary {
+    BodyId bodyId;
+    std::string bodyName;
+    int priority = 0;
+    int requestedPasses = 0;
+    int completedPasses = 0;
+};
+
+struct SurveyProgramReportSummary {
+    std::int64_t startDay = 0;
+    std::int64_t endDay = 0;
+    bool isNinetyDayReview = false;
+    int charterRevision = 1;
+    std::string leaderName;
+    std::string approachName;
+    int visitsCompleted = 0;
+    std::int64_t workDays = 0;
+    double fuelLoaded = 0.0;
+    double fuelBurned = 0.0;
+    std::string fleetName;
+    std::string teamName;
+    std::string fleetBodyName;
+    std::string waitingReason;
+};
+
+struct SurveyProgramSummary {
+    SurveyProgramId id;
+    SurveyProgramCharter charter;
+    std::int64_t createdDay = 0;
+    int charterRevision = 1;
+    SurveyProgramLifecycle lifecycle = SurveyProgramLifecycle::Authorized;
+    SurveyProgramClosure closure = SurveyProgramClosure::None;
+    std::string lifecycleName;
+    std::string condition;
+    std::string taskName;
+    std::string homeName;
+    std::optional<ColonyId> pendingHomeColonyId;
+    std::string pendingHomeName;
+    std::string requestedFleetName;
+    std::string requestedTeamName;
+    std::string leaderName;
+    std::string leaderApproachName;
+    std::string leasedFleetName;
+    std::string leasedTeamName;
+    std::string currentLocationName;
+    std::string teamLocationName;
+    std::optional<FleetId> leasedFleetId;
+    std::optional<SurveyTeamId> leasedTeamId;
+    std::optional<BodyId> taskBodyId;
+    std::optional<FleetId> taskFleetId;
+    std::optional<SurveyTeamId> taskTeamId;
+    std::optional<PersonId> taskLeaderId;
+    std::string taskFleetName;
+    std::string taskTeamName;
+    std::string taskLeaderName;
+    int taskPassNumber = 0;
+    int workDaysCompleted = 0;
+    int requestedVisits = 0;
+    int completedVisits = 0;
+    int historicalCompletedVisits = 0;
+    double fuelLoaded = 0.0;
+    double fuelBurned = 0.0;
+    std::int64_t nextReportDay = 0;
+    std::string issueSignature;
+    std::string issueMessage;
+    bool issueAcknowledged = true;
+    std::vector<SurveyProgramTargetSummary> targets;
+    std::vector<SurveyProgramReportSummary> reports;
+    std::string targetChoiceReason;
+};
+
+struct SurveyProgramCharterPreview {
+    bool structurallyValid = false;
+    std::string validationMessage;
+    std::vector<std::string> waitingReasons;
+    std::string firstTargetChoiceReason;
+    std::string executionCondition;
+};
+
+struct SurveyTimeSummary {
+    std::int64_t day = 0;
+    std::optional<std::int64_t> nextThirtyDay;
+    std::optional<std::int64_t> nextNinetyDay;
+    std::optional<int> daysUntilThirty;
+    std::optional<int> daysUntilNinety;
 };
 
 
@@ -525,6 +629,13 @@ public:
 
     // Returns a single fleet summary when the ID exists in the active snapshot.
     [[nodiscard]] std::optional<FleetSummary> fleet(FleetId id) const;
+
+    [[nodiscard]] std::vector<SurveyTeamSummary> surveyTeams() const;
+    [[nodiscard]] std::vector<SurveyProgramSummary> surveyPrograms() const;
+    [[nodiscard]] SurveyProgramCharterPreview previewSurveyProgramCharter(
+        const SurveyProgramCharter& charter,
+        std::optional<SurveyProgramId> amendingProgramId = std::nullopt) const;
+    [[nodiscard]] SurveyTimeSummary surveyTime() const;
 
     // Returns display-ready personnel rows with resolved institution names.
     [[nodiscard]] std::vector<PersonSummary> personnel() const;

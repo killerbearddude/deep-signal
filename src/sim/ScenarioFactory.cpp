@@ -531,6 +531,77 @@ GameState createHomeSystemScenario() {
         .speedKmPerDay = 50.0
     });
 
+    Person priorityLeader = state.people.at(2);
+    priorityLeader.id = PersonId{state.ids.nextPersonId++};
+    priorityLeader.name = "Dr. Tala Imani";
+    priorityLeader.surveyPlanningApproach = SurveyPlanningApproach::PriorityFirst;
+    state.people.push_back(std::move(priorityLeader));
+
+    state.surveyTeams.push_back(SurveyTeam{
+        .id = SurveyTeamId{state.ids.nextSurveyTeamId++},
+        .name = "Home Survey Team",
+        .locationKind = SurveyTeamLocationKind::Colony,
+        .colonyId = terraColonyId,
+        .fleetId = std::nullopt
+    });
+
+    return state;
+}
+
+GameState createDelegatedSurveyScenario() {
+    GameState state = createHomeSystemScenario();
+    const StarSystemId systemId = state.starSystems.front().id;
+    const BodyId homeBodyId{state.ids.nextBodyId++};
+    const ColonyId homeColonyId{state.ids.nextColonyId++};
+    state.bodies.push_back(Body{
+        .id = homeBodyId, .systemId = systemId, .name = "P3A Fixed Home",
+        .type = BodyType::Asteroid, .strategicZone = StrategicZone::DeepSurveyFrontier,
+        .parentBodyId = std::nullopt, .x = 0.0, .y = 0.0
+    });
+    ProcessedMaterialSet supportStock;
+    supportStock.set(ProcessedMaterial::Propellant, 3'000.0);
+    state.colonies.push_back(Colony{
+        .id = homeColonyId, .bodyId = homeBodyId, .name = "P3A Survey Base",
+        .stockpile = {}, .processedStockpile = supportStock,
+        .mines = 0.0, .processorCapacity = 0.0, .shipyardCapacity = 0.0,
+        .processingPolicy = ProcessingPolicy::Balanced,
+        .manualProcessingAllocations = {},
+        .ownerInstitutionId = state.institutions.front().id
+    });
+    state.surveyTeams.front().colonyId = homeColonyId;
+
+    for (int i = 1; i <= 3; ++i) {
+        state.bodies.push_back(Body{
+            .id = BodyId{state.ids.nextBodyId++},
+            .systemId = systemId,
+            .name = "P3A Target " + std::to_string(i),
+            .type = BodyType::Asteroid,
+            .strategicZone = StrategicZone::DeepSurveyFrontier,
+            .parentBodyId = std::nullopt,
+            .x = static_cast<double>(i) * 0.25,
+            .y = 0.0
+        });
+    }
+    // The third body deliberately has no deposit rows. Its timed visit can
+    // complete without claiming that the whole body is resource-free.
+    addDeposit(state, state.bodies.at(state.bodies.size() - 3).id,
+               Mineral::Iron, 100.0, 1.0, 0.1);
+
+    const FleetId fleetId{state.ids.nextFleetId++};
+    const ShipId shipId{state.ids.nextShipId++};
+    state.ships.push_back(Ship{
+        .id = shipId,
+        .shipClassId = state.shipClasses.front().id,
+        .name = "P3A Survey Cutter",
+        .fleetId = fleetId,
+        .fuel = 0.0
+    });
+    state.fleets.push_back(Fleet{
+        .id = fleetId, .name = "P3A Survey Fleet",
+        .currentBodyId = homeBodyId, .destinationBodyId = std::nullopt,
+        .shipIds = {shipId}, .activeOrder = {}, .queuedOrders = {},
+        .ownerInstitutionId = state.institutions.front().id
+    });
     return state;
 }
 

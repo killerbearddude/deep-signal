@@ -10,11 +10,14 @@
 #include "sim/GameState.h"
 #include "sim/Minerals.h"
 #include "sim/ProcessingAllocationRules.h"
+#include "sim/SurveyProgramRules.h"
+#include "sim/SurveyProgramExecution.h"
 #include "sim/TransitPlanning.h"
 
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <limits>
 #include <optional>
 #include <sstream>
 #include <stdexcept>
@@ -183,6 +186,50 @@ template <typename T, typename IdT>
 [[nodiscard]] std::string colonyName(const GameState& state, const ColonyId id) {
     const Colony* colony = findById(state.colonies, id);
     return colony == nullptr ? std::string{"<unknown colony>"} : colony->name;
+}
+
+[[nodiscard]] std::string surveyTeamName(const GameState& state, const SurveyTeamId id) {
+    const SurveyTeam* team = findById(state.surveyTeams, id);
+    return team == nullptr ? std::string{"<unknown survey team>"} : team->name;
+}
+
+[[nodiscard]] std::string surveyTeamLocationName(const GameState& state, const SurveyTeam& team) {
+    if (team.locationKind == SurveyTeamLocationKind::Colony) {
+        return team.colonyId ? "At " + colonyName(state, *team.colonyId) : "At an unknown colony";
+    }
+    if (!team.fleetId) return "Aboard an unknown fleet";
+    const Fleet* fleet = findById(state.fleets, *team.fleetId);
+    if (fleet == nullptr) return "Aboard an unknown fleet";
+    std::string location = "Aboard " + fleet->name + " at " + bodyName(state, fleet->currentBodyId);
+    if (fleet->activeOrder.type == FleetOrderType::MoveToBody && fleet->destinationBodyId) {
+        location += " (in transit to " + bodyName(state, *fleet->destinationBodyId) + ")";
+    }
+    return location;
+}
+
+[[nodiscard]] std::string surveyApproachName(const SurveyPlanningApproach approach) {
+    return approach == SurveyPlanningApproach::CoverageFirst ? "Coverage first" : "Priority first";
+}
+
+[[nodiscard]] std::string surveyLifecycleName(const SurveyProgram& program) {
+    switch (program.lifecycle) {
+    case SurveyProgramLifecycle::Authorized: return "Authorized";
+    case SurveyProgramLifecycle::Suspended: return "Suspended";
+    case SurveyProgramLifecycle::Closing: return "Closing";
+    case SurveyProgramLifecycle::Closed:
+        return program.closure == SurveyProgramClosure::Completed ? "Completed" : "Cancelled";
+    }
+    return "Unknown";
+}
+
+[[nodiscard]] std::string surveyTaskName(const SurveyProgramTask task) {
+    switch (task) {
+    case SurveyProgramTask::None: return "Planning";
+    case SurveyProgramTask::Outbound: return "Outbound";
+    case SurveyProgramTask::Survey: return "Survey visit";
+    case SurveyProgramTask::Return: return "Return to base";
+    }
+    return "Unknown";
 }
 
 [[nodiscard]] std::string shipClassName(const GameState& state, const ShipClassId id) {
@@ -628,16 +675,6 @@ void addModifierRow(std::vector<AppointmentModifierBreakdownRow>& rows, const st
         state, AppointmentRole::ShipyardDirector, AppointmentScopeType::Colony, colony.id.value)));
 }
 
-[[nodiscard]] double adjustedMoveFuelCost(const GameState& state,
-                                          const Fleet& fleet,
-                                          const BodyId originBodyId,
-                                          const BodyId destinationBodyId,
-                                          const std::int64_t departureDay) {
-    const double modifier = appointmentModifierFor(state, AppointmentRole::FleetCommander, AppointmentScopeType::Fleet, fleet.id.value);
-    return std::max(0.0, moveFuelCost(state, originBodyId, destinationBodyId, departureDay) * (1.0 - modifier));
-}
-
-
 [[nodiscard]] std::string burnPhaseName(const FleetOrder& order, const std::int64_t currentDay) {
     if (order.type != FleetOrderType::MoveToBody || order.arrivalDay <= order.departureDay) {
         return {};
@@ -876,6 +913,8 @@ void addProcessingWeight(ProcessingShares& weights, const ProcessedMaterial mate
             return "fleet_arrived";
         } else if constexpr (std::is_same_v<Event, ResourceSurveyCompletedEvent>) {
             return "resource_survey_completed";
+        } else if constexpr (std::is_same_v<Event, SurveyProgramAuditEvent>) {
+            return "survey_program";
         } else if constexpr (std::is_same_v<Event, CommandRejectedEvent>) {
             return "command_rejected";
         }
@@ -908,10 +947,16 @@ void addProcessingWeight(ProcessingShares& weights, const ProcessedMaterial mate
                 << " arrived at body " << idText(event.destinationBodyId.value);
         } else if constexpr (std::is_same_v<Event, ResourceSurveyCompletedEvent>) {
             out << "Fleet " << idText(event.fleetId.value)
-                << " surveyed body " << idText(event.bodyId.value)
-                << "; improved " << event.depositsImproved << " deposit(s)"
-                << " from " << (event.averageConfidenceBefore * 100.0) << "% to "
-                << (event.averageConfidenceAfter * 100.0) << "% average confidence";
+                << " surveyed body " << idText(event.bodyId.value) << "; ";
+            if (event.depositsImproved == 0) {
+                out << "No new information from this pass";
+            } else {
+                out << "improved " << event.depositsImproved << " deposit(s)"
+                    << " from " << (event.averageConfidenceBefore * 100.0) << "% to "
+                    << (event.averageConfidenceAfter * 100.0) << "% average confidence";
+            }
+        } else if constexpr (std::is_same_v<Event, SurveyProgramAuditEvent>) {
+            out << "Survey program " << idText(event.programId.value) << ": " << event.detail;
         } else if constexpr (std::is_same_v<Event, CommandRejectedEvent>) {
             out << event.reason;
         }
@@ -1142,6 +1187,8 @@ std::vector<FleetSummary> SimulationQueries::fleets() const {
     summaries.reserve(state.fleets.size());
 
     for (const Fleet& fleet : state.fleets) {
+        const auto controlling = std::find_if(state.surveyPrograms.begin(), state.surveyPrograms.end(),
+            [&fleet](const SurveyProgram& program) { return program.leasedFleetId == fleet.id; });
         const bool hasActiveOrder = fleet.activeOrder.type != FleetOrderType::None;
         const std::int64_t currentDay = state.date.day;
         const int activeOrderEtaDays = hasActiveOrder
@@ -1162,7 +1209,7 @@ std::vector<FleetSummary> SimulationQueries::fleets() const {
                 : FleetOrder{};
             const std::int64_t arrivalDay = plan.arrivalDay > startDay ? plan.arrivalDay : startDay;
             const double fuelCost = order.targetBodyId.has_value()
-                ? adjustedMoveFuelCost(state, fleet, projectedOrigin, *order.targetBodyId, startDay)
+                ? adjustedFleetMoveFuelCost(state, fleet, projectedOrigin, *order.targetBodyId, startDay)
                 : 0.0;
             projectedFuelRemaining -= fuelCost;
 
@@ -1210,6 +1257,9 @@ std::vector<FleetSummary> SimulationQueries::fleets() const {
             .shipCount = fleet.shipIds.size(),
             .ownerInstitutionId = fleet.ownerInstitutionId,
             .ownerInstitutionName = optionalInstitutionName(state, fleet.ownerInstitutionId),
+            .controllingProgramId = controlling == state.surveyPrograms.end()
+                ? std::optional<SurveyProgramId>{} : std::optional<SurveyProgramId>{controlling->id},
+            .controllingProgramName = controlling == state.surveyPrograms.end() ? std::string{} : controlling->charter.name,
             .activeOrderType = fleet.activeOrder.type,
             .activeOrderName = fleetOrderName(fleet.activeOrder.type),
             .hasActiveOrder = hasActiveOrder,
@@ -1253,7 +1303,9 @@ std::vector<PersonSummary> SimulationQueries::personnel() const {
             .institutionName = institutionName(state, person.institutionId),
             .competencies = person.competencies,
             .seniorityLevel = person.seniorityLevel,
-            .serviceRecord = person.serviceRecord
+            .serviceRecord = person.serviceRecord,
+            .surveyPlanningApproach = person.surveyPlanningApproach,
+            .surveyPlanningApproachName = surveyApproachName(person.surveyPlanningApproach)
         });
     }
 
@@ -1406,7 +1458,7 @@ std::optional<FleetMovePreview> SimulationQueries::fleetMovePreview(const FleetI
             return std::nullopt;
         }
         const FleetOrder queuedPlan = planFleetTransit(state, projectedOrigin, *queuedOrder.targetBodyId, projectedStartDay);
-        queuedFuelRequired += adjustedMoveFuelCost(state, *fleet, projectedOrigin, *queuedOrder.targetBodyId, projectedStartDay);
+        queuedFuelRequired += adjustedFleetMoveFuelCost(state, *fleet, projectedOrigin, *queuedOrder.targetBodyId, projectedStartDay);
         projectedStartDay = queuedPlan.arrivalDay;
         projectedOrigin = *queuedOrder.targetBodyId;
     }
@@ -1415,7 +1467,7 @@ std::optional<FleetMovePreview> SimulationQueries::fleetMovePreview(const FleetI
         state, AppointmentRole::FleetCommander, AppointmentScopeType::Fleet, fleet->id.value);
     const double fuelEfficiencyModifier = fleetCommanderModifier.has_value() ? fleetCommanderModifier->modifier : 0.0;
     const FleetOrder newMovePlan = planFleetTransit(state, projectedOrigin, destinationBodyId, projectedStartDay);
-    const double newMoveCost = adjustedMoveFuelCost(state, *fleet, projectedOrigin, destinationBodyId, projectedStartDay);
+    const double newMoveCost = adjustedFleetMoveFuelCost(state, *fleet, projectedOrigin, destinationBodyId, projectedStartDay);
     queuedFuelRequired += newMoveCost;
     const double projectedRemaining = fuel.currentFuel - queuedFuelRequired;
     const bool canAfford = projectedRemaining + kFuelComparisonEpsilon >= 0.0;
@@ -1493,10 +1545,13 @@ std::optional<ResourceSurveyPreview> SimulationQueries::resourceSurveyPreview(co
         preview.warningText = capability.installedCapability > 0.0
             ? "Survey equipment is unavailable due to power deficit."
             : "Fleet has no installed survey capability.";
-    } else if (preview.surveyableDepositCount == 0U) {
-        preview.warningText = "No low-confidence deposits remain on this body.";
     } else {
         preview.canSurvey = true;
+        if (preview.surveyableDepositCount == 0U) {
+            // A physically valid survey can finish without changing confidence.
+            // This advice is informational; the button remains enabled.
+            preview.warningText = "No confidence improvement is projected for this pass.";
+        }
     }
 
     return preview;
@@ -1657,9 +1712,14 @@ ExplorationIntelligenceSummary SimulationQueries::explorationIntelligence() cons
         }
 
         std::ostringstream out;
-        out << bodyName(state, survey->bodyId) << ": improved " << survey->depositsImproved
-            << " deposit(s) from " << (survey->averageConfidenceBefore * 100.0)
-            << "% to " << (survey->averageConfidenceAfter * 100.0) << "% average confidence.";
+        out << bodyName(state, survey->bodyId) << ": ";
+        if (survey->depositsImproved == 0) {
+            out << "No new information from this pass";
+        } else {
+            out << "improved " << survey->depositsImproved
+                << " deposit(s) from " << (survey->averageConfidenceBefore * 100.0)
+                << "% to " << (survey->averageConfidenceAfter * 100.0) << "% average confidence.";
+        }
 
         summary.recentSurveyResults.push_back(RecentSurveyResultSummary{
             .eventId = event.id,
@@ -1790,6 +1850,311 @@ std::vector<StrategicFleetSummary> SimulationQueries::strategicFleets() const {
     }
 
     return summaries;
+}
+
+std::vector<SurveyTeamSummary> SimulationQueries::surveyTeams() const {
+    const GameState& state = service_.state();
+    std::vector<SurveyTeamSummary> rows;
+    rows.reserve(state.surveyTeams.size());
+    for (const SurveyTeam& team : state.surveyTeams) {
+        const auto controlling = std::find_if(state.surveyPrograms.begin(), state.surveyPrograms.end(),
+            [&team](const SurveyProgram& program) { return program.leasedTeamId == team.id; });
+        const std::string location = surveyTeamLocationName(state, team);
+        rows.push_back(SurveyTeamSummary{
+            .id = team.id,
+            .name = team.name,
+            .locationKind = team.locationKind,
+            .locationName = location,
+            .controllingProgramId = controlling == state.surveyPrograms.end()
+                ? std::optional<SurveyProgramId>{} : std::optional<SurveyProgramId>{controlling->id}
+        });
+    }
+    return rows;
+}
+
+std::vector<SurveyProgramSummary> SimulationQueries::surveyPrograms() const {
+    const GameState& state = service_.state();
+    std::vector<SurveyProgramSummary> rows;
+    rows.reserve(state.surveyPrograms.size());
+    for (const SurveyProgram& program : state.surveyPrograms) {
+        SurveyProgramSummary row;
+        row.id = program.id;
+        row.charter = program.charter;
+        row.createdDay = program.createdDay;
+        row.charterRevision = program.charterRevision;
+        row.lifecycle = program.lifecycle;
+        row.closure = program.closure;
+        row.lifecycleName = surveyLifecycleName(program);
+        row.condition = surveyProgramExecutionCondition(state, program);
+        row.taskName = surveyTaskName(program.task);
+        if (program.taskBodyId) row.taskName += " at " + bodyName(state, *program.taskBodyId);
+        row.homeName = colonyName(state, program.charter.homeColonyId);
+        row.pendingHomeColonyId = program.pendingHomeColonyId;
+        row.pendingHomeName = program.pendingHomeColonyId
+            ? colonyName(state, *program.pendingHomeColonyId) : std::string{};
+        row.requestedFleetName = program.charter.requestedFleetId
+            ? fleetName(state, *program.charter.requestedFleetId) : "Unassigned";
+        row.requestedTeamName = program.charter.requestedTeamId
+            ? surveyTeamName(state, *program.charter.requestedTeamId) : "Unassigned";
+        row.leaderName = program.charter.requestedLeaderId
+            ? personName(state, *program.charter.requestedLeaderId) : "Unassigned";
+        if (program.charter.requestedLeaderId) {
+            if (const Person* leader = findById(state.people, *program.charter.requestedLeaderId)) {
+                row.leaderApproachName = surveyApproachName(leader->surveyPlanningApproach);
+            }
+        }
+        row.leasedFleetId = program.leasedFleetId;
+        row.leasedTeamId = program.leasedTeamId;
+        row.leasedFleetName = program.leasedFleetId ? fleetName(state, *program.leasedFleetId) : "None";
+        row.leasedTeamName = program.leasedTeamId ? surveyTeamName(state, *program.leasedTeamId) : "None";
+        // After an amendment and safe lease release, requested IDs may no
+        // longer name the assets that carried committed field work. Prefer the
+        // task identities when presenting the physical cancellation outcome.
+        const std::optional<SurveyTeamId> relevantTeam = program.leasedTeamId
+            ? program.leasedTeamId
+            : (program.taskTeamId ? program.taskTeamId : program.charter.requestedTeamId);
+        if (relevantTeam) {
+            if (const SurveyTeam* team = findById(state.surveyTeams, *relevantTeam)) {
+                row.teamLocationName = surveyTeamLocationName(state, *team);
+            }
+        }
+        row.taskBodyId = program.taskBodyId;
+        row.taskFleetId = program.taskFleetId;
+        row.taskTeamId = program.taskTeamId;
+        row.taskLeaderId = program.taskLeaderId;
+        row.taskFleetName = program.taskFleetId ? fleetName(state, *program.taskFleetId) : "None";
+        row.taskTeamName = program.taskTeamId ? surveyTeamName(state, *program.taskTeamId) : "None";
+        row.taskLeaderName = program.taskLeaderId ? personName(state, *program.taskLeaderId) : "None";
+        row.taskPassNumber = program.taskPassNumber;
+        row.workDaysCompleted = program.workDaysCompleted;
+        row.historicalCompletedVisits = static_cast<int>(program.receipts.size());
+        row.fuelLoaded = program.fuelLoaded;
+        row.fuelBurned = program.fuelBurned;
+        row.nextReportDay = program.nextReportDay;
+        row.issueSignature = program.issue.signature;
+        row.issueMessage = program.issue.message;
+        row.issueAcknowledged = program.issue.acknowledged;
+        row.targetChoiceReason = program.lastSelectionReason;
+
+        const std::optional<FleetId> locationFleet = program.leasedFleetId
+            ? program.leasedFleetId : program.taskFleetId;
+        if (locationFleet) {
+            if (const Fleet* fleet = findById(state.fleets, *locationFleet)) {
+                row.currentLocationName = program.leasedFleetId ? "" : "Former task fleet currently at ";
+                row.currentLocationName += bodyName(state, fleet->currentBodyId);
+                if (fleet->activeOrder.type == FleetOrderType::MoveToBody && fleet->destinationBodyId) {
+                    row.currentLocationName += " (in transit to " + bodyName(state, *fleet->destinationBodyId) + ")";
+                }
+            }
+        }
+        if (row.currentLocationName.empty()) {
+            const bool fieldTeam = program.taskTeamId.has_value();
+            row.currentLocationName = row.teamLocationName.empty()
+                ? "No active fleet lease" : "No active fleet lease; " +
+                    std::string{fieldTeam ? "task team " : "requested team "} + row.teamLocationName;
+        }
+
+        row.targets.reserve(program.charter.targets.size());
+        SurveyPlanningInputs planning;
+        if (program.charter.requestedLeaderId) {
+            if (const Person* leader = findById(state.people, *program.charter.requestedLeaderId)) {
+                planning.approach = leader->surveyPlanningApproach;
+            }
+        }
+        for (std::size_t i = 0; i < program.charter.targets.size(); ++i) {
+            const SurveyProgramTarget& target = program.charter.targets[i];
+            const int completed = completedSurveyPasses(program, target.bodyId);
+            row.requestedVisits += target.requestedPasses;
+            row.completedVisits += std::min(completed, target.requestedPasses);
+            row.targets.push_back(SurveyProgramTargetSummary{
+                .bodyId = target.bodyId,
+                .bodyName = bodyName(state, target.bodyId),
+                .priority = target.priority,
+                .requestedPasses = target.requestedPasses,
+                .completedPasses = completed
+            });
+            planning.candidates.push_back(SurveyPlanningCandidate{
+                .bodyId = target.bodyId,
+                .playerPriority = target.priority,
+                .requestedPasses = target.requestedPasses,
+                .completedPasses = completed,
+                .charterOrdinal = i,
+                .knownFeasible = true,
+                .waitingReason = {}
+            });
+            if (row.targetChoiceReason.empty() && program.taskBodyId == target.bodyId) {
+                row.targetChoiceReason = "Current assignment uses charter row " + std::to_string(i + 1)
+                    + " (priority " + std::to_string(target.priority) + ") under "
+                    + (row.leaderApproachName.empty() ? "coverage-first" : row.leaderApproachName) + " planning.";
+            }
+        }
+        if (row.targetChoiceReason.empty() && program.taskBodyId) {
+            row.targetChoiceReason = "Committed task at " + bodyName(state, *program.taskBodyId)
+                + " remains from an earlier charter scope.";
+        }
+        if (row.targetChoiceReason.empty()) {
+            if (const auto choice = chooseSurveyTarget(planning)) {
+                row.targetChoiceReason = "Priority order if otherwise feasible: " + choice->reason + ".";
+            }
+        }
+
+        row.reports.reserve(program.reports.size());
+        for (const SurveyProgramReport& report : program.reports) {
+            std::string approach = surveyApproachName(report.approach);
+            row.reports.push_back(SurveyProgramReportSummary{
+                .startDay = report.startDay,
+                .endDay = report.endDay,
+                .isNinetyDayReview = report.isNinetyDayReview,
+                .charterRevision = report.charterRevision,
+                .leaderName = report.leaderId ? personName(state, *report.leaderId) : "Unassigned",
+                .approachName = std::move(approach),
+                .visitsCompleted = report.visitsCompleted,
+                .workDays = report.workDays,
+                .fuelLoaded = report.fuelLoaded,
+                .fuelBurned = report.fuelBurned,
+                .fleetName = report.fleetId ? fleetName(state, *report.fleetId) : "None",
+                .teamName = report.teamId ? surveyTeamName(state, *report.teamId) : "None",
+                .fleetBodyName = report.fleetBodyId ? bodyName(state, *report.fleetBodyId) : "None",
+                .waitingReason = report.waitingReason
+            });
+        }
+        rows.push_back(std::move(row));
+    }
+    return rows;
+}
+
+SurveyProgramCharterPreview SimulationQueries::previewSurveyProgramCharter(
+    const SurveyProgramCharter& charter, const std::optional<SurveyProgramId> amendingProgramId) const {
+    const GameState& state = service_.state();
+    SurveyProgramCharterPreview preview;
+    if (const auto error = validateSurveyProgramCharter(state, charter)) {
+        preview.validationMessage = *error;
+        return preview;
+    }
+    preview.structurallyValid = true;
+    preview.validationMessage = "Charter can be authorized. Readiness may change before the next simulated day.";
+    SurveyProgram proposed;
+    if (amendingProgramId) {
+        if (const SurveyProgram* existing = findById(state.surveyPrograms, *amendingProgramId)) {
+            proposed = *existing;
+        }
+    }
+    proposed.charter = charter;
+    if (amendingProgramId && proposed.task != SurveyProgramTask::None) {
+        if (const SurveyProgram* existing = findById(state.surveyPrograms, *amendingProgramId)) {
+            if (charter.homeColonyId != existing->charter.homeColonyId) {
+                proposed.pendingHomeColonyId = charter.homeColonyId;
+                proposed.charter.homeColonyId = existing->charter.homeColonyId;
+            }
+        }
+    }
+    preview.executionCondition = surveyProgramExecutionCondition(state, proposed);
+    if (!charter.requestedFleetId) preview.waitingReasons.push_back("No fleet requested");
+    if (!charter.requestedTeamId) preview.waitingReasons.push_back("No survey team requested");
+    if (!charter.requestedLeaderId) preview.waitingReasons.push_back("No leader requested");
+    if (charter.requestedFleetId) {
+        const Fleet* fleet = findById(state.fleets, *charter.requestedFleetId);
+        if (fleet != nullptr) {
+            const bool heldByAmendedProgram = amendingProgramId && std::any_of(
+                state.surveyPrograms.begin(), state.surveyPrograms.end(),
+                [amendingProgramId, fleet](const SurveyProgram& program) {
+                    return program.id == *amendingProgramId && program.leasedFleetId == fleet->id;
+                });
+            if (!heldByAmendedProgram &&
+                (fleet->activeOrder.type != FleetOrderType::None || !fleet->queuedOrders.empty())) {
+                preview.waitingReasons.push_back("Requested fleet has a manual order");
+            }
+            if (evaluateFleetSurvey(state, *fleet).operationalCapability <= 0.0) {
+                preview.waitingReasons.push_back("Requested fleet lacks operational survey capability");
+            }
+            const Colony* home = findById(state.colonies, charter.homeColonyId);
+            const double transferableAtHome = home == nullptr ? 0.0
+                : std::max(0.0, home->processedStockpile.get(ProcessedMaterial::Propellant)
+                    - charter.policy.homeStockFloor);
+            double alreadyLoaded = 0.0;
+            if (amendingProgramId) {
+                if (const SurveyProgram* existing = findById(state.surveyPrograms, *amendingProgramId)) {
+                    alreadyLoaded = existing->fuelLoaded;
+                }
+            }
+            const bool budgetAllowsRefill = !charter.policy.maxAdditionalPropellant ||
+                *charter.policy.maxAdditionalPropellant > alreadyLoaded + kFuelComparisonEpsilon;
+            if (!heldByAmendedProgram && fleetFuelTotals(state, *fleet).currentFuel <= kFuelComparisonEpsilon &&
+                (transferableAtHome <= kFuelComparisonEpsilon || !budgetAllowsRefill)) {
+                preview.waitingReasons.push_back(budgetAllowsRefill
+                    ? "Requested fleet has no onboard propellant and no available home refill"
+                    : "Requested fleet has no onboard propellant and additional-fuel authorization is exhausted");
+            }
+            const auto owner = std::find_if(state.surveyPrograms.begin(), state.surveyPrograms.end(),
+                [fleet, amendingProgramId](const SurveyProgram& program) {
+                    return program.id != amendingProgramId && program.leasedFleetId == fleet->id;
+                });
+            if (owner != state.surveyPrograms.end()) preview.waitingReasons.push_back("Requested fleet is controlled by another program");
+        }
+    }
+    if (charter.requestedTeamId) {
+        const SurveyTeam* team = findById(state.surveyTeams, *charter.requestedTeamId);
+        const Fleet* fleet = charter.requestedFleetId ? findById(state.fleets, *charter.requestedFleetId) : nullptr;
+        const Colony* home = findById(state.colonies, charter.homeColonyId);
+        if (team != nullptr && fleet != nullptr && home != nullptr) {
+            const bool alreadyAboard = team->locationKind == SurveyTeamLocationKind::Fleet &&
+                team->fleetId == fleet->id;
+            const bool atHomeTogether = team->locationKind == SurveyTeamLocationKind::Colony &&
+                team->colonyId == home->id && fleet->currentBodyId == home->bodyId &&
+                fleet->activeOrder.type == FleetOrderType::None;
+            if (!alreadyAboard && !atHomeTogether) {
+                preview.waitingReasons.push_back("Requested team and fleet are not co-located for embarkation");
+            }
+        }
+        const auto owner = std::find_if(state.surveyPrograms.begin(), state.surveyPrograms.end(),
+            [&charter, amendingProgramId](const SurveyProgram& program) {
+                return program.id != amendingProgramId && program.leasedTeamId == charter.requestedTeamId;
+            });
+        if (owner != state.surveyPrograms.end()) preview.waitingReasons.push_back("Requested team is controlled by another program");
+    }
+    SurveyPlanningInputs planning;
+    if (charter.requestedLeaderId) {
+        if (const Person* leader = findById(state.people, *charter.requestedLeaderId)) {
+            planning.approach = leader->surveyPlanningApproach;
+        }
+    }
+    for (std::size_t i = 0; i < charter.targets.size(); ++i) {
+        const SurveyProgramTarget& target = charter.targets[i];
+        planning.candidates.push_back(SurveyPlanningCandidate{
+            .bodyId = target.bodyId,
+            .playerPriority = target.priority,
+            .requestedPasses = target.requestedPasses,
+            .charterOrdinal = i,
+            .knownFeasible = true,
+            .waitingReason = {}
+        });
+    }
+    if (const auto choice = chooseSurveyTarget(planning)) {
+        preview.firstTargetChoiceReason = "Priority order if otherwise feasible: " + choice->reason + ".";
+    }
+    return preview;
+}
+
+SurveyTimeSummary SimulationQueries::surveyTime() const {
+    const std::int64_t day = service_.state().date.day;
+    const auto futureBoundary = [day](const std::int64_t interval) -> std::optional<std::int64_t> {
+        try { return nextGlobalSurveyBoundary(day, interval); }
+        catch (const std::overflow_error&) { return std::nullopt; }
+    };
+    const auto thirty = futureBoundary(30);
+    const auto ninety = futureBoundary(90);
+    const auto commandDays = [day](const std::optional<std::int64_t> boundary) -> std::optional<int> {
+        if (!boundary) return std::nullopt;
+        const std::int64_t count = *boundary - day;
+        return count <= std::numeric_limits<int>::max() ? std::optional<int>{static_cast<int>(count)} : std::nullopt;
+    };
+    return SurveyTimeSummary{
+        .day = day,
+        .nextThirtyDay = thirty,
+        .nextNinetyDay = ninety,
+        .daysUntilThirty = commandDays(thirty),
+        .daysUntilNinety = commandDays(ninety)
+    };
 }
 
 std::vector<EventLogEntrySummary> SimulationQueries::recentEvents(const std::size_t limit) const {

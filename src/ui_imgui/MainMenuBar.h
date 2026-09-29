@@ -35,6 +35,7 @@ struct PanelVisibility {
     bool colonies = false;
     bool fleets = false;
     bool fleetOrders = false;
+    bool surveyPrograms = false;
     bool shipyard = false;
     bool economyForecast = false;
     bool eventLog = false;
@@ -54,13 +55,16 @@ public:
     // in viewport coordinates so shell geometry reserves it on the first frame.
     float render(SimulationService& service, SaveLoadPanel& saveLoadPanel,
                 InformationInteractionAdapter& interactions, Workspace& workspace, PanelVisibility& visibility);
+    void resetWorldState();
 
 private:
-    // Executes the same day-batch command as the legacy Time Control panel.
-    // Only rejection feedback is retained; the service owns the simulation date.
+    // Executes the same interruption-aware day command as Time Control and
+    // retains its actual elapsed/stop message. Service owns the simulation date.
     void advanceTime(SimulationService& service, int days);
+    void advanceToBoundary(SimulationService& service, int interval);
 
-    std::string timeError_;
+    std::string timeMessage_;
+    bool lastTimeSucceeded_ = true;
 };
 
 } // namespace deep::ui_imgui
