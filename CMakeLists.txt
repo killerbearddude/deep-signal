@@ -28,6 +28,10 @@ set(DEEP_SIGNAL_WARNINGS
 add_library(deep_signal_sim
     src/sim/GameStateValidation.cpp
     src/sim/ProcessingAllocationRules.cpp
+    src/sim/ProgramControl.cpp
+    src/sim/FreightProgramRules.cpp
+    src/sim/FreightProgramExecution.cpp
+    src/sim/FreightProgramValidation.cpp
     src/sim/Simulation.cpp
     src/sim/ScenarioFactory.cpp
     src/sim/ShipDesignRules.cpp
@@ -58,6 +62,7 @@ if(DEEP_SIGNAL_BUILD_SAVE)
     add_library(deep_signal_save
         src/save/Database.cpp
         src/save/EventJson.cpp
+        src/save/FreightPersistence.cpp
         src/save/Schema.cpp
         src/save/SaveGameRepository.cpp
     )
@@ -114,6 +119,7 @@ if(DEEP_SIGNAL_BUILD_UI)
         src/ui_imgui/EventLogPanel.cpp
         src/ui_imgui/FleetPanel.cpp
         src/ui_imgui/FleetOrdersPanel.cpp
+        src/ui_imgui/FreightProgramsPanel.cpp
         src/ui_imgui/ImGuiApp.cpp
         src/ui_imgui/InformationPanel.cpp
         src/ui_imgui/InformationNavigation.cpp
@@ -234,6 +240,14 @@ if(DEEP_SIGNAL_BUILD_TESTS)
             PRIVATE deep_signal_app ${DEEP_SIGNAL_UI_DEPENDENCY_TARGET})
         target_compile_options(deep_signal_survey_program_ui_tests PRIVATE ${DEEP_SIGNAL_WARNINGS})
         add_test(NAME deep_signal_survey_program_ui_tests COMMAND deep_signal_survey_program_ui_tests)
+        add_executable(deep_signal_freight_program_ui_tests
+            tests/freight_program_ui_tests.cpp
+            src/ui_imgui/FreightProgramsPanel.cpp
+            src/ui_imgui/OperationalWindow.cpp
+            src/ui_imgui/ShellLayout.cpp)
+        target_link_libraries(deep_signal_freight_program_ui_tests PRIVATE deep_signal_app ${DEEP_SIGNAL_UI_DEPENDENCY_TARGET})
+        target_compile_options(deep_signal_freight_program_ui_tests PRIVATE ${DEEP_SIGNAL_WARNINGS})
+        add_test(NAME deep_signal_freight_program_ui_tests COMMAND deep_signal_freight_program_ui_tests)
     endif()
 
     # Compile the identity-only model directly so its boundary tests also run
@@ -257,6 +271,20 @@ if(DEEP_SIGNAL_BUILD_TESTS)
     add_test(NAME deep_signal_sim_tests COMMAND deep_signal_sim_tests)
 
     add_executable(deep_signal_survey_program_execution_tests tests/survey_program_execution_tests.cpp)
+    add_executable(deep_signal_program_control_tests tests/program_control_tests.cpp)
+    target_link_libraries(deep_signal_program_control_tests PRIVATE deep_signal_sim)
+    target_compile_options(deep_signal_program_control_tests PRIVATE ${DEEP_SIGNAL_WARNINGS})
+    add_test(NAME deep_signal_program_control_tests COMMAND deep_signal_program_control_tests)
+    add_executable(deep_signal_freight_edge_tests tests/freight_edge_tests.cpp)
+    target_link_libraries(deep_signal_freight_edge_tests PRIVATE deep_signal_sim)
+    target_compile_options(deep_signal_freight_edge_tests PRIVATE ${DEEP_SIGNAL_WARNINGS})
+    add_test(NAME deep_signal_freight_edge_tests COMMAND deep_signal_freight_edge_tests)
+    foreach(freight_suite IN ITEMS rules execution)
+        add_executable(deep_signal_freight_program_${freight_suite}_tests tests/freight_program_${freight_suite}_tests.cpp)
+        target_link_libraries(deep_signal_freight_program_${freight_suite}_tests PRIVATE deep_signal_sim)
+        target_compile_options(deep_signal_freight_program_${freight_suite}_tests PRIVATE ${DEEP_SIGNAL_WARNINGS})
+        add_test(NAME deep_signal_freight_program_${freight_suite}_tests COMMAND deep_signal_freight_program_${freight_suite}_tests)
+    endforeach()
     target_link_libraries(deep_signal_survey_program_execution_tests PRIVATE deep_signal_sim)
     target_compile_options(deep_signal_survey_program_execution_tests PRIVATE ${DEEP_SIGNAL_WARNINGS})
     add_test(NAME deep_signal_survey_program_execution_tests COMMAND deep_signal_survey_program_execution_tests)
@@ -332,6 +360,14 @@ if(DEEP_SIGNAL_BUILD_TESTS)
         target_link_libraries(deep_signal_survey_program_app_tests PRIVATE deep_signal_app)
         target_compile_options(deep_signal_survey_program_app_tests PRIVATE ${DEEP_SIGNAL_WARNINGS})
         add_test(NAME deep_signal_survey_program_app_tests COMMAND deep_signal_survey_program_app_tests)
+        add_executable(deep_signal_freight_program_app_tests tests/freight_program_app_tests.cpp)
+        target_link_libraries(deep_signal_freight_program_app_tests PRIVATE deep_signal_app)
+        target_compile_options(deep_signal_freight_program_app_tests PRIVATE ${DEEP_SIGNAL_WARNINGS})
+        add_test(NAME deep_signal_freight_program_app_tests COMMAND deep_signal_freight_program_app_tests)
+        add_executable(deep_signal_freight_save_tests tests/freight_save_tests.cpp)
+        target_link_libraries(deep_signal_freight_save_tests PRIVATE deep_signal_app)
+        target_compile_options(deep_signal_freight_save_tests PRIVATE ${DEEP_SIGNAL_WARNINGS})
+        add_test(NAME deep_signal_freight_save_tests COMMAND deep_signal_freight_save_tests)
 
         add_executable(deep_signal_forecast_tests
             tests/forecast_tests.cpp
@@ -364,6 +400,7 @@ if(DEEP_SIGNAL_BUILD_TESTS)
             src/save/Schema.cpp
             src/save/SaveGameRepository.cpp
             src/save/EventJson.cpp
+            src/save/FreightPersistence.cpp
         )
         target_link_libraries(deep_signal_save_contract_tests PRIVATE deep_signal_sim SQLite::SQLite3)
         target_compile_options(deep_signal_save_contract_tests PRIVATE ${DEEP_SIGNAL_WARNINGS})

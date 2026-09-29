@@ -7,6 +7,7 @@
 #include "sim/Domain.h"
 #include "sim/IdTypes.h"
 #include "sim/SurveyProgram.h"
+#include "sim/FreightProgram.h"
 
 #include <cstdint>
 #include <optional>
@@ -103,6 +104,16 @@ struct AcknowledgeSurveyProgramIssueCommand {
     std::string signature;
 };
 
+// Freight authoring records intent without reserving goods or acquiring assets.
+// An amendment exposes only mutable fields: route and commodity are fixed.
+struct CreateFreightProgramCommand { FreightProgramCharter charter; };
+struct AmendFreightProgramCommand { FreightProgramId programId; FreightProgramAmendment amendment; };
+struct SuspendFreightProgramCommand { FreightProgramId programId; };
+struct ResumeFreightProgramCommand { FreightProgramId programId; };
+// Cancels future pickups while authorizing only the declared cargo settlement.
+struct CancelFreightProgramCommand { FreightProgramId programId; };
+struct AcknowledgeFreightProgramIssueCommand { FreightProgramId programId; std::string signature; };
+
 
 // Assigns or replaces the current person responsible for one appointment slot.
 // The target scope is identified by its scope type and raw typed-ID value so one
@@ -141,6 +152,12 @@ using SimCommand = std::variant<
     ResumeSurveyProgramCommand,
     CancelSurveyProgramCommand,
     AcknowledgeSurveyProgramIssueCommand,
+    CreateFreightProgramCommand,
+    AmendFreightProgramCommand,
+    SuspendFreightProgramCommand,
+    ResumeFreightProgramCommand,
+    CancelFreightProgramCommand,
+    AcknowledgeFreightProgramIssueCommand,
     AssignAppointmentCommand,
     SetColonyProcessingPolicyCommand
 >;

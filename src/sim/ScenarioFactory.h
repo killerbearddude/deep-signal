@@ -19,4 +19,8 @@ namespace deep {
 // nearby public targets. No program is pre-authorized; tests submit commands.
 [[nodiscard]] GameState createDelegatedSurveyScenario();
 
+// Freight proof fixture: two fixed nearby colonies, a real two-bay freighter,
+// source stock and a separate receiving survey fleet/team waiting for supply.
+[[nodiscard]] GameState createDelegatedFreightScenario();
+
 } // namespace deep

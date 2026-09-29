@@ -12,6 +12,7 @@
 #include "sim/ProcessingAllocationRules.h"
 #include "sim/SurveyProgramRules.h"
 #include "sim/SurveyProgramExecution.h"
+#include "sim/FreightProgramRules.h"
 #include "sim/TransitPlanning.h"
 
 #include <algorithm>
@@ -915,6 +916,8 @@ void addProcessingWeight(ProcessingShares& weights, const ProcessedMaterial mate
             return "resource_survey_completed";
         } else if constexpr (std::is_same_v<Event, SurveyProgramAuditEvent>) {
             return "survey_program";
+        } else if constexpr (std::is_same_v<Event, FreightProgramAuditEvent>) {
+            return "freight_program";
         } else if constexpr (std::is_same_v<Event, CommandRejectedEvent>) {
             return "command_rejected";
         }
@@ -957,6 +960,8 @@ void addProcessingWeight(ProcessingShares& weights, const ProcessedMaterial mate
             }
         } else if constexpr (std::is_same_v<Event, SurveyProgramAuditEvent>) {
             out << "Survey program " << idText(event.programId.value) << ": " << event.detail;
+        } else if constexpr (std::is_same_v<Event, FreightProgramAuditEvent>) {
+            out << "Freight program " << idText(event.programId.value) << ": " << event.detail;
         } else if constexpr (std::is_same_v<Event, CommandRejectedEvent>) {
             out << event.reason;
         }
@@ -1164,6 +1169,8 @@ std::vector<ShipComponentSummary> SimulationQueries::shipComponents() const {
             .powerGeneration = component.powerGeneration, .powerDemand = component.powerDemand,
             .propellantCapacity = component.propellantCapacity,
             .surveyCapability = component.surveyCapability,
+            .cargoCapacity = component.cargoCapacity,
+            .cargoHandlingPerDay = component.cargoHandlingPerDay,
             .buildCost = component.buildCost, .buildPoints = component.buildPoints
         });
     }
@@ -1187,8 +1194,7 @@ std::vector<FleetSummary> SimulationQueries::fleets() const {
     summaries.reserve(state.fleets.size());
 
     for (const Fleet& fleet : state.fleets) {
-        const auto controlling = std::find_if(state.surveyPrograms.begin(), state.surveyPrograms.end(),
-            [&fleet](const SurveyProgram& program) { return program.leasedFleetId == fleet.id; });
+        const auto controller = controllingProgram(state, fleet.id);
         const bool hasActiveOrder = fleet.activeOrder.type != FleetOrderType::None;
         const std::int64_t currentDay = state.date.day;
         const int activeOrderEtaDays = hasActiveOrder
@@ -1257,9 +1263,8 @@ std::vector<FleetSummary> SimulationQueries::fleets() const {
             .shipCount = fleet.shipIds.size(),
             .ownerInstitutionId = fleet.ownerInstitutionId,
             .ownerInstitutionName = optionalInstitutionName(state, fleet.ownerInstitutionId),
-            .controllingProgramId = controlling == state.surveyPrograms.end()
-                ? std::optional<SurveyProgramId>{} : std::optional<SurveyProgramId>{controlling->id},
-            .controllingProgramName = controlling == state.surveyPrograms.end() ? std::string{} : controlling->charter.name,
+            .controllingProgram = controller,
+            .controllingProgramLabel = controller ? programControllerLabel(state, *controller) : std::string{},
             .activeOrderType = fleet.activeOrder.type,
             .activeOrderName = fleetOrderName(fleet.activeOrder.type),
             .hasActiveOrder = hasActiveOrder,
@@ -2085,11 +2090,10 @@ SurveyProgramCharterPreview SimulationQueries::previewSurveyProgramCharter(
                     ? "Requested fleet has no onboard propellant and no available home refill"
                     : "Requested fleet has no onboard propellant and additional-fuel authorization is exhausted");
             }
-            const auto owner = std::find_if(state.surveyPrograms.begin(), state.surveyPrograms.end(),
-                [fleet, amendingProgramId](const SurveyProgram& program) {
-                    return program.id != amendingProgramId && program.leasedFleetId == fleet->id;
-                });
-            if (owner != state.surveyPrograms.end()) preview.waitingReasons.push_back("Requested fleet is controlled by another program");
+            const auto owner = controllingProgram(state, fleet->id);
+            if (owner && (!amendingProgramId || *owner != ProgramController{*amendingProgramId})) {
+                preview.waitingReasons.push_back("Requested fleet is controlled by " + programControllerLabel(state, *owner));
+            }
         }
     }
     if (charter.requestedTeamId) {
@@ -2131,6 +2135,203 @@ SurveyProgramCharterPreview SimulationQueries::previewSurveyProgramCharter(
     }
     if (const auto choice = chooseSurveyTarget(planning)) {
         preview.firstTargetChoiceReason = "Priority order if otherwise feasible: " + choice->reason + ".";
+    }
+    return preview;
+}
+
+std::vector<FreightProgramSummary> SimulationQueries::freightPrograms() const {
+    const GameState& state = service_.state();
+    std::vector<FreightProgramSummary> rows;
+    for (const FreightProgram& program : state.freightPrograms) {
+        FreightProgramSummary row;
+        row.id = program.id;
+        row.charter = program.charter;
+        row.charterRevision = program.charterRevision;
+        row.lifecycle = program.lifecycle;
+        row.closure = program.closure;
+        switch (program.lifecycle) {
+        case FreightProgramLifecycle::Authorized: row.lifecycleName = "Authorized"; break;
+        case FreightProgramLifecycle::Suspended: row.lifecycleName = "Suspended"; break;
+        case FreightProgramLifecycle::Closing: row.lifecycleName = "Closing"; break;
+        case FreightProgramLifecycle::Closed: row.lifecycleName = "Closed"; break;
+        }
+        if (program.closure == FreightProgramClosure::Completed) row.lifecycleName += " / Completed";
+        if (program.closure == FreightProgramClosure::Cancelled) row.lifecycleName += " / Cancelled";
+        switch (program.task) {
+        case FreightProgramTask::None: row.taskName = "Planning"; break;
+        case FreightProgramTask::Reposition: row.taskName = "Reposition to source"; break;
+        case FreightProgramTask::Preparing: row.taskName = "Prepare operating fuel"; break;
+        case FreightProgramTask::Loading: row.taskName = "Loading cargo"; break;
+        case FreightProgramTask::Outbound: row.taskName = "Outbound"; break;
+        case FreightProgramTask::Unloading: row.taskName = "Unload at destination"; break;
+        case FreightProgramTask::Return: row.taskName = "Empty return to source"; break;
+        case FreightProgramTask::ReturningCargo: row.taskName = "Return unshipped cargo to source stock"; break;
+        }
+        row.condition = freightProgramExecutionCondition(state, program);
+        row.sourceName = colonyName(state, program.charter.sourceColonyId);
+        row.destinationName = colonyName(state, program.charter.destinationColonyId);
+        row.materialName = std::string{toString(program.charter.material)};
+        row.requestedFleetName = program.charter.requestedFleetId ? fleetName(state, *program.charter.requestedFleetId) : "Unassigned";
+        row.leasedFleetName = program.leasedFleetId ? fleetName(state, *program.leasedFleetId) : "None";
+        row.taskFleetName = program.taskFleetId ? fleetName(state, *program.taskFleetId) : "None";
+        row.leaderName = program.charter.requestedLeaderId ? personName(state, *program.charter.requestedLeaderId) : "Unassigned";
+        row.leasedFleetId = program.leasedFleetId;
+        row.taskFleetId = program.taskFleetId;
+        row.pendingFleetChange = program.taskFleetId && program.taskFleetId != program.charter.requestedFleetId;
+        row.shipment = program.shipment;
+        row.shipmentLeaderName = program.shipment ? personName(state, program.shipment->leaderId) : "None";
+        row.cargoLoaded = program.cargoLoaded;
+        row.cargoDelivered = program.cargoDelivered;
+        row.cargoReturned = program.cargoReturned;
+        row.cargoAboard = freightCargoAboard(state, program.id);
+        row.unpickedQuantity = freightUnpickedQuantity(state, program);
+        row.committedQuantity = row.cargoAboard;
+        if (program.shipment && program.closure != FreightProgramClosure::Cancelled) {
+            row.committedQuantity += std::max(0.0, freightShipmentPlannedQuantity(*program.shipment)
+                - freightShipmentLoadedQuantity(program));
+        }
+        row.commitmentAboveTarget = std::max(0.0, program.cargoDelivered + row.committedQuantity - program.charter.totalQuantity);
+        row.fuelLoaded = program.fuelLoaded;
+        row.fuelBurned = program.fuelBurned;
+        if (program.charter.policy.maxAdditionalPropellant) row.fuelAllowanceRemaining = freightFuelAllowanceRemaining(program);
+        if (program.lifecycle != FreightProgramLifecycle::Closed) row.nextReportDay = program.nextReportDay;
+        row.closedDay = program.closedDay;
+        row.issue = program.issue;
+        // Every unfinished closing disposition retains the same decision surface.
+        row.canAmend = program.lifecycle != FreightProgramLifecycle::Closed;
+        row.canSuspend = row.canAmend && program.lifecycle != FreightProgramLifecycle::Suspended;
+        row.canResume = program.lifecycle == FreightProgramLifecycle::Suspended;
+        row.canCancel = row.canAmend;
+        if (const Colony* source = findById(state.colonies, program.charter.sourceColonyId)) {
+            row.sourceCargoStock = source->processedStockpile.get(program.charter.material);
+            row.sourcePropellantStock = source->processedStockpile.get(ProcessedMaterial::Propellant);
+        }
+        if (const Colony* destination = findById(state.colonies, program.charter.destinationColonyId)) {
+            row.destinationStock = destination->processedStockpile.get(program.charter.material);
+        }
+        const auto fleetId = program.lifecycle == FreightProgramLifecycle::Closed ? std::optional<FleetId>{}
+            : program.taskFleetId ? program.taskFleetId
+            : (program.leasedFleetId ? program.leasedFleetId : program.charter.requestedFleetId);
+        row.locationName = program.lifecycle == FreightProgramLifecycle::Closed ? "No active cargo custody" : "No fleet assigned";
+        if (const Fleet* fleet = fleetId ? findById(state.fleets, *fleetId) : nullptr) {
+            row.locationName = bodyName(state, fleet->currentBodyId);
+            if (fleet->activeOrder.type != FleetOrderType::None) {
+                row.currentLegArrivalDay = fleet->activeOrder.arrivalDay;
+                if (fleet->destinationBodyId) row.routeDestinationName = bodyName(state, *fleet->destinationBodyId);
+            }
+            for (const FreightHullCapability& capability : freightHullCapabilities(state, *fleet)) {
+                const Ship* ship = findById(state.ships, capability.shipId);
+                FreightHullSummary hull;
+                hull.shipId = capability.shipId;
+                hull.shipName = ship ? ship->name : "<unknown ship>";
+                hull.cargoCapacity = capability.capacity;
+                hull.operationalHandlingPerDay = capability.operationalHandlingPerDay;
+                hull.cargoQuantity = capability.onboardQuantity;
+                if (program.shipment) {
+                    for (const FreightManifestRow& manifest : program.shipment->manifest) {
+                        if (manifest.shipId == hull.shipId) hull.plannedQuantity = manifest.plannedQuantity;
+                    }
+                }
+                if (ship && ship->cargo) {
+                    hull.cargoProgramId = ship->cargo->programId;
+                    hull.shipmentNumber = ship->cargo->shipmentNumber;
+                    hull.materialName = std::string{toString(ship->cargo->material)};
+                }
+                row.hulls.push_back(std::move(hull));
+            }
+        }
+        for (const FreightTransferReceipt& receipt : program.receipts) {
+            std::string action;
+            switch (receipt.kind) {
+            case FreightTransferKind::Load: action = "Cargo loaded"; break;
+            case FreightTransferKind::Delivery: action = "Delivered to destination"; break;
+            case FreightTransferKind::SourceReturn: action = "Unshipped cargo returned"; break;
+            case FreightTransferKind::OperatingFuel: action = "Operating fuel loaded"; break;
+            }
+            row.receipts.push_back({receipt, std::move(action), fleetName(state, receipt.fleetId),
+                personName(state, receipt.leaderId), colonyName(state, receipt.colonyId), std::string{toString(receipt.material)}});
+        }
+        for (const FreightProgramReport& report : program.reports) {
+            row.reports.push_back({report, report.fleetId ? fleetName(state, *report.fleetId) : "None",
+                report.fleetBodyId ? bodyName(state, *report.fleetBodyId) : "None"});
+        }
+        rows.push_back(std::move(row));
+    }
+    return rows;
+}
+
+FreightProgramCharterPreview SimulationQueries::previewFreightProgramCharter(
+    const FreightProgramCharter& charter, const std::optional<FreightProgramId> amendingProgramId) const {
+    const GameState& state = service_.state();
+    FreightProgramCharterPreview preview;
+    FreightProgram proposed;
+    if (amendingProgramId) {
+        const FreightProgram* existing = findById(state.freightPrograms, *amendingProgramId);
+        if (!existing || existing->lifecycle == FreightProgramLifecycle::Closed) {
+            preview.validationMessage = "No editable freight program with that identity";
+            return preview;
+        }
+        if (charter.sourceColonyId != existing->charter.sourceColonyId ||
+            charter.destinationColonyId != existing->charter.destinationColonyId || charter.material != existing->charter.material) {
+            preview.validationMessage = "Source, destination and material are fixed contract identity";
+            return preview;
+        }
+        proposed = *existing;
+    }
+    if (const auto error = validateFreightProgramCharter(state, charter, amendingProgramId.has_value())) {
+        preview.validationMessage = *error;
+        return preview;
+    }
+    proposed.charter = charter;
+    preview.structurallyValid = true;
+    preview.validationMessage = "Valid intention. Authorization does not transfer stock or guarantee readiness.";
+    preview.executionCondition = freightProgramExecutionCondition(state, proposed);
+    if (!charter.requestedFleetId) preview.waitingReasons.push_back("No fleet requested");
+    if (!charter.requestedLeaderId) preview.waitingReasons.push_back("No leader requested");
+    const auto fleetId = proposed.taskFleetId ? proposed.taskFleetId : charter.requestedFleetId;
+    if (const Fleet* fleet = fleetId ? findById(state.fleets, *fleetId) : nullptr) {
+        const auto owner = controllingProgram(state, fleet->id);
+        if (owner && (!amendingProgramId || *owner != ProgramController{*amendingProgramId})) {
+            preview.waitingReasons.push_back("Fleet controlled by " + programControllerLabel(state, *owner));
+        }
+        // A draft cannot replace the committed shipment. Its live manifest is
+        // shown unchanged; only a free planning boundary receives new candidate
+        // dates, avoiding a fictitious second departure while already at work.
+        const bool nextOpeningExists = state.date.day < std::numeric_limits<std::int64_t>::max();
+        const FreightShipmentPlan plan = proposed.shipment || !nextOpeningExists ? FreightShipmentPlan{}
+            : planFreightShipment(state, proposed, *fleet, nullptr, state.date.day + 1);
+        if (!nextOpeningExists) preview.waitingReasons.push_back("No representable next opening day");
+        preview.shipmentReady = plan.ready;
+        preview.plannedQuantity = plan.quantity;
+        preview.requiredOperatingFuel = plan.requiredFuel;
+        preview.additionalOperatingFuel = plan.additionalFuel;
+        preview.loadingDays = plan.loadingDays;
+        preview.unloadingDays = plan.unloadingDays;
+        if (plan.ready) {
+            preview.projectedDepartureDay = plan.departureDay;
+            preview.projectedReturnDepartureDay = plan.returnDepartureDay;
+        } else if (!plan.waitingReason.empty()) {
+            preview.waitingReasons.push_back(plan.waitingReason);
+        }
+        for (const FreightHullCapability& capability : freightHullCapabilities(state, *fleet)) {
+            const Ship* ship = findById(state.ships, capability.shipId);
+            FreightHullSummary hull;
+            hull.shipId = capability.shipId;
+            hull.shipName = ship ? ship->name : "<unknown ship>";
+            hull.cargoCapacity = capability.capacity;
+            hull.operationalHandlingPerDay = capability.operationalHandlingPerDay;
+            hull.cargoQuantity = capability.onboardQuantity;
+            const auto& manifestRows = proposed.shipment ? proposed.shipment->manifest : plan.manifest;
+            for (const FreightManifestRow& manifest : manifestRows) {
+                if (manifest.shipId == hull.shipId) hull.plannedQuantity = manifest.plannedQuantity;
+            }
+            if (ship && ship->cargo) {
+                hull.cargoProgramId = ship->cargo->programId;
+                hull.shipmentNumber = ship->cargo->shipmentNumber;
+                hull.materialName = std::string{toString(ship->cargo->material)};
+            }
+            preview.hulls.push_back(std::move(hull));
+        }
     }
     return preview;
 }

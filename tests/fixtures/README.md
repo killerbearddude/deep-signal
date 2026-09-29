@@ -13,7 +13,7 @@ has a ten-point daily pool. `validateGameState()` accepts the state. Schema v10
 has no order ordinal for `shipyard_orders`, so its loader's `ORDER BY id`
 reconstructs **[ID 1, ID 2]**. The original order cannot be recovered from this
 file. Historical H1B tests verified truthful reconstruction at that baseline;
-the current v13 loader rejects this development save without modifying it.
+the current v14 loader rejects this development save without modifying it.
 
 ## Provenance and reproduction
 
@@ -82,6 +82,6 @@ commit's headers saved `createHomeSystemScenario()`, loaded the result through
 the v12 repository, and confirmed day 0 and nine bodies. Python's SQLite
 `iterdump()` produced the checked-in SQL. The generated database reported
 `schema_version = 12` and `PRAGMA integrity_check = ok`. The current contract
-test reconstructs a disposable copy and verifies v13 Load and Save reject the
+test reconstructs a disposable copy and verifies current Load and Save reject the
 old version without modifying it; no migration or default program synthesis
 is implied.

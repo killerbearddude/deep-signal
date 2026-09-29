@@ -2,7 +2,7 @@
 #include "sim/Events.h"
 #include "sim/Minerals.h"
 
-// Direct regression tests for schema v1 event JSON serialization.
+// Direct regression tests for current-schema event JSON serialization.
 // These tests intentionally exercise EventJson without SaveGameRepository so the
 // payload grammar remains protected before any JSON dependency policy changes.
 
@@ -16,6 +16,7 @@
 #include <string>
 #include <string_view>
 #include <type_traits>
+#include <utility>
 #include <variant>
 
 namespace {
@@ -95,6 +96,12 @@ bool samePayload(const deep::SimEventPayload& lhs, const deep::SimEventPayload& 
                    left.charterRevision == right.charterRevision &&
                    left.passNumber == right.passNumber &&
                    almostEqual(left.fuelAmount, right.fuelAmount) && left.detail == right.detail;
+        } else if constexpr (std::is_same_v<Left, deep::FreightProgramAuditEvent>) {
+            return left.programId == right.programId && left.kind == right.kind &&
+                   left.fleetId == right.fleetId && left.colonyId == right.colonyId &&
+                   left.leaderId == right.leaderId && left.charterRevision == right.charterRevision &&
+                   left.shipmentNumber == right.shipmentNumber &&
+                   almostEqual(left.amount, right.amount) && left.detail == right.detail;
         } else if constexpr (std::is_same_v<Left, deep::CommandRejectedEvent>) {
             return left.reason == right.reason;
         }
@@ -238,6 +245,40 @@ void test_command_rejected_round_trips_escaped_reason() {
     }, "command_rejected payload round-trips escaped string content");
 }
 
+void test_freight_program_audit_round_trips_and_rejects_malformed() {
+    // P3B freight IDs have their own payload tag: freight #1 never decodes as
+    // survey #1. All current fields and absent participants survive the boundary.
+    requireRoundTrip(deep::FreightProgramAuditEvent{
+        .programId = deep::FreightProgramId{1}, .kind = deep::FreightProgramAuditKind::Transfer,
+        .fleetId = deep::FleetId{4}, .colonyId = deep::ColonyId{7}, .leaderId = deep::PersonId{3},
+        .charterRevision = 2, .shipmentNumber = 3, .amount = 25.5,
+        .detail = "Unload \"cargo\"\\receipt\nnext"
+    }, "freight audit fields round-trip with their typed program identity");
+    requireRoundTrip(deep::FreightProgramAuditEvent{
+        .programId = deep::FreightProgramId{2}, .kind = deep::FreightProgramAuditKind::Authorized,
+        .detail = "Waiting for named assets"
+    }, "freight audit optional identities round-trip");
+    const std::string valid = R"({"program_id":1,"kind":0,"fleet_id":0,"colony_id":0,"leader_id":0,"charter_revision":1,"shipment_number":0,"amount":0,"detail":"x"})";
+    for (const auto& [before, after] : {
+            std::pair{std::string{"\"kind\":0"}, std::string{"\"kind\":99"}},
+            std::pair{std::string{"\"fleet_id\":0"}, std::string{"\"fleet_id\":-1"}},
+            std::pair{std::string{"\"shipment_number\":0"}, std::string{"\"shipment_number\":0.5"}},
+            std::pair{std::string{"\"amount\":0"}, std::string{"\"amount\":1e9999"}}
+        }) {
+        std::string malformed = valid;
+        malformed.replace(malformed.find(before), before.size(), after);
+        requireThrows("malformed freight audit fields reject", [&malformed] {
+            (void)deep::save::eventPayloadFromJson("freight_program_audit", malformed);
+        });
+    }
+    requireThrows("nonfinite freight transfer cannot be serialized", [] {
+        (void)deep::save::eventPayloadToJson(deep::FreightProgramAuditEvent{
+            .programId = deep::FreightProgramId{1}, .kind = deep::FreightProgramAuditKind::Transfer,
+            .amount = std::numeric_limits<double>::infinity()
+        });
+    });
+}
+
 void test_unknown_event_type_is_rejected() {
     // Unknown persisted event names must fail loudly so schema migrations cannot
     // silently drop newly introduced event payloads.
@@ -358,6 +399,7 @@ void runAllTests() {
     test_fleet_arrived_round_trips();
     test_resource_survey_completed_round_trips();
     test_survey_program_audit_round_trips();
+    test_freight_program_audit_round_trips_and_rejects_malformed();
     test_command_rejected_round_trips_escaped_reason();
     test_unknown_event_type_is_rejected();
     test_missing_required_field_is_rejected();

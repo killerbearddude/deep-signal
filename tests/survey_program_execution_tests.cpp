@@ -290,7 +290,7 @@ void test_fuel_authorization_issue_stops_and_acknowledges_once() {
     const deep::AdvanceResult first = sim.advanceDaysDetailed(30);
     const deep::SurveyProgram& blocked = programById(sim.state(), id);
     require(first.requestedDays == 30 && first.advancedDays == 10 && first.interrupted &&
-                first.issueProgramId == id && sim.state().date.day == 10,
+                first.issueProgramId == deep::ProgramController{id} && sim.state().date.day == 10,
             "bulk advance stops on the first return day where a new refill needs more authorization");
     require(!blocked.issue.signature.empty() && !blocked.issue.acknowledged &&
                 blocked.issue.message.find("authorization") != std::string::npos,

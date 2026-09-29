@@ -167,9 +167,8 @@ void SurveyProgramsPanel::renderEditor(const SimulationQueries& queries, Simulat
                 + std::to_string(static_cast<int>(row.currentFuel)) + "/"
                 + std::to_string(static_cast<int>(row.fuelCapacity)) + ")";
             if (ImGui::Selectable(option.c_str(), draft_.requestedFleetId == row.id)) draft_.requestedFleetId = row.id;
-            if (row.controllingProgramId) {
-                ImGui::SetItemTooltip("Currently controlled by program #%lld: %s",
-                    static_cast<long long>(row.controllingProgramId->value), row.controllingProgramName.c_str());
+            if (row.controllingProgram) {
+                ImGui::SetItemTooltip("Currently controlled by %s", row.controllingProgramLabel.c_str());
             }
         }
         ImGui::EndCombo();

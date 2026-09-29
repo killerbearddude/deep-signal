@@ -8,6 +8,7 @@
 #include "sim/Error.h"
 #include "sim/Events.h"
 #include "sim/GameState.h"
+#include "sim/ProgramControl.h"
 
 #include <vector>
 #include <optional>
@@ -22,7 +23,7 @@ struct AdvanceResult {
     int requestedDays = 0;
     int advancedDays = 0;
     bool interrupted = false;
-    std::optional<SurveyProgramId> issueProgramId = std::nullopt;
+    std::optional<ProgramController> issueProgramId = std::nullopt;
     std::string stopReason{};
     std::vector<SimEvent> events{};
 };
@@ -88,6 +89,12 @@ private:
     CommandResult resumeSurveyProgram(const ResumeSurveyProgramCommand& command);
     CommandResult cancelSurveyProgram(const CancelSurveyProgramCommand& command);
     CommandResult acknowledgeSurveyProgramIssue(const AcknowledgeSurveyProgramIssueCommand& command);
+    CommandResult createFreightProgram(const CreateFreightProgramCommand& command);
+    CommandResult amendFreightProgram(const AmendFreightProgramCommand& command);
+    CommandResult suspendFreightProgram(const SuspendFreightProgramCommand& command);
+    CommandResult resumeFreightProgram(const ResumeFreightProgramCommand& command);
+    CommandResult cancelFreightProgram(const CancelFreightProgramCommand& command);
+    CommandResult acknowledgeFreightProgramIssue(const AcknowledgeFreightProgramIssueCommand& command);
     CommandResult assignAppointment(const AssignAppointmentCommand& command);
     CommandResult setColonyProcessingPolicy(const SetColonyProcessingPolicyCommand& command);
 
@@ -102,9 +109,8 @@ private:
     [[nodiscard]] std::optional<std::string> beginFleetMove(Fleet& fleet, BodyId destination,
                                                               double& chargedFuel,
                                                               std::vector<SimEvent>* emitted);
-    bool startProgramMove(SurveyProgramId programId, FleetId fleetId, BodyId destination,
+    bool startProgramMove(ProgramController programId, FleetId fleetId, BodyId destination,
                           double& chargedFuel, std::vector<SimEvent>& emitted);
-    [[nodiscard]] std::optional<SurveyProgramId> controllingSurveyProgram(FleetId fleetId) const noexcept;
 
     void simulateOneDay(std::vector<SimEvent>& emitted);
     void simulateMining(std::vector<SimEvent>& emitted);

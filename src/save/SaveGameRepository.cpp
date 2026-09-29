@@ -1,6 +1,6 @@
 #include "save/SaveGameRepository.h"
 
-// Responsibility: map durable simulation records to active v13 rows.
+// Responsibility: map durable simulation records to active v14 rows.
 // Older development schemas are rejected without modifying their files.
 // Each operation owns its connection and reconstructed data; the input snapshot
 // is borrowed unchanged during save. Parameter binding separates values from SQL.
@@ -9,6 +9,7 @@
 
 #include "save/Database.h"
 #include "save/EventJson.h"
+#include "save/FreightPersistence.h"
 #include "save/Schema.h"
 #include "sim/Minerals.h"
 #include "sim/GameStateValidation.h"
@@ -73,7 +74,7 @@ template <typename EnumT>
     } else if constexpr (std::is_same_v<EnumT, ShipRole>) {
         return value >= 0 && value <= static_cast<std::int64_t>(ShipRole::Escort);
     } else if constexpr (std::is_same_v<EnumT, ShipComponentKind>) {
-        return value >= 0 && value <= static_cast<std::int64_t>(ShipComponentKind::Utility);
+        return value >= 0 && value <= static_cast<std::int64_t>(ShipComponentKind::CargoBay);
     } else if constexpr (std::is_same_v<EnumT, ProcessingPolicy>) {
         return value >= 0 && value <= static_cast<std::int64_t>(ProcessingPolicy::Manual);
     } else if constexpr (std::is_same_v<EnumT, ShipyardOrderStatus>) {
@@ -213,10 +214,16 @@ void reuse(Statement& stmt) {
 }
 
 void clearExistingSave(Database& db) {
-    // Delete child tables first because v13 retains explicit foreign keys
+    // Delete child tables first because v14 retains explicit foreign keys
     // without ON DELETE CASCADE. This all runs inside the write transaction.
     db.execute(R"sql(
         DELETE FROM event_log;
+        DELETE FROM ship_cargo;
+        DELETE FROM freight_program_reports;
+        DELETE FROM freight_transfer_receipts;
+        DELETE FROM freight_shipment_manifest;
+        DELETE FROM freight_shipments;
+        DELETE FROM freight_programs;
         DELETE FROM survey_program_reports;
         DELETE FROM survey_program_receipts;
         DELETE FROM survey_program_targets;
@@ -285,6 +292,7 @@ void saveIdCounters(Database& db, const IdCounters& ids) {
     insertCounter("next_event_id", ids.nextEventId);
     insertCounter("next_survey_program_id", ids.nextSurveyProgramId);
     insertCounter("next_survey_team_id", ids.nextSurveyTeamId);
+    insertCounter("next_freight_program_id", ids.nextFreightProgramId);
 }
 
 void saveStarSystems(Database& db, const GameState& state) {
@@ -468,8 +476,9 @@ void saveShipComponents(Database& db, const GameState& state) {
     Statement component{db, R"sql(
         INSERT INTO ship_components(id, ordinal, name, kind, mass, volume,
             internal_volume_capacity, power_generation, power_demand,
-            propellant_capacity, survey_capability, build_points)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+            propellant_capacity, survey_capability, build_points,
+            cargo_capacity, cargo_handling_per_day)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
     )sql"};
     Statement cost{db, "INSERT INTO ship_component_material_costs(component_id, material, amount) VALUES (?, ?, ?);"};
     for (std::size_t ordinal = 0; ordinal < state.shipComponents.size(); ++ordinal) {
@@ -486,6 +495,8 @@ void saveShipComponents(Database& db, const GameState& state) {
         component.bindDouble(10, row.propellantCapacity);
         component.bindDouble(11, row.surveyCapability);
         component.bindDouble(12, row.buildPoints);
+        component.bindDouble(13, row.cargoCapacity);
+        component.bindDouble(14, row.cargoHandlingPerDay);
         component.execute();
         reuse(component);
         for (std::size_t material = 0; material < processedMaterialCount(); ++material) {
@@ -865,6 +876,7 @@ void loadIdCounters(Database& db, IdCounters& ids) {
     ids.nextEventId = loadCounter(db, "next_event_id");
     ids.nextSurveyProgramId = loadCounter(db, "next_survey_program_id");
     ids.nextSurveyTeamId = loadCounter(db, "next_survey_team_id");
+    ids.nextFreightProgramId = loadCounter(db, "next_freight_program_id");
 }
 
 void loadStarSystems(Database& db, GameState& state) {
@@ -1032,7 +1044,7 @@ void loadColonies(Database& db, GameState& state) {
     for (const Colony& colony : state.colonies) {
         if (mineralRows[colony.id.value] != mineralCount() ||
             materialRows[colony.id.value] != processedMaterialCount()) {
-            throw std::runtime_error{"v13 colony resource rows must be complete"};
+            throw std::runtime_error{"v14 colony resource rows must be complete"};
         }
     }
 
@@ -1080,7 +1092,7 @@ void loadShipComponentsAndClasses(Database& db, GameState& state) {
     Statement components{db, R"sql(
         SELECT id, name, kind, mass, volume, internal_volume_capacity,
                power_generation, power_demand, propellant_capacity,
-               survey_capability, build_points, ordinal
+               survey_capability, build_points, ordinal, cargo_capacity, cargo_handling_per_day
         FROM ship_components ORDER BY ordinal;
     )sql"};
     std::int64_t nextOrdinal = 0;
@@ -1093,6 +1105,8 @@ void loadShipComponentsAndClasses(Database& db, GameState& state) {
             .internalVolumeCapacity = components.columnDouble(5),
             .powerGeneration = components.columnDouble(6), .powerDemand = components.columnDouble(7),
             .propellantCapacity = components.columnDouble(8), .surveyCapability = components.columnDouble(9),
+            .cargoCapacity = components.columnDoubleStrict(12),
+            .cargoHandlingPerDay = components.columnDoubleStrict(13),
             .buildCost = ProcessedMaterialSet{}, .buildPoints = components.columnDouble(10)
         });
     }
@@ -1107,7 +1121,7 @@ void loadShipComponentsAndClasses(Database& db, GameState& state) {
     }
     for (const ShipComponentDefinition& row : state.shipComponents) {
         if (costRows[row.id.value] != processedMaterialCount()) {
-            throw std::runtime_error{"v13 component cost rows must be complete"};
+            throw std::runtime_error{"v14 component cost rows must be complete"};
         }
     }
     Statement classes{db, R"sql(
@@ -1465,6 +1479,7 @@ void loadEvents(Database& db, GameState& state) {
     loadShips(db, state);
     loadSurveyTeams(db, state);
     loadSurveyPrograms(db, state);
+    loadFreightState(db, state);
     loadAppointments(db, state);
     loadEvents(db, state);
 
@@ -1492,12 +1507,12 @@ void SaveGameRepository::save(const std::filesystem::path& path, const GameState
     if (hasUserSchema(db)) {
         const std::int64_t version = readSchemaVersion(db);
         if (version != kSchemaVersion) throw std::runtime_error{"Unsupported save schema version"};
-        requireV13Structure(db);
+        requireV14Structure(db);
         (void)readSnapshot(db);
     } else {
         // DDL and rows share this transaction. A failed new-path save may
         // leave an empty file, but not a partially initialized schema.
-        createSchemaV13(db);
+        createSchemaV14(db);
     }
     clearExistingSave(db);
     saveSchemaVersion(db);
@@ -1523,6 +1538,7 @@ void SaveGameRepository::save(const std::filesystem::path& path, const GameState
     saveShips(db, state);
     saveSurveyTeams(db, state);
     saveSurveyPrograms(db, state);
+    saveFreightState(db, state);
     saveEvents(db, state);
     // Re-read on this connection before commit. This catches incomplete rows,
     // ordinal gaps, and foreign-key problems while rollback can still restore
@@ -1544,7 +1560,7 @@ GameState SaveGameRepository::load(const std::filesystem::path& path) {
     Transaction transaction{db, Transaction::Mode::Read};
     const std::int64_t version = readSchemaVersion(db);
     if (version != kSchemaVersion) throw std::runtime_error{"Unsupported save schema version"};
-    requireV13Structure(db, true);
+    requireV14Structure(db, true);
     GameState state = readSnapshot(db);
 
     transaction.commit();

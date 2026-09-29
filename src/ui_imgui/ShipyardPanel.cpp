@@ -233,6 +233,8 @@ void ShipyardPanel::renderDesignEditor(const SimulationQueries& queries, Simulat
             catalog[i].mass, catalog[i].volume, catalog[i].internalVolumeCapacity,
             catalog[i].powerGeneration, catalog[i].powerDemand,
             catalog[i].propellantCapacity, catalog[i].surveyCapability, catalog[i].buildPoints);
+        ImGui::TextDisabled("Cargo %.1f normalized units | Handling %.1f units/day when powered",
+            catalog[i].cargoCapacity, catalog[i].cargoHandlingPerDay);
         std::ostringstream componentCost;
         for (std::size_t material = 0; material < processedMaterialCount(); ++material) {
             if (catalog[i].buildCost.amount[material] > 0.0) {
@@ -257,6 +259,9 @@ void ShipyardPanel::renderDesignEditor(const SimulationQueries& queries, Simulat
                 design.powerGeneration, design.powerDemand, design.powerMargin);
     ImGui::Text("Tankage %.1f | Survey %.1f | Build points %.1f",
                 design.propellantCapacity, design.surveyCapability, design.buildPoints);
+    ImGui::Text("Cargo %.1f normalized units | Installed handling %.1f units/day",
+                design.cargoCapacity, design.cargoHandlingPerDay);
+    ImGui::TextWrapped("Each hull requires enough total power to operate its handling equipment. Cargo remains separate from engine tanks; payload does not yet change prototype transit time or fuel cost.");
     ImGui::Text("Constructible: %s", design.constructible ? "Yes" : "No");
     for (std::size_t i = 0; i < processedMaterialCount(); ++i) {
         if (design.buildCost.amount[i] > 0.0) {

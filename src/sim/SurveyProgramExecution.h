@@ -6,6 +6,7 @@
 
 #include "sim/Events.h"
 #include "sim/GameState.h"
+#include "sim/ProgramControl.h"
 
 #include <functional>
 #include <optional>
@@ -22,6 +23,10 @@ struct SurveyProgramExecutionHooks {
     // Appends a dated audit event through Simulation, including the returned
     // event vector for the current advance. The runner does not allocate IDs.
     std::function<void(EventSeverity, SimEventPayload)> emit;
+
+    // Non-owning phase budget supplied by Simulation; null only for read-only
+    // helpers and legacy survey-only callers outside the mixed dispatcher.
+    OpeningProgramContext* opening = nullptr;
 };
 
 // Releases a stationary program lease without moving its fleet or team. A
@@ -44,6 +49,12 @@ void acknowledgeKnownSurveyProgramLimitAtDecision(GameState& state, SurveyProgra
 // At most one transfer, departure, or qualifying survey workday is performed
 // per controlled fleet; acquisition and bookkeeping do not add another action.
 void runSurveyProgramsOpeningDay(GameState& state, const SurveyProgramExecutionHooks& hooks);
+
+// Runs one stored survey head inside the shared mixed pass, retaining occupied
+// assets for the whole phase even when this program releases its lease.
+void runSurveyProgramOpeningDay(GameState& state, SurveyProgram& program,
+                                OpeningProgramContext& opening,
+                                const SurveyProgramExecutionHooks& hooks);
 
 // Called after movement for arrival observations, safe lease release, issue
 // detection, and due 30/90-day reports. It never dispatches physical work.

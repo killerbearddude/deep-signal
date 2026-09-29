@@ -3,14 +3,16 @@
 #include "sim/Minerals.h"
 #include "sim/ScenarioFactory.h"
 #include "sim/Simulation.h"
+#include "save/SaveGameRepository.h"
 
 // CLI smoke runner for the headless simulation.
 // This executable is a developer-facing verification tool, not the final UI. It
 // exercises build, advance-time, fleet movement, and event printing paths.
-// Owns a local Simulation directly; it does not exercise app-service or SQLite
-// workflows and does not write save files.
+// The explicit --write-freight-fixture option exports the dedicated P3B scenario
+// as a current-format save for inspecting the same physical loop in the UI.
 
 #include <iostream>
+#include <stdexcept>
 #include <string_view>
 #include <variant>
 #include <vector>
@@ -64,6 +66,13 @@ struct EventPrinter {
                   << ": " << event.detail << '\n';
     }
 
+    void operator()(const deep::FreightProgramAuditEvent& event) const {
+        std::cout << "  Freight program " << event.programId.value
+                  << " shipment=" << event.shipmentNumber
+                  << " audit=" << static_cast<int>(event.kind)
+                  << " amount=" << event.amount << ": " << event.detail << '\n';
+    }
+
     void operator()(const deep::CommandRejectedEvent& event) const {
         std::cout << "  Command rejected: " << event.reason << '\n';
     }
@@ -78,12 +87,57 @@ void printEvents(const std::vector<deep::SimEvent>& events) {
     }
 }
 
+// All CLI time requests report actual elapsed days and typed issue ownership,
+// using the same interruption-aware runner as service and UI callers.
+void printAdvance(const deep::Simulation& sim, const deep::AdvanceResult& result) {
+    printEvents(result.events);
+    std::cout << "Advanced " << result.advancedDays << " of " << result.requestedDays << " days\n";
+    if (result.interrupted) {
+        if (result.issueProgramId) std::cout << deep::programControllerLabel(sim.state(), *result.issueProgramId) << ": ";
+        std::cout << result.stopReason << '\n';
+    }
+}
+
 } // namespace
 
 // Runs the deterministic smoke scenario. Rejected commands and a missing built
 // fleet return non-zero; the final location is printed but not asserted. Use the
 // regression tests for arrival correctness; exit zero alone does not prove arrival.
-int main() {
+int main(int argc, char** argv) {
+    if (argc == 3 && std::string_view{argv[1]} == "--write-freight-fixture") {
+        try {
+            deep::Simulation fixture{deep::createDelegatedFreightScenario()};
+            const auto& state = fixture.state();
+            deep::SurveyProgramCharter survey;
+            survey.name = "Receiving survey awaiting supplied Propellant";
+            survey.homeColonyId = state.colonies.back().id;
+            survey.requestedFleetId = state.fleets.front().id;
+            survey.requestedTeamId = state.surveyTeams.front().id;
+            survey.requestedLeaderId = state.people.front().id;
+            survey.targets = {{state.bodies.back().id, 0, 2}};
+            deep::FreightProgramCharter freight;
+            freight.name = "Deliver 500 Propellant to receiving survey base";
+            freight.sourceColonyId = state.colonies.at(state.colonies.size()-2).id;
+            freight.destinationColonyId = state.colonies.back().id;
+            freight.material = deep::ProcessedMaterial::Propellant;
+            freight.totalQuantity = 500.0;
+            freight.requestedFleetId = state.fleets.back().id;
+            freight.requestedLeaderId = state.people.front().id;
+            if (!fixture.execute(deep::CreateSurveyProgramCommand{survey}).ok ||
+                !fixture.execute(deep::CreateFreightProgramCommand{freight}).ok) {
+                throw std::runtime_error("Freight inspection fixture authorization failed");
+            }
+            deep::save::SaveGameRepository::save(argv[2], fixture.state());
+            std::cout << "Wrote current-schema freight inspection fixture: " << argv[2] << '\n';
+            return 0;
+        } catch (const std::exception& error) {
+            std::cerr << "Fixture export failed: " << error.what() << '\n'; return 1;
+        }
+    }
+    if (argc != 1) {
+        std::cerr << "Usage: deep_signal_cli [--write-freight-fixture PATH]\n";
+        return 1;
+    }
     deep::Simulation sim{deep::createHomeSystemScenario()};
 
     const deep::ColonyId colonyId = sim.state().colonies.front().id;
@@ -100,8 +154,7 @@ int main() {
         return 1;
     }
 
-    std::vector<deep::SimEvent> events = sim.advanceDays(5);
-    printEvents(events);
+    printAdvance(sim, sim.advanceDaysDetailed(5));
 
     if (sim.state().fleets.empty()) {
         std::cerr << "Expected shipyard to create one fleet after five days.\n";
@@ -123,8 +176,7 @@ int main() {
         return 1;
     }
 
-    events = sim.advanceDays(5);
-    printEvents(events);
+    printAdvance(sim, sim.advanceDaysDetailed(5));
 
     std::cout << "\nDeep Signal smoke run complete\n";
     std::cout << "Day: " << sim.state().date.day << '\n';

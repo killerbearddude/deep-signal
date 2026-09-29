@@ -128,13 +128,15 @@ struct CandidateBudget {
 [[nodiscard]] std::vector<CandidateBudget> candidateBudgets(const GameState& state,
                                                               const SurveyProgram& program,
                                                               const Fleet& fleet,
-                                                              const Colony& home) {
+                                                              const Colony& home,
+                                                              const OpeningProgramContext* opening = nullptr) {
     std::vector<CandidateBudget> result;
     result.reserve(program.charter.targets.size());
     const double onBoard = fleetFuel(state, fleet);
     const double tankRoom = missingTankCapacity(state, fleet);
     const double authorized = authorizationRemaining(program);
-    const double fromStock = homeStockAvailable(home, program);
+    const double fromStock = opening == nullptr ? homeStockAvailable(home, program)
+        : opening->available(state, home.id, ProcessedMaterial::Propellant, program.charter.policy.homeStockFloor);
     const bool canProjectTomorrow = state.date.day < std::numeric_limits<std::int64_t>::max();
     for (std::size_t i = 0; i < program.charter.targets.size(); ++i) {
         const SurveyProgramTarget& target = program.charter.targets[i];
@@ -308,6 +310,8 @@ void releaseLease(GameState& state, SurveyProgram& program, const SurveyProgramE
     if (!stationary(fleet) || fleet.currentBodyId != home.bodyId || requested <= kFuelEpsilon) return 0.0;
     double remaining = std::min({requested, homeStockAvailable(home, program),
                                  authorizationRemaining(program), missingTankCapacity(state, fleet)});
+    if (hooks.opening != nullptr) remaining = std::min(remaining, hooks.opening->available(
+        state, home.id, ProcessedMaterial::Propellant, program.charter.policy.homeStockFloor));
     if (remaining <= kFuelEpsilon) return 0.0;
     double transferred = 0.0;
     for (const ShipId id : fleet.shipIds) {
@@ -326,6 +330,7 @@ void releaseLease(GameState& state, SurveyProgram& program, const SurveyProgramE
     if (transferred <= kFuelEpsilon) return 0.0;
     home.processedStockpile.set(ProcessedMaterial::Propellant,
                                 home.processedStockpile.get(ProcessedMaterial::Propellant) - transferred);
+    if (hooks.opening != nullptr) hooks.opening->debit(home.id, ProcessedMaterial::Propellant, transferred);
     program.fuelLoaded += transferred;
     std::ostringstream detail;
     detail << "Loaded " << transferred << " propellant at authorized home support";
@@ -547,7 +552,7 @@ void runAuthorizedProgram(GameState& state, SurveyProgram& program,
         return;
     }
     if (!program.charter.requestedLeaderId.has_value()) return;
-    const auto candidates = candidateBudgets(state, program, *fleet, *home);
+    const auto candidates = candidateBudgets(state, program, *fleet, *home, hooks.opening);
     const SurveyPlanningApproach approach = approachFor(state, program);
     std::optional<SurveyTargetChoice> choice = chooseFrom(candidates, approach, CandidateAvailability::Current);
     if (!choice.has_value()) choice = chooseFrom(candidates, approach, CandidateAvailability::AuthorizedFuture);
@@ -838,28 +843,30 @@ void runSurveyProgramsOpeningDay(GameState& state, const SurveyProgramExecutionH
     // Existing leases occupy their resources for this entire phase, even if a
     // program releases at its opening boundary. Program vector order grants
     // the first eligible claimant a newly available fleet and team.
-    Occupied occupiedFleets;
-    Occupied occupiedTeams;
-    for (const SurveyProgram& program : state.surveyPrograms) {
-        if (program.leasedFleetId.has_value()) occupiedFleets.insert(program.leasedFleetId->value);
-        if (program.leasedTeamId.has_value()) occupiedTeams.insert(program.leasedTeamId->value);
-    }
+    OpeningProgramContext opening(state);
+    SurveyProgramExecutionHooks boundedHooks = hooks;
+    boundedHooks.opening = &opening;
     for (SurveyProgram& program : state.surveyPrograms) {
-        if (program.lifecycle == SurveyProgramLifecycle::Closed) continue;
-        if (program.lifecycle == SurveyProgramLifecycle::Suspended ||
-            (program.lifecycle == SurveyProgramLifecycle::Closing &&
-             program.closure == SurveyProgramClosure::Cancelled)) {
-            if (program.leasedFleetId.has_value()) {
-                releaseLease(state, program, hooks);
-            } else if (program.lifecycle == SurveyProgramLifecycle::Closing) {
-                program.lifecycle = SurveyProgramLifecycle::Closed;
-                audit(state, program, SurveyProgramAuditKind::Closed, hooks,
-                      "Survey charter cancelled after safe stop");
-            }
-            continue;
-        }
-        runAuthorizedProgram(state, program, hooks, occupiedFleets, occupiedTeams);
+        runSurveyProgramOpeningDay(state, program, opening, boundedHooks);
     }
+}
+
+void runSurveyProgramOpeningDay(GameState& state, SurveyProgram& program,
+                                OpeningProgramContext& opening, const SurveyProgramExecutionHooks& hooks) {
+    if (program.lifecycle == SurveyProgramLifecycle::Closed) return;
+    if (program.lifecycle == SurveyProgramLifecycle::Suspended ||
+        (program.lifecycle == SurveyProgramLifecycle::Closing &&
+         program.closure == SurveyProgramClosure::Cancelled)) {
+        if (program.leasedFleetId.has_value()) {
+            releaseLease(state, program, hooks);
+        } else if (program.lifecycle == SurveyProgramLifecycle::Closing) {
+            program.lifecycle = SurveyProgramLifecycle::Closed;
+            audit(state, program, SurveyProgramAuditKind::Closed, hooks,
+                  "Survey charter cancelled after safe stop");
+        }
+        return;
+    }
+    runAuthorizedProgram(state, program, hooks, opening.occupiedFleets, opening.occupiedTeams);
 }
 
 void finishSurveyProgramsDay(GameState& state, const SurveyProgramExecutionHooks& hooks) {

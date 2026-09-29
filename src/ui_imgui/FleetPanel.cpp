@@ -124,9 +124,8 @@ void FleetPanel::render(const SimulationQueries& queries, InformationInteraction
             ImGui::TableSetColumnIndex(12);
             ImGui::Text("%d", fleet.totalRouteDurationDays);
             ImGui::TableSetColumnIndex(13);
-            if (fleet.controllingProgramId) {
-                ImGui::Text("%s (#%lld)", fleet.controllingProgramName.c_str(),
-                    static_cast<long long>(fleet.controllingProgramId->value));
+            if (fleet.controllingProgram) {
+                ImGui::TextUnformatted(fleet.controllingProgramLabel.c_str());
             } else {
                 ImGui::TextUnformatted("-");
             }

@@ -94,7 +94,7 @@ void programQueriesAndBoundaries() {
             "direct service advance shares the interruption boundary");
     const auto partial = blocked.advanceDaysDetailed(90);
     require(partial.interrupted && partial.advancedDays == 0 &&
-            partial.issueProgramId == blocked.state().surveyPrograms.front().id,
+            partial.issueProgramId == deep::ProgramController{blocked.state().surveyPrograms.front().id},
             "service exposes actual elapsed days and controlling issue");
     const auto commandResult = blocked.execute(deep::AdvanceDaysCommand{.days = 30});
     require(commandResult.ok && commandResult.message.find("Advanced 0 day(s); stopped") != std::string::npos,

@@ -4,6 +4,8 @@
 #include "sim/ShipDesignRules.h"
 #include "sim/SurveyProgramRules.h"
 #include "sim/SurveyProgramExecution.h"
+#include "sim/FreightProgramExecution.h"
+#include "sim/FreightProgramRules.h"
 #include "sim/TransitPlanning.h"
 
 // Implements deterministic daily simulation rules and command validation.
@@ -450,6 +452,18 @@ CommandResult Simulation::execute(const SimCommand& command) {
             return cancelSurveyProgram(concreteCommand);
         } else if constexpr (std::is_same_v<Command, AcknowledgeSurveyProgramIssueCommand>) {
             return acknowledgeSurveyProgramIssue(concreteCommand);
+        } else if constexpr (std::is_same_v<Command, CreateFreightProgramCommand>) {
+            return createFreightProgram(concreteCommand);
+        } else if constexpr (std::is_same_v<Command, AmendFreightProgramCommand>) {
+            return amendFreightProgram(concreteCommand);
+        } else if constexpr (std::is_same_v<Command, SuspendFreightProgramCommand>) {
+            return suspendFreightProgram(concreteCommand);
+        } else if constexpr (std::is_same_v<Command, ResumeFreightProgramCommand>) {
+            return resumeFreightProgram(concreteCommand);
+        } else if constexpr (std::is_same_v<Command, CancelFreightProgramCommand>) {
+            return cancelFreightProgram(concreteCommand);
+        } else if constexpr (std::is_same_v<Command, AcknowledgeFreightProgramIssueCommand>) {
+            return acknowledgeFreightProgramIssue(concreteCommand);
         } else if constexpr (std::is_same_v<Command, AssignAppointmentCommand>) {
             return assignAppointment(concreteCommand);
         } else if constexpr (std::is_same_v<Command, SetColonyProcessingPolicyCommand>) {
@@ -472,12 +486,10 @@ AdvanceResult Simulation::advanceDaysDetailed(const int days) {
     }
 
     for (int i = 0; i < days; ++i) {
-        const auto pending = std::find_if(state_.surveyPrograms.begin(), state_.surveyPrograms.end(),
-            [](const SurveyProgram& row) { return !row.issue.signature.empty() && !row.issue.acknowledged; });
-        if (pending != state_.surveyPrograms.end()) {
+        if (const auto pending = pendingProgramIssue(state_)) {
             result.interrupted = true;
-            result.issueProgramId = pending->id;
-            result.stopReason = pending->issue.message;
+            result.issueProgramId = pending->controller;
+            result.stopReason = pending->message;
             break;
         }
         if (state_.date.day == std::numeric_limits<std::int64_t>::max()) {
@@ -485,14 +497,25 @@ AdvanceResult Simulation::advanceDaysDetailed(const int days) {
             result.stopReason = "Simulation date limit reached";
             break;
         }
+        const auto nextDay = state_.date.day + 1;
+        // A due report also needs its next durable cursor. Stop before any
+        // physical phase if that date cannot be represented; otherwise a late
+        // report exception would leave a partly advanced, unsaveable world.
+        if (nextDay > std::numeric_limits<std::int64_t>::max() - 30 &&
+            (std::any_of(state_.surveyPrograms.begin(), state_.surveyPrograms.end(),
+                [=](const auto& p) { return p.nextReportDay == nextDay; }) ||
+             std::any_of(state_.freightPrograms.begin(), state_.freightPrograms.end(),
+                [=](const auto& p) { return p.lifecycle != FreightProgramLifecycle::Closed && p.nextReportDay == nextDay; }))) {
+            result.interrupted = true;
+            result.stopReason = "Program reporting date limit reached";
+            break;
+        }
         simulateOneDay(result.events);
         ++result.advancedDays;
-        const auto raised = std::find_if(state_.surveyPrograms.begin(), state_.surveyPrograms.end(),
-            [](const SurveyProgram& row) { return !row.issue.signature.empty() && !row.issue.acknowledged; });
-        if (raised != state_.surveyPrograms.end()) {
+        if (const auto raised = pendingProgramIssue(state_)) {
             result.interrupted = true;
-            result.issueProgramId = raised->id;
-            result.stopReason = raised->issue.message;
+            result.issueProgramId = raised->controller;
+            result.stopReason = raised->message;
             break;
         }
     }
@@ -576,13 +599,6 @@ CommandResult Simulation::createShipClassRevision(const CreateShipClassRevisionC
     return CommandResult::success("Ship class revision created");
 }
 
-std::optional<SurveyProgramId> Simulation::controllingSurveyProgram(const FleetId fleetId) const noexcept {
-    for (const SurveyProgram& program : state_.surveyPrograms) {
-        if (program.leasedFleetId == fleetId) return program.id;
-    }
-    return std::nullopt;
-}
-
 std::optional<std::string> Simulation::beginFleetMove(Fleet& fleet, const BodyId destination,
                                                        double& chargedFuel, std::vector<SimEvent>* emitted) {
     chargedFuel = 0.0;
@@ -613,10 +629,10 @@ std::optional<std::string> Simulation::beginFleetMove(Fleet& fleet, const BodyId
     return std::nullopt;
 }
 
-bool Simulation::startProgramMove(const SurveyProgramId programId, const FleetId fleetId,
+bool Simulation::startProgramMove(const ProgramController programId, const FleetId fleetId,
                                   const BodyId destination, double& chargedFuel,
                                   std::vector<SimEvent>& emitted) {
-    if (controllingSurveyProgram(fleetId) != programId) return false;
+    if (controllingProgram(state_, fleetId) != programId) return false;
     Fleet* fleet = findFleet(fleetId);
     if (fleet == nullptr || !fleet->queuedOrders.empty()) return false;
     return !beginFleetMove(*fleet, destination, chargedFuel, &emitted).has_value();
@@ -628,8 +644,8 @@ CommandResult Simulation::moveFleet(const MoveFleetCommand& command) {
         appendEvent(EventSeverity::Warning, CommandRejectedEvent{"Fleet does not exist"});
         return CommandResult::failure("Fleet does not exist");
     }
-    if (const auto owner = controllingSurveyProgram(fleet->id)) {
-        const std::string reason = "Fleet is controlled by survey program " + std::to_string(owner->value);
+    if (const auto owner = controllingProgram(state_, fleet->id)) {
+        const std::string reason = "Fleet is controlled by " + programControllerLabel(state_, *owner);
         appendEvent(EventSeverity::Warning, CommandRejectedEvent{reason});
         return CommandResult::failure(reason);
     }
@@ -648,8 +664,8 @@ CommandResult Simulation::queueFleetMoveOrder(const QueueFleetMoveOrderCommand& 
         return CommandResult::failure("Fleet does not exist");
     }
 
-    if (const auto owner = controllingSurveyProgram(fleet->id)) {
-        const std::string reason = "Fleet is controlled by survey program " + std::to_string(owner->value);
+    if (const auto owner = controllingProgram(state_, fleet->id)) {
+        const std::string reason = "Fleet is controlled by " + programControllerLabel(state_, *owner);
         appendEvent(EventSeverity::Warning, CommandRejectedEvent{reason});
         return CommandResult::failure(reason);
     }
@@ -693,8 +709,8 @@ CommandResult Simulation::clearFleetOrderQueue(const ClearFleetOrderQueueCommand
         return CommandResult::failure("Fleet does not exist");
     }
 
-    if (const auto owner = controllingSurveyProgram(fleet->id)) {
-        const std::string reason = "Fleet is controlled by survey program " + std::to_string(owner->value);
+    if (const auto owner = controllingProgram(state_, fleet->id)) {
+        const std::string reason = "Fleet is controlled by " + programControllerLabel(state_, *owner);
         appendEvent(EventSeverity::Warning, CommandRejectedEvent{reason});
         return CommandResult::failure(reason);
     }
@@ -710,8 +726,8 @@ CommandResult Simulation::cancelFleetOrder(const CancelFleetOrderCommand& comman
         return CommandResult::failure("Fleet does not exist");
     }
 
-    if (const auto owner = controllingSurveyProgram(fleet->id)) {
-        const std::string reason = "Fleet is controlled by survey program " + std::to_string(owner->value);
+    if (const auto owner = controllingProgram(state_, fleet->id)) {
+        const std::string reason = "Fleet is controlled by " + programControllerLabel(state_, *owner);
         appendEvent(EventSeverity::Warning, CommandRejectedEvent{reason});
         return CommandResult::failure(reason);
     }
@@ -740,8 +756,8 @@ CommandResult Simulation::resourceSurvey(const ResourceSurveyCommand& command) {
         return CommandResult::failure("Fleet does not exist");
     }
 
-    if (const auto owner = controllingSurveyProgram(fleet->id)) {
-        const std::string reason = "Fleet is controlled by survey program " + std::to_string(owner->value);
+    if (const auto owner = controllingProgram(state_, fleet->id)) {
+        const std::string reason = "Fleet is controlled by " + programControllerLabel(state_, *owner);
         appendEvent(EventSeverity::Warning, CommandRejectedEvent{reason});
         return CommandResult::failure(reason);
     }
@@ -924,6 +940,133 @@ CommandResult Simulation::acknowledgeSurveyProgramIssue(const AcknowledgeSurveyP
         .charterRevision = program->charterRevision, .detail = command.signature
     });
     return CommandResult::success("Issue acknowledged; program keeps current limits");
+}
+
+CommandResult Simulation::createFreightProgram(const CreateFreightProgramCommand& command) {
+    const auto reject = [this](const std::string& reason) {
+        appendEvent(EventSeverity::Warning, CommandRejectedEvent{reason});
+        return CommandResult::failure(reason);
+    };
+    if (const auto reason = validateFreightProgramCharter(state_, command.charter)) return reject(*reason);
+    if (state_.ids.nextFreightProgramId == std::numeric_limits<std::int64_t>::max()) return reject("Freight program ID limit reached");
+    FreightProgram prepared;
+    prepared.id = FreightProgramId{state_.ids.nextFreightProgramId};
+    prepared.charter = command.charter;
+    prepared.createdDay = state_.date.day;
+    prepared.reportStartDay = state_.date.day;
+    try { prepared.nextReportDay = nextGlobalSurveyBoundary(state_.date.day, 30); }
+    catch (const std::exception&) { return reject("Freight reporting date limit reached"); }
+    acknowledgeKnownFreightLimitAtDecision(state_, prepared);
+    state_.freightPrograms.push_back(std::move(prepared));
+    ++state_.ids.nextFreightProgramId;
+    const auto& program = state_.freightPrograms.back();
+    appendEvent(EventSeverity::Info, FreightProgramAuditEvent{
+        .programId = program.id, .kind = FreightProgramAuditKind::Authorized,
+        .detail = "Freight charter authorized; no stock reserved"
+    });
+    return CommandResult::success("Freight program authorized; " + freightProgramExecutionCondition(state_, program));
+}
+
+CommandResult Simulation::amendFreightProgram(const AmendFreightProgramCommand& command) {
+    const auto reject = [this](const std::string& reason) {
+        appendEvent(EventSeverity::Warning, CommandRejectedEvent{reason});
+        return CommandResult::failure(reason);
+    };
+    auto* program = findById(state_.freightPrograms, command.programId);
+    if (program == nullptr || program->lifecycle == FreightProgramLifecycle::Closed) return reject("Freight program does not exist or is closed");
+    if (program->charterRevision == std::numeric_limits<int>::max()) return reject("Freight charter revision limit reached");
+    auto prepared = program->charter;
+    applyFreightAmendment(prepared, command.amendment);
+    if (const auto reason = validateFreightProgramCharter(state_, prepared, true)) return reject(*reason);
+    std::swap(program->charter, prepared);
+    ++program->charterRevision;
+    // Closing remains physical work: reopen future authorization while keeping
+    // its committed return. Cancellation settlement is never silently renewed.
+    if (program->closure == FreightProgramClosure::Completed) {
+        program->closure = FreightProgramClosure::None;
+        if (program->lifecycle == FreightProgramLifecycle::Closing) program->lifecycle = FreightProgramLifecycle::Authorized;
+    }
+    acknowledgeKnownFreightLimitAtDecision(state_, *program);
+    appendEvent(EventSeverity::Info, FreightProgramAuditEvent{
+        .programId = program->id, .kind = FreightProgramAuditKind::Amended,
+        .charterRevision = program->charterRevision, .detail = "Freight charter amended; current shipment retained"
+    });
+    return CommandResult::success("Freight charter amended");
+}
+
+CommandResult Simulation::suspendFreightProgram(const SuspendFreightProgramCommand& command) {
+    auto* program = findById(state_.freightPrograms, command.programId);
+    if (program == nullptr || program->lifecycle == FreightProgramLifecycle::Closed ||
+        program->lifecycle == FreightProgramLifecycle::Suspended) {
+        const std::string reason = "Freight program cannot be suspended in this state";
+        appendEvent(EventSeverity::Warning, CommandRejectedEvent{reason});
+        return CommandResult::failure(reason);
+    }
+    program->lifecycle = FreightProgramLifecycle::Suspended;
+    program->issue.acknowledged = true;
+    static_cast<void>(releaseFreightProgramLease(state_, *program));
+    appendEvent(EventSeverity::Info, FreightProgramAuditEvent{
+        .programId = program->id, .kind = FreightProgramAuditKind::Suspended,
+        .charterRevision = program->charterRevision,
+        .detail = "Suspended; cargo custody and paid transit retained"
+    });
+    return CommandResult::success(freightProgramExecutionCondition(state_, *program));
+}
+
+CommandResult Simulation::resumeFreightProgram(const ResumeFreightProgramCommand& command) {
+    auto* program = findById(state_.freightPrograms, command.programId);
+    if (program == nullptr || program->lifecycle != FreightProgramLifecycle::Suspended) {
+        const std::string reason = "Freight program is not suspended";
+        appendEvent(EventSeverity::Warning, CommandRejectedEvent{reason});
+        return CommandResult::failure(reason);
+    }
+    program->lifecycle = program->closure == FreightProgramClosure::None
+        ? FreightProgramLifecycle::Authorized : FreightProgramLifecycle::Closing;
+    program->issue.acknowledged = true;
+    appendEvent(EventSeverity::Info, FreightProgramAuditEvent{
+        .programId = program->id, .kind = FreightProgramAuditKind::Resumed,
+        .charterRevision = program->charterRevision, .detail = "Freight authority resumed with retained disposition"
+    });
+    return CommandResult::success("Freight program resumed; readiness checked at the next opening boundary");
+}
+
+CommandResult Simulation::cancelFreightProgram(const CancelFreightProgramCommand& command) {
+    auto* program = findById(state_.freightPrograms, command.programId);
+    if (program == nullptr || program->lifecycle == FreightProgramLifecycle::Closed) {
+        const std::string reason = "Freight program does not exist or is closed";
+        appendEvent(EventSeverity::Warning, CommandRejectedEvent{reason});
+        return CommandResult::failure(reason);
+    }
+    program->closure = FreightProgramClosure::Cancelled;
+    program->lifecycle = FreightProgramLifecycle::Closing;
+    program->issue.acknowledged = true;
+    appendEvent(EventSeverity::Info, FreightProgramAuditEvent{
+        .programId = program->id, .kind = FreightProgramAuditKind::Cancelled,
+        .charterRevision = program->charterRevision,
+        .detail = "Future pickups cancelled; existing physical cargo and transit will settle"
+    });
+    const FreightProgramExecutionHooks hooks{
+        .startProgramMove = {},
+        .emit = [this](EventSeverity severity, SimEventPayload payload) { appendEvent(severity, std::move(payload)); }
+    };
+    settleFreightCancellationAtDecision(state_, *program, hooks);
+    return CommandResult::success("Future pickups cancelled; " + freightProgramExecutionCondition(state_, *program));
+}
+
+CommandResult Simulation::acknowledgeFreightProgramIssue(const AcknowledgeFreightProgramIssueCommand& command) {
+    auto* program = findById(state_.freightPrograms, command.programId);
+    if (program == nullptr || program->issue.signature.empty() || program->issue.acknowledged ||
+        program->issue.signature != command.signature) {
+        const std::string reason = "Freight program issue identity is not pending";
+        appendEvent(EventSeverity::Warning, CommandRejectedEvent{reason});
+        return CommandResult::failure(reason);
+    }
+    program->issue.acknowledged = true;
+    appendEvent(EventSeverity::Info, FreightProgramAuditEvent{
+        .programId = program->id, .kind = FreightProgramAuditKind::IssueAcknowledged,
+        .charterRevision = program->charterRevision, .detail = command.signature
+    });
+    return CommandResult::success("Freight issue acknowledged; existing limits retained");
 }
 
 CommandResult Simulation::assignAppointment(const AssignAppointmentCommand& command) {
@@ -1110,7 +1253,7 @@ bool Simulation::startNextQueuedFleetOrder(Fleet& fleet, std::vector<SimEvent>* 
 
 void Simulation::simulateOneDay(std::vector<SimEvent>& emitted) {
     ++state_.date.day;
-
+    OpeningProgramContext opening(state_);
     const SurveyProgramExecutionHooks programHooks{
         .startProgramMove = [this, &emitted](const SurveyProgramId programId, const FleetId fleetId,
                                               const BodyId destination, double& chargedFuel) {
@@ -1118,9 +1261,26 @@ void Simulation::simulateOneDay(std::vector<SimEvent>& emitted) {
         },
         .emit = [this, &emitted](const EventSeverity severity, SimEventPayload payload) {
             emitEvent(emitted, severity, std::move(payload));
-        }
+        },
+        .opening = &opening
     };
-    runSurveyProgramsOpeningDay(state_, programHooks);
+    const FreightProgramExecutionHooks freightHooks{
+        .startProgramMove = [this, &emitted](FreightProgramId id, FleetId fleet, BodyId body, double& fuel) {
+            return startProgramMove(id, fleet, body, fuel, emitted);
+        },
+        .emit = programHooks.emit
+    };
+    // Compare only unvisited vector heads. Released assets and inbound stock
+    // stay unavailable to later programs until the next opening boundary.
+    for (const auto& owner : programOpeningOrder(state_)) {
+        std::visit([&](auto id) {
+            if constexpr (std::is_same_v<decltype(id), SurveyProgramId>) {
+                runSurveyProgramOpeningDay(state_, *findById(state_.surveyPrograms, id), opening, programHooks);
+            } else {
+                runFreightProgramOpeningDay(state_, *findById(state_.freightPrograms, id), opening, freightHooks);
+            }
+        }, owner);
+    }
 
     // Ordering is gameplay: today's mining feeds today's processing, and its
     // output can pay for today's ship completions. New fleets remain idle until
@@ -1131,6 +1291,7 @@ void Simulation::simulateOneDay(std::vector<SimEvent>& emitted) {
     simulateShipyards(emitted);
     simulateFleetMovement(emitted);
     finishSurveyProgramsDay(state_, programHooks);
+    finishFreightProgramsDay(state_, freightHooks);
 }
 
 void Simulation::simulateMining(std::vector<SimEvent>&) {
