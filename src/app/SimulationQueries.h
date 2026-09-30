@@ -7,6 +7,7 @@
 // percentages use 100 for a full allocation/tank and signed percentage points for
 // modifiers. Map positions use kKilometersPerMapUnit scaling, not screen pixels.
 
+#include "app/ForecastService.h"
 #include "app/SimulationService.h"
 #include "sim/Domain.h"
 #include "sim/Events.h"
@@ -130,6 +131,7 @@ struct ProductionBacklogSummary {
     int queuePosition = 0;
     int shipsRemaining = 0;
     double accumulatedBuildPoints = 0.0;
+    double currentHullBuildPoints = 0.0;
     double buildPointsRemaining = 0.0;
     double effectiveShipyardCapacity = 0.0;
     double shipyardModifierPercent = 0.0;
@@ -141,6 +143,8 @@ struct ProductionBacklogSummary {
     std::string blockingMaterialName;
     bool blockedByComponentSupply = false;
     std::string componentSupplyExplanation;
+    ProductionBacklogState state = ProductionBacklogState::Waiting;
+    std::string primaryCondition;
     std::string statusName;
     std::string explanation;
 };

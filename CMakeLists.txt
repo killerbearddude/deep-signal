@@ -168,6 +168,8 @@ if(DEEP_SIGNAL_BUILD_UI)
         src/ui_imgui/MaintenanceProgramsPanel.cpp
         src/ui_imgui/SciencePanel.cpp
         src/ui_imgui/ImGuiApp.cpp
+        src/ui_imgui/UiTheme.cpp
+        src/ui_imgui/PresentationWidgets.cpp
         src/ui_imgui/InformationPanel.cpp
         src/ui_imgui/InformationNavigation.cpp
         src/ui_imgui/InformationPreviewLayer.cpp
@@ -277,6 +279,20 @@ if(DEEP_SIGNAL_BUILD_TESTS)
     add_test(NAME deep_signal_information_preview_geometry_tests COMMAND deep_signal_information_preview_geometry_tests)
 
     if(DEEP_SIGNAL_BUILD_UI)
+        # Exercise the themed Shipyard with real ImGui submission and input.
+        add_executable(deep_signal_shipyard_ui_tests
+            tests/shipyard_ui_tests.cpp
+            src/ui_imgui/ShipyardPanel.cpp
+            src/ui_imgui/PresentationWidgets.cpp
+            src/ui_imgui/UiTheme.cpp
+            src/ui_imgui/OperationalWindow.cpp
+            src/ui_imgui/ShellLayout.cpp
+        )
+        target_link_libraries(deep_signal_shipyard_ui_tests
+            PRIVATE deep_signal_app ${DEEP_SIGNAL_UI_DEPENDENCY_TARGET})
+        target_compile_options(deep_signal_shipyard_ui_tests PRIVATE ${DEEP_SIGNAL_WARNINGS})
+        add_test(NAME deep_signal_shipyard_ui_tests COMMAND deep_signal_shipyard_ui_tests)
+
         # Public ImGui text logging exercises the production overview renderer
         # with real queries. No native display/GPU is needed to run this test.
         add_executable(deep_signal_information_panel_tests

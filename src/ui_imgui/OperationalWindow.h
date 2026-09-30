@@ -11,6 +11,7 @@ void setOperationalWorkArea(ShellRegion work);
 
 // Same Begin/End contract as ImGui::Begin: callers always call ImGui::End().
 // Docked windows use their dock node, while floating windows stay in workArea.
-bool beginOperationalWindow(const char* name, bool* open);
+bool beginOperationalWindow(const char* name, bool* open, float initialWidth = 600.0F,
+                            float initialHeight = 400.0F);
 
 } // namespace deep::ui_imgui

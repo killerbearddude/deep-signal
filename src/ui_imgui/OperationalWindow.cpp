@@ -46,10 +46,10 @@ void setOperationalWorkArea(const ShellRegion work) {
     workArea = work;
 }
 
-bool beginOperationalWindow(const char* name, bool* open) {
+bool beginOperationalWindow(const char* name, bool* open, float initialWidth, float initialHeight) {
     // Initial dimensions apply only to windows without saved settings. Existing
     // positions, sizes, collapsed state and docking relationships are retained.
-    ImGui::SetNextWindowSize({std::min(600.0F, workArea.width), std::min(400.0F, workArea.height)},
+    ImGui::SetNextWindowSize({std::min(initialWidth, workArea.width), std::min(initialHeight, workArea.height)},
                              ImGuiCond_FirstUseEver);
     ConstraintContext context{name};
     ImGui::SetNextWindowSizeConstraints({1.0F, 1.0F}, {workArea.width, workArea.height},
