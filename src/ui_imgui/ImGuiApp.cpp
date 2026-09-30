@@ -1,4 +1,5 @@
 #include "ui_imgui/ImGuiApp.h"
+#include "ui_imgui/UiTheme.h"
 
 // Responsibility: process window input and render panels on the UI thread.
 // Commands execute synchronously through SimulationService. This loop owns
@@ -49,7 +50,7 @@ ImGuiApp::ImGuiApp()
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
 
-    ImGui::StyleColorsDark();
+    applyDeepSignalTheme();
 
     if (!ImGui_ImplSDL3_InitForSDLRenderer(sdl_.window(), sdl_.renderer())) {
         ImGui::DestroyContext();

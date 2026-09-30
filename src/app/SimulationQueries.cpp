@@ -1097,7 +1097,9 @@ std::vector<ShipyardOrderSummary> SimulationQueries::shipyardOrders() const {
                 : "Serial process available at this colony";
             summary.requiredBuildPoints = order.currentHullSupplyPlan->effectiveBuildPoints;
         } else if (const auto* shipClass = findById(state.shipClasses, order.shipClassId);
-                   shipClass && classRequiresDevelopedComponent(state, *shipClass)) {
+                   order.status != ShipyardOrderStatus::Completed &&
+                   order.quantityCompleted < order.quantityRequested && shipClass &&
+                   classRequiresDevelopedComponent(state, *shipClass)) {
             const auto planned = planDevelopedComponentSupply(state, order, *shipClass,
                 order.colonyId, state.date.day == std::numeric_limits<std::int64_t>::max()
                                     ? state.date.day
@@ -1130,6 +1132,7 @@ std::vector<ProductionBacklogSummary> SimulationQueries::productionBacklog() con
             .queuePosition = row.queuePosition,
             .shipsRemaining = row.shipsRemaining,
             .accumulatedBuildPoints = row.accumulatedBuildPoints,
+            .currentHullBuildPoints = row.currentHullBuildPoints,
             .buildPointsRemaining = row.buildPointsRemaining,
             .effectiveShipyardCapacity = row.effectiveShipyardCapacity,
             .shipyardModifierPercent = row.shipyardModifierPercent,
@@ -1139,6 +1142,8 @@ std::vector<ProductionBacklogSummary> SimulationQueries::productionBacklog() con
             .blockingMaterialName = row.blockingMaterialName,
             .blockedByComponentSupply = row.blockedByComponentSupply,
             .componentSupplyExplanation = row.componentSupplyExplanation,
+            .state = row.state,
+            .primaryCondition = row.primaryCondition,
             .statusName = row.statusName,
             .explanation = row.explanation
         });

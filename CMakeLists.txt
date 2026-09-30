@@ -151,6 +151,18 @@ if(DEEP_SIGNAL_BUILD_UI)
     include(cmake/DeepSignalUiDependencies.cmake)
     deep_signal_configure_ui_dependencies(DEEP_SIGNAL_UI_DEPENDENCY_TARGET)
 
+    # Embed the unmodified font from the pinned ImGui checkout. Both the native
+    # application and submission tests use identical typography without runtime
+    # asset paths or an operating-system font dependency.
+    set(_deep_signal_karla_font "${DEEP_SIGNAL_IMGUI_ROOT}/misc/fonts/Karla-Regular.ttf")
+    set(_deep_signal_ui_generated_dir "${CMAKE_CURRENT_BINARY_DIR}/generated/ui")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_deep_signal_karla_font}")
+    file(READ "${_deep_signal_karla_font}" _deep_signal_karla_hex HEX)
+    string(REGEX REPLACE "(..)" "0x\\1," _deep_signal_karla_bytes "${_deep_signal_karla_hex}")
+    file(GENERATE OUTPUT "${_deep_signal_ui_generated_dir}/KarlaFontData.h" CONTENT
+        "#pragma once\n// Unmodified pinned Karla Regular. See third_party/licenses/Karla-OFL.txt.\nnamespace deep::ui_imgui::detail {\ninline unsigned char karlaFontData[] = {${_deep_signal_karla_bytes}};\n}\n")
+    configure_file(third_party/licenses/Karla-OFL.txt Karla-OFL.txt COPYONLY)
+
     add_executable(deep_signal_imgui
         src/platform/SdlApp.cpp
         src/render/MapCamera.cpp
@@ -168,6 +180,8 @@ if(DEEP_SIGNAL_BUILD_UI)
         src/ui_imgui/MaintenanceProgramsPanel.cpp
         src/ui_imgui/SciencePanel.cpp
         src/ui_imgui/ImGuiApp.cpp
+        src/ui_imgui/UiTheme.cpp
+        src/ui_imgui/PresentationWidgets.cpp
         src/ui_imgui/InformationPanel.cpp
         src/ui_imgui/InformationNavigation.cpp
         src/ui_imgui/InformationPreviewLayer.cpp
@@ -189,6 +203,7 @@ if(DEEP_SIGNAL_BUILD_UI)
     )
 
     target_compile_options(deep_signal_imgui PRIVATE ${DEEP_SIGNAL_WARNINGS})
+    target_include_directories(deep_signal_imgui PRIVATE "${_deep_signal_ui_generated_dir}")
 endif()
 
 if(DEEP_SIGNAL_BUILD_TESTS)
@@ -277,6 +292,21 @@ if(DEEP_SIGNAL_BUILD_TESTS)
     add_test(NAME deep_signal_information_preview_geometry_tests COMMAND deep_signal_information_preview_geometry_tests)
 
     if(DEEP_SIGNAL_BUILD_UI)
+        # Exercise the themed Shipyard with real ImGui submission and input.
+        add_executable(deep_signal_shipyard_ui_tests
+            tests/shipyard_ui_tests.cpp
+            src/ui_imgui/ShipyardPanel.cpp
+            src/ui_imgui/PresentationWidgets.cpp
+            src/ui_imgui/UiTheme.cpp
+            src/ui_imgui/OperationalWindow.cpp
+            src/ui_imgui/ShellLayout.cpp
+        )
+        target_link_libraries(deep_signal_shipyard_ui_tests
+            PRIVATE deep_signal_app ${DEEP_SIGNAL_UI_DEPENDENCY_TARGET})
+        target_compile_options(deep_signal_shipyard_ui_tests PRIVATE ${DEEP_SIGNAL_WARNINGS})
+        target_include_directories(deep_signal_shipyard_ui_tests PRIVATE "${_deep_signal_ui_generated_dir}")
+        add_test(NAME deep_signal_shipyard_ui_tests COMMAND deep_signal_shipyard_ui_tests)
+
         # Public ImGui text logging exercises the production overview renderer
         # with real queries. No native display/GPU is needed to run this test.
         add_executable(deep_signal_information_panel_tests

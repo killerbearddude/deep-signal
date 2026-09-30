@@ -516,6 +516,14 @@ void test_production_backlog_uses_fifo_colony_capacity() {
     require(*backlog.front().etaDays == 5, "first order ETA uses direct colony capacity");
     require(*backlog.at(1).etaDays == 10, "second order ETA includes first order backlog ahead");
     require(backlog.front().statusName == "Building", "unblocked active order reports building status");
+    require(backlog.front().state == deep::ProductionBacklogState::Building &&
+            backlog.front().primaryCondition == "Building normally",
+            "active head has a typed building state and concise condition");
+    require(backlog.at(1).state == deep::ProductionBacklogState::Waiting &&
+            backlog.at(1).primaryCondition == "Queued behind earlier work",
+            "feasible later order is waiting for the same FIFO capacity");
+    requireNear(backlog.front().currentHullBuildPoints, 500.0,
+                "forecast supplies the active hull work requirement to presentation");
     require(backlog.at(1).explanation.find("build points ahead") != std::string::npos,
             "backlog explanation exposes queue capacity math");
 }
@@ -549,6 +557,9 @@ void test_production_backlog_reports_blocking_material() {
     requireNear(backlog.front().requiredMaterialsRemaining.get(deep::ProcessedMaterial::StructuralAlloys), 250.0,
                 "required remaining materials include one Survey Cutter structural alloy cost");
     require(backlog.front().statusName == "Waiting for materials", "status reports material wait state");
+    require(backlog.front().state == deep::ProductionBacklogState::Waiting &&
+            backlog.front().primaryCondition == "Needs Structural Alloys",
+            "material wait names the actual shortage in the concise condition");
 }
 
 void test_production_backlog_reports_capacity_before_material_shortage() {
@@ -568,6 +579,9 @@ void test_production_backlog_reports_capacity_before_material_shortage() {
     require(!backlog.front().etaDays.has_value(), "capacity wait has no invented ETA");
     require(backlog.front().statusName == "Waiting for capacity",
             "capacity is the immediate blocker even when materials are short");
+    require(backlog.front().state == deep::ProductionBacklogState::Waiting &&
+            backlog.front().primaryCondition == "No shipyard capacity",
+            "concise capacity wait retains precedence over material shortage");
     require(backlog.front().explanation.find("shipyard capacity") != std::string::npos,
             "backlog explanation identifies unavailable capacity");
     require(backlog.front().blockedByMaterial &&
@@ -601,6 +615,108 @@ void test_production_backlog_explains_non_constructible_revision() {
     require(backlog.at(1).statusName == "Queued behind blocked FIFO order" &&
             !backlog.at(1).etaDays.has_value(),
             "later FIFO order cannot leapfrog a non-constructible predecessor");
+    const auto design = deep::evaluateShipDesign(service.state().shipComponents, overflow);
+    require(backlog.front().state == deep::ProductionBacklogState::Waiting &&
+            backlog.front().primaryCondition == design.constraints.front(),
+            "concise design condition uses the real constructibility constraint");
+    require(backlog.at(1).state == deep::ProductionBacklogState::Waiting &&
+            backlog.at(1).primaryCondition == "Queued behind blocked earlier order",
+            "later condition identifies the blocked predecessor");
+}
+
+void requireCompletedBacklog(const deep::ProductionBacklogForecast& row) {
+    require(row.shipsRemaining == 0 && row.queuePosition == 0,
+            "completed order has no remaining hull or active FIFO position");
+    requireNear(row.buildPointsRemaining, 0.0, "completed order has no outstanding build points");
+    requireNear(row.currentHullBuildPoints, 0.0, "completed order has no hypothetical current hull");
+    require(std::all_of(row.requiredMaterialsRemaining.amount.begin(),
+                        row.requiredMaterialsRemaining.amount.end(),
+                        [](double amount) { return amount == 0.0; }),
+            "completed order has no outstanding material demand");
+    require(!row.blockedByMaterial && !row.blockedByComponentSupply && !row.blockingMaterial &&
+            row.blockingMaterialName.empty() && row.componentSupplyExplanation.empty(),
+            "completed order cannot acquire a material or component-supply blocker");
+    require(row.etaDays == 0 && row.state == deep::ProductionBacklogState::Completed &&
+            row.primaryCondition == "Completed",
+            "completed presentation state has zero ETA and a concise completed condition");
+}
+
+void test_completed_ordinary_backlog_has_no_outstanding_demand() {
+    deep::SimulationService service;
+    require(service.execute(deep::AssignShipyardBuildCommand{
+        service.state().colonies.front().id, service.state().shipClasses.front().id, 2
+    }).ok, "two ordinary hulls are authorized");
+    require(service.advanceDaysDetailed(10).advancedDays == 10,
+            "both ordinary hulls complete through normal daily work");
+    require(service.state().shipyardOrders.front().quantityCompleted == 2,
+            "completed forecast fixture has real hull completions");
+    requireCompletedBacklog(deep::ForecastService{service}.productionBacklog().front());
+}
+
+void test_developed_backlog_distinguishes_completion_from_new_supply_wait() {
+    // Earn and consume the only prototype without qualifying serial production.
+    // The completed commitment must remain clear when a later identical order
+    // honestly waits for supply; a hypothetical next-hull plan breaks this case.
+    auto state = deep::createHomeSystemScenario();
+    const auto facility = state.technicalFacilities.front();
+    const auto team = std::find_if(state.maintenanceTeams.begin(), state.maintenanceTeams.end(),
+        [](const auto& row) { return row.name == "Prototype Engineering Team"; });
+    require(team != state.maintenanceTeams.end(), "prototype engineering team exists");
+    auto colony = std::find_if(state.colonies.begin(), state.colonies.end(),
+        [&](const auto& row) { return row.id == facility.colonyId; });
+    require(colony != state.colonies.end(), "prototype laboratory colony exists");
+    colony->processedStockpile.amount.fill(5'000.0);
+    colony->processorCapacity = 0.0;
+    colony->shipyardCapacity = 100.0;
+    const deep::TechnicalDevelopmentCharter charter{
+        "Forecast prototype proof", state.technologyOpportunities.front().id, colony->id,
+        facility.id, team->id, state.people.front().id,
+        deep::TechnicalDevelopmentScope::DemonstratePrototype, {}};
+    deep::SimulationService service{std::move(state)};
+    require(service.execute(deep::CreateTechnicalDevelopmentCommand{charter}).ok,
+            "prototype demonstration is authorized");
+    require(service.advanceDaysDetailed(13).advancedDays == 13,
+            "prototype demonstration completes through paid work");
+    require(service.state().developedComponentRevisions.size() == 1 &&
+            service.state().componentProductionCapabilities.empty(),
+            "fixture earned a demonstrated component without a serial process");
+    auto components = deep::referenceSurveyCutterComponents();
+    components.at(3).componentId = service.state().developedComponentRevisions.front().componentId;
+    require(service.execute(deep::CreateShipClassRevisionCommand{
+        "Precision forecast cutter", deep::ShipRole::Survey, std::nullopt, components
+    }).ok, "developed class is saved through the revision command");
+    const auto classId = service.state().shipClasses.back().id;
+    require(service.execute(deep::AssignShipyardBuildCommand{charter.developmentColonyId, classId, 1}).ok,
+            "prototype-backed hull is authorized");
+
+    const auto planned = deep::ForecastService{service}.productionBacklog().front();
+    const auto design = deep::evaluateShipDesign(service.state().shipComponents, components);
+    require(planned.currentHullBuildPoints < design.buildPoints,
+            "active forecast includes the real prototype's embodied work credit");
+    require(service.advanceDaysDetailed(1).advancedDays == 1,
+            "positive yard work binds the prototype plan");
+    const auto& frozen = service.state().shipyardOrders.front().currentHullSupplyPlan;
+    require(frozen.has_value(), "prototype supply plan is frozen during physical work");
+    requireNear(deep::ForecastService{service}.productionBacklog().front().currentHullBuildPoints,
+                frozen->effectiveBuildPoints, "selected hull meter uses the frozen work requirement");
+    require(service.advanceDaysDetailed(9).advancedDays == 9,
+            "prototype hull completes with real construction work");
+    require(service.state().shipyardOrders.front().quantityCompleted == 1 &&
+            service.state().prototypeComponentUnits.front().state == deep::PrototypeComponentState::Consumed,
+            "fixture consumes the single real prototype on hull completion");
+    requireCompletedBacklog(deep::ForecastService{service}.productionBacklog().front());
+
+    require(service.execute(deep::AssignShipyardBuildCommand{charter.developmentColonyId, classId, 1}).ok,
+            "new developed order remains accepted intent without available supply");
+    const auto backlog = deep::ForecastService{service}.productionBacklog();
+    requireCompletedBacklog(backlog.front());
+    require(backlog.back().queuePosition == 1 && backlog.back().blockedByComponentSupply &&
+            !backlog.back().etaDays && backlog.back().state == deep::ProductionBacklogState::Waiting &&
+            backlog.back().primaryCondition == "Developed component supply unavailable",
+            "active successor exposes a typed supply wait without an invented ETA");
+    require(backlog.back().componentSupplyExplanation.find("local prototype unit") != std::string::npos &&
+            backlog.back().explanation.find(backlog.back().componentSupplyExplanation) != std::string::npos,
+            "component supply explanation remains available in full detail");
 }
 
 void test_fleet_arrival_eta_reports_active_move_order() {
@@ -735,6 +851,8 @@ int main() {
         test_production_backlog_reports_blocking_material();
         test_production_backlog_reports_capacity_before_material_shortage();
         test_production_backlog_explains_non_constructible_revision();
+        test_completed_ordinary_backlog_has_no_outstanding_demand();
+        test_developed_backlog_distinguishes_completion_from_new_supply_wait();
         test_fleet_arrival_eta_reports_active_move_order();
         test_fleet_fuel_forecast_reports_range_after_move_start();
         test_fleet_fuel_forecast_exposes_commander_modifier();

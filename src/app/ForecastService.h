@@ -117,13 +117,22 @@ struct ShipyardOrderEtaForecast {
     std::string explanation;
 };
 
+// Presentation state derived from existing order, capacity and supply facts.
+// Waiting includes feasible queued work; this is never persisted as gameplay state.
+enum class ProductionBacklogState {
+    Building,
+    Waiting,
+    Completed
+};
+
 // Production backlog row for one shipyard order. The forecast models colony
 // capacity as a single FIFO pool and exposes an immutable design blocker, but
 // does not simulate material delays. The
 // shortage flag compares this order's entire remaining cost with current stock;
 // it neither reserves stock for predecessors nor describes a next-ship blocker.
 // queuePosition is one-based for active orders and zero for completed orders.
-// statusName is derived display text, not an authoritative production state.
+// state/primaryCondition drive concise views; statusName and explanation retain
+// their fuller diagnostic wording. Completed orders have no outstanding demand.
 struct ProductionBacklogForecast {
     ShipyardOrderId orderId;
     ColonyId colonyId;
@@ -139,6 +148,9 @@ struct ProductionBacklogForecast {
     double shipyardModifierPercent = 0.0;
     std::vector<ForecastModifierBreakdownRow> shipyardModifierBreakdown;
     double accumulatedBuildPoints = 0.0;
+    // Effective total BP for the active hull, including any prototype credit;
+    // zero after the order completes because there is no hypothetical next hull.
+    double currentHullBuildPoints = 0.0;
     double buildPointsRemaining = 0.0;
     ProcessedMaterialSet requiredMaterialsRemaining;
     bool blockedByMaterial = false;
@@ -147,6 +159,8 @@ struct ProductionBacklogForecast {
     std::string blockingMaterialName;
     std::string componentSupplyExplanation;
     std::optional<int> etaDays;
+    ProductionBacklogState state = ProductionBacklogState::Waiting;
+    std::string primaryCondition;
     std::string statusName;
     std::string explanation;
 };

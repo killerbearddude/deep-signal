@@ -523,6 +523,42 @@ void addModifierRow(std::vector<ForecastModifierBreakdownRow>& rows, const std::
     return "Building";
 }
 
+struct ProductionBacklogCondition {
+    ProductionBacklogState state;
+    std::string primaryCondition;
+};
+
+// Project the same blockers as the full forecast, preserving their precedence.
+// A feasible later order is waiting for its FIFO share, rather than active work.
+[[nodiscard]] ProductionBacklogCondition productionBacklogCondition(
+    const bool completed, const ShipDesignEvaluation& design, const bool blockedByDesignAhead,
+    const bool blockedByComponentSupply, const double colonyCapacity,
+    const std::string& blockingMaterialName, const int queuePosition) {
+    if (completed) {
+        return {ProductionBacklogState::Completed, "Completed"};
+    }
+    if (!design.constructible) {
+        return {ProductionBacklogState::Waiting,
+                design.constraints.empty() ? "Design cannot be constructed" : design.constraints.front()};
+    }
+    if (blockedByDesignAhead) {
+        return {ProductionBacklogState::Waiting, "Queued behind blocked earlier order"};
+    }
+    if (blockedByComponentSupply) {
+        return {ProductionBacklogState::Waiting, "Developed component supply unavailable"};
+    }
+    if (colonyCapacity <= 0.0) {
+        return {ProductionBacklogState::Waiting, "No shipyard capacity"};
+    }
+    if (!blockingMaterialName.empty()) {
+        return {ProductionBacklogState::Waiting, "Needs " + blockingMaterialName};
+    }
+    if (queuePosition > 1) {
+        return {ProductionBacklogState::Waiting, "Queued behind earlier work"};
+    }
+    return {ProductionBacklogState::Building, "Building normally"};
+}
+
 [[nodiscard]] std::string productionBacklogExplanation(const int queuePosition,
                                                        const double buildPointsAhead,
                                                        const double orderBuildPointsRemaining,
@@ -832,12 +868,16 @@ std::vector<ProductionBacklogForecast> ForecastService::productionBacklog() cons
     for (const ShipyardOrder& order : state.shipyardOrders) {
         const Colony* colony = findById(state.colonies, order.colonyId);
         const ShipClass* shipClass = findById(state.shipClasses, order.shipClassId);
-        const int shipsRemaining = std::max(0, order.quantityRequested - order.quantityCompleted);
+        const bool completed = order.status == ShipyardOrderStatus::Completed ||
+                               order.quantityCompleted >= order.quantityRequested;
+        const int shipsRemaining = completed ? 0 : order.quantityRequested - order.quantityCompleted;
         const ShipDesignEvaluation design = shipClass == nullptr ? ShipDesignEvaluation{}
             : evaluateShipDesign(state.shipComponents, shipClass->components);
         DevelopedSupplyPlanResult supplyPlan;
         bool blockedByComponentSupply = false;
-        if (shipClass && classRequiresDevelopedComponent(state, *shipClass)) {
+        // Completed commitments have no next hull. Planning one would fabricate
+        // both supply blockers and outstanding materials after physical completion.
+        if (!completed && shipClass && classRequiresDevelopedComponent(state, *shipClass)) {
             if (order.currentHullSupplyPlan) {
                 supplyPlan.ready = true;
                 supplyPlan.explanation = "Current hull has a frozen developed-component supply plan";
@@ -849,9 +889,9 @@ std::vector<ProductionBacklogForecast> ForecastService::productionBacklog() cons
             }
             blockedByComponentSupply = !supplyPlan.ready;
         }
-        const double currentHullBuildPoints = supplyPlan.plan ? supplyPlan.plan->effectiveBuildPoints
-                                                               : design.buildPoints;
-        const double buildPointsRemaining = shipClass == nullptr ? 0.0
+        const double currentHullBuildPoints = completed ? 0.0
+            : supplyPlan.plan ? supplyPlan.plan->effectiveBuildPoints : design.buildPoints;
+        const double buildPointsRemaining = completed || shipClass == nullptr ? 0.0
             : std::max(0.0, currentHullBuildPoints - order.accumulatedBuildPoints) +
                   std::max(0, shipsRemaining - 1) * design.buildPoints;
         ProcessedMaterialSet requiredMaterials = shipClass == nullptr
@@ -871,7 +911,7 @@ std::vector<ProductionBacklogForecast> ForecastService::productionBacklog() cons
         double colonyCapacity = colony == nullptr ? 0.0 : effectiveShipyardCapacity(state, *colony);
         std::optional<int> etaDays;
 
-        if (order.status == ShipyardOrderStatus::Completed || shipsRemaining == 0) {
+        if (completed) {
             etaDays = 0;
         } else if (colony != nullptr && shipClass != nullptr) {
             auto queueIt = std::find_if(queueStates.begin(), queueStates.end(), [order](const ColonyQueueForecastState& queueState) {
@@ -905,6 +945,8 @@ std::vector<ProductionBacklogForecast> ForecastService::productionBacklog() cons
             && order.status == ShipyardOrderStatus::Active
             && shipsRemaining > 0;
         const std::string blockerName = blockingMaterial.has_value() ? materialName(*blockingMaterial) : std::string{};
+        const auto condition = productionBacklogCondition(completed, design, blockedByDesignAhead,
+            blockedByComponentSupply, colonyCapacity, blockerName, queuePosition);
 
         forecasts.push_back(ProductionBacklogForecast{
             .orderId = order.id,
@@ -921,6 +963,7 @@ std::vector<ProductionBacklogForecast> ForecastService::productionBacklog() cons
             .shipyardModifierPercent = modifier.modifier * 100.0,
             .shipyardModifierBreakdown = modifier.breakdown,
             .accumulatedBuildPoints = order.accumulatedBuildPoints,
+            .currentHullBuildPoints = currentHullBuildPoints,
             .buildPointsRemaining = buildPointsRemaining,
             .requiredMaterialsRemaining = requiredMaterials,
             .blockedByMaterial = blockedByMaterial,
@@ -929,6 +972,8 @@ std::vector<ProductionBacklogForecast> ForecastService::productionBacklog() cons
             .blockingMaterialName = blockedByMaterial ? blockerName : std::string{},
             .componentSupplyExplanation = blockedByComponentSupply ? supplyPlan.explanation : std::string{},
             .etaDays = etaDays,
+            .state = condition.state,
+            .primaryCondition = condition.primaryCondition,
             .statusName = productionBacklogStatusName(order, design.constructible,
                                                       blockedByDesignAhead, colonyCapacity, blockedByMaterial,
                                                       blockedByComponentSupply),

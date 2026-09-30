@@ -1,6 +1,7 @@
 #include "sim/EquipmentServiceRules.h"
 #include "app/SimulationQueries.h"
 #include "app/SimulationService.h"
+#include "app/TechnicalDevelopmentFixture.h"
 #include "sim/Commands.h"
 #include "sim/ScenarioFactory.h"
 #include "sim/ShipDesignRules.h"
@@ -428,6 +429,14 @@ void test_production_backlog_summaries_expose_queue_eta() {
                 "first material requirement preserves remaining structural alloy need");
     require(backlog.front().blockingMaterialName.empty(), "well-stocked order has no blocking material name");
     require(backlog.front().statusName == "Building", "well-stocked order reports building status");
+    require(backlog.front().state == deep::ProductionBacklogState::Building &&
+            backlog.front().primaryCondition == "Building normally",
+            "query forwards typed active state and concise condition");
+    require(backlog.at(1).state == deep::ProductionBacklogState::Waiting &&
+            backlog.at(1).primaryCondition == "Queued behind earlier work",
+            "query distinguishes feasible FIFO waiting from active work");
+    requireNear(backlog.front().currentHullBuildPoints, 500.0,
+                "query supplies the actual hull work requirement without UI arithmetic");
 }
 
 void test_production_backlog_summary_exposes_capacity_wait() {
@@ -448,6 +457,40 @@ void test_production_backlog_summary_exposes_capacity_wait() {
             "UI query exposes capacity wait without ETA");
     require(backlog.front().explanation.find("shipyard capacity") != std::string::npos,
             "UI query forwards the forecast explanation");
+    require(backlog.front().state == deep::ProductionBacklogState::Waiting &&
+            backlog.front().primaryCondition == "No shipyard capacity",
+            "query exposes a concise capacity condition independently of full detail");
+    require(backlog.front().explanation != backlog.front().primaryCondition &&
+            backlog.front().explanation.find("build points ahead") != std::string::npos,
+            "query retains the complete forecast explanation");
+}
+
+void test_completed_backlog_queries_keep_zero_outstanding_demand() {
+    // The earned P5 world includes completed ordinary and developed orders with
+    // serial production available. Replanning a completed developed hull would
+    // invent an additional material bill even though its supply is available.
+    deep::SimulationService service{deep::earnTechnicalDevelopmentFixture()};
+    const auto backlog = deep::SimulationQueries{service}.productionBacklog();
+    require(!backlog.empty(), "earned fixture has completed shipyard commitments");
+    bool checkedDevelopedClass = false;
+    for (const auto& row : backlog) {
+        require(row.quantityCompleted == row.quantityRequested && row.shipsRemaining == 0,
+                "earned shipyard commitment is completely fulfilled");
+        require(row.state == deep::ProductionBacklogState::Completed &&
+                row.primaryCondition == "Completed" && row.etaDays == 0,
+                "query retains completed state, condition, and zero ETA");
+        requireNear(row.buildPointsRemaining, 0.0, "completed query has zero outstanding build work");
+        requireNear(row.currentHullBuildPoints, 0.0, "completed query has no current hull work requirement");
+        require(row.requiredMaterialsRemaining.empty() && row.blockingMaterialName.empty() &&
+                !row.blockedByComponentSupply && row.componentSupplyExplanation.empty(),
+                "completed query exposes no outstanding materials or supply blocker");
+        checkedDevelopedClass |= row.shipClassName == "Precision Characterization Cutter";
+    }
+    require(checkedDevelopedClass, "completed projection covers the developed Precision class");
+    for (const auto& row : deep::SimulationQueries{service}.shipyardOrders()) {
+        require(row.status == deep::ShipyardOrderStatus::Completed && row.developedComponentSupply.empty(),
+                "legacy order query also avoids planning a hypothetical next hull after completion");
+    }
 }
 
 void test_personnel_summaries_resolve_institution_context() {
@@ -1276,6 +1319,7 @@ int main() {
         test_shipyard_order_summaries_resolve_names();
         test_production_backlog_summaries_expose_queue_eta();
         test_production_backlog_summary_exposes_capacity_wait();
+        test_completed_backlog_queries_keep_zero_outstanding_demand();
         test_personnel_summaries_resolve_institution_context();
         test_appointment_summaries_resolve_people_and_scopes();
         test_appointment_candidates_rank_matching_competency_first();
