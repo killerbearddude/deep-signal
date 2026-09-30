@@ -1,6 +1,7 @@
 #include "sim/EquipmentServiceRules.h"
 #include "sim/Commands.h"
 #include "sim/ScenarioFactory.h"
+#include "sim/GameStateValidation.h"
 #include "sim/Simulation.h"
 #include "sim/SurveyProgramExecution.h"
 #include "sim/SurveyProgramRules.h"
@@ -126,10 +127,22 @@ void test_automatic_visits_reporting_and_fuel_conservation() {
          sim.state().colonies.back().processedStockpile.get(deep::ProcessedMaterial::Propellant) +
              sim.state().ships.back().fuel + program.fuelBurned,
          "home and ship propellant is conserved except for program travel burn");
-    require(program.reports.size() == 3U && program.reports.at(0).endDay == 30 &&
-                program.reports.at(1).endDay == 60 && program.reports.at(2).endDay == 90 &&
-                program.reports.at(2).isNinetyDayReview,
-            "durable reports occur on global 30/60/90-day boundaries, including after closure");
+    const auto closure = std::find_if(sim.state().eventLog.begin(), sim.state().eventLog.end(),
+                                      [&](const auto& event) {
+                                          const auto* audit =
+                                              std::get_if<deep::SurveyProgramAuditEvent>(&event.payload);
+                                          return audit && audit->programId == id &&
+                                                 audit->kind == deep::SurveyProgramAuditKind::Closed;
+                                      });
+    require(closure != sim.state().eventLog.end(), "physical closure has a dated audit");
+    require(program.reports.size() == static_cast<std::size_t>(closure->day / 30),
+            "only global report boundaries through physical closure are published");
+    for (std::size_t index = 0; index < program.reports.size(); ++index) {
+        const auto& report = program.reports[index];
+        require(report.endDay == static_cast<std::int64_t>((index + 1) * 30) &&
+                    report.isNinetyDayReview == (report.endDay % 90 == 0),
+                "retained reports preserve their global 30/90-day chronology");
+    }
 }
 
 std::vector<deep::BodyId> completedOrder(const std::string_view leaderName) {
@@ -615,6 +628,59 @@ void test_return_budget_uses_projected_departure_date() {
             "fixture rules out a twice-outbound-distance shortcut");
 }
 
+void test_closed_survey_does_not_publish_future_period_reports() {
+    deep::Simulation sim{deep::createDelegatedSurveyScenario()};
+    const auto id = authorize(sim, charterFor(sim.state(), "Dr. Nia Okafor", 1));
+    for (int day = 0; day < 90 && programById(sim.state(), id).lifecycle !=
+                                     deep::SurveyProgramLifecycle::Closed; ++day) {
+        const auto result = sim.advanceDaysDetailed(1);
+        require(result.advancedDays == 1 && !result.interrupted,
+                "one-pass survey closes without a routine interruption");
+    }
+    const auto& closed = programById(sim.state(), id);
+    require(closed.lifecycle == deep::SurveyProgramLifecycle::Closed,
+            "survey fixture reaches physical closure");
+    const auto historyAtClosure = closed.reports.size();
+    const auto closureDay = sim.state().date.day;
+    const auto result = sim.advanceDaysDetailed(120);
+    require(result.advancedDays == 120 && !result.interrupted,
+            "closed survey does not interrupt independent future time");
+    require(programById(sim.state(), id).reports.size() == historyAtClosure,
+            "closed survey cannot publish later 30-day reports");
+    require(sim.state().date.day == closureDay + 120,
+            "long continuation crossed several former reporting boundaries");
+    deep::validateGameState(sim.state());
+}
+
+void test_survey_closure_day_report_publishes_at_most_once() {
+    bool provedBoundary = false;
+    for (std::int64_t startDay = 0; startDay < 30 && !provedBoundary; ++startDay) {
+        auto state = deep::createDelegatedSurveyScenario();
+        state.date.day = startDay;
+        deep::Simulation sim(state);
+        const auto id = authorize(sim, charterFor(sim.state(), "Dr. Nia Okafor", 1));
+        for (int day = 0; day < 90 && programById(sim.state(), id).lifecycle !=
+                                         deep::SurveyProgramLifecycle::Closed; ++day) {
+            const auto result = sim.advanceDaysDetailed(1);
+            require(result.advancedDays == 1 && !result.interrupted,
+                    "date-shifted survey reaches its physical closure");
+        }
+        if (programById(sim.state(), id).lifecycle != deep::SurveyProgramLifecycle::Closed ||
+            sim.state().date.day % 30 != 0)
+            continue;
+        const auto& reports = programById(sim.state(), id).reports;
+        require(!reports.empty() && reports.back().endDay == sim.state().date.day,
+                "one report due on actual physical closure day may publish once");
+        const auto retained = reports.size();
+        require(sim.advanceDaysDetailed(90).advancedDays == 90 &&
+                    programById(sim.state(), id).reports.size() == retained,
+                "closure-day report is not repeated on later global boundaries");
+        deep::validateGameState(sim.state());
+        provedBoundary = true;
+    }
+    require(provedBoundary, "controlled survey timing reaches a global closure-day boundary");
+}
+
 } // namespace
 
 int main() {
@@ -632,6 +698,8 @@ int main() {
         test_barren_and_already_known_visits_have_zero_information_receipts();
         test_bulk_and_daily_advancement_have_same_durable_result();
         test_return_budget_uses_projected_departure_date();
+        test_closed_survey_does_not_publish_future_period_reports();
+        test_survey_closure_day_report_publishes_at_most_once();
     } catch (const std::exception& ex) {
         std::cerr << "Survey program execution test failure: " << ex.what() << '\n';
         return EXIT_FAILURE;

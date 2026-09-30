@@ -996,7 +996,26 @@ void finishSurveyProgramsDay(GameState& state, const SurveyProgramExecutionHooks
                   "Survey charter cancelled after safe stop");
         }
         updateIssue(state, program, hooks);
-        writeDueReport(state, program, hooks);
+        // Closure can occur in the opening pass or during this end-of-day
+        // return check. A report due today may still publish once. Earlier
+        // closures never create later reports; the dated audit supplies the
+        // closure boundary without adding another persisted status field.
+        bool closedToday = false;
+        if (program.lifecycle == SurveyProgramLifecycle::Closed &&
+            state.date.day >= program.nextReportDay) {
+            for (auto it = state.eventLog.rbegin(); it != state.eventLog.rend() &&
+                                                       it->day == state.date.day;
+                 ++it) {
+                const auto* audit = std::get_if<SurveyProgramAuditEvent>(&it->payload);
+                if (audit && audit->programId == program.id &&
+                    audit->kind == SurveyProgramAuditKind::Closed) {
+                    closedToday = true;
+                    break;
+                }
+            }
+        }
+        if (program.lifecycle != SurveyProgramLifecycle::Closed || closedToday)
+            writeDueReport(state, program, hooks);
     }
 }
 

@@ -538,7 +538,8 @@ AdvanceResult Simulation::advanceDaysDetailed(const int days) {
         // report exception would leave a partly advanced, unsaveable world.
         if (nextDay > std::numeric_limits<std::int64_t>::max() - 30 &&
             (std::any_of(state_.surveyPrograms.begin(), state_.surveyPrograms.end(),
-                [=](const auto& p) { return p.nextReportDay == nextDay; }) ||
+                [=](const auto& p) { return p.lifecycle != SurveyProgramLifecycle::Closed &&
+                                            p.nextReportDay == nextDay; }) ||
              std::any_of(state_.freightPrograms.begin(), state_.freightPrograms.end(),
                 [=](const auto& p) { return p.lifecycle != FreightProgramLifecycle::Closed && p.nextReportDay == nextDay; }) ||
              std::any_of(state_.maintenancePrograms.begin(), state_.maintenancePrograms.end(),

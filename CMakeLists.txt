@@ -126,6 +126,8 @@ if(DEEP_SIGNAL_BUILD_APP)
         src/app/TechnicalDevelopmentQueries.cpp
         src/app/SiteDevelopmentFixture.cpp
         src/app/TechnicalDevelopmentFixture.cpp
+        src/app/P6ProvingFixture.cpp
+        src/app/P6ReviewPack.cpp
         src/app/SimulationService.cpp
     )
 
@@ -484,6 +486,39 @@ if(DEEP_SIGNAL_BUILD_TESTS)
     endif()
 
     if(DEEP_SIGNAL_BUILD_SAVE AND DEEP_SIGNAL_BUILD_APP)
+        add_executable(deep_signal_p6_whole_loop_tests tests/p6_whole_loop_tests.cpp)
+        target_link_libraries(deep_signal_p6_whole_loop_tests PRIVATE deep_signal_app)
+        target_compile_options(deep_signal_p6_whole_loop_tests PRIVATE ${DEEP_SIGNAL_WARNINGS})
+        add_test(NAME deep_signal_p6_whole_loop_tests COMMAND deep_signal_p6_whole_loop_tests)
+        add_executable(deep_signal_p6_leakage_tests tests/p6_leakage_tests.cpp)
+        target_link_libraries(deep_signal_p6_leakage_tests PRIVATE deep_signal_app)
+        target_compile_options(deep_signal_p6_leakage_tests PRIVATE ${DEEP_SIGNAL_WARNINGS})
+        add_test(NAME deep_signal_p6_leakage_tests COMMAND deep_signal_p6_leakage_tests)
+        add_executable(deep_signal_p6_accounting_tests tests/p6_accounting_tests.cpp)
+        target_link_libraries(deep_signal_p6_accounting_tests PRIVATE deep_signal_app)
+        target_compile_options(deep_signal_p6_accounting_tests PRIVATE ${DEEP_SIGNAL_WARNINGS})
+        add_test(NAME deep_signal_p6_accounting_tests COMMAND deep_signal_p6_accounting_tests)
+        add_executable(deep_signal_p6_continuation_tests tests/p6_continuation_tests.cpp)
+        target_link_libraries(deep_signal_p6_continuation_tests PRIVATE deep_signal_app)
+        target_compile_options(deep_signal_p6_continuation_tests PRIVATE ${DEEP_SIGNAL_WARNINGS})
+        add_test(NAME deep_signal_p6_continuation_tests COMMAND deep_signal_p6_continuation_tests)
+        add_executable(deep_signal_p6_soak_tests tests/p6_soak_tests.cpp)
+        target_link_libraries(deep_signal_p6_soak_tests PRIVATE deep_signal_app)
+        target_compile_options(deep_signal_p6_soak_tests PRIVATE ${DEEP_SIGNAL_WARNINGS})
+        add_test(NAME deep_signal_p6_soak_tests COMMAND deep_signal_p6_soak_tests)
+        add_executable(deep_signal_p6_technical_tests tests/p6_technical_tests.cpp)
+        target_link_libraries(deep_signal_p6_technical_tests PRIVATE deep_signal_app)
+        target_compile_options(deep_signal_p6_technical_tests PRIVATE ${DEEP_SIGNAL_WARNINGS})
+        add_test(NAME deep_signal_p6_technical_tests COMMAND deep_signal_p6_technical_tests)
+        add_executable(deep_signal_p6_contention_tests tests/p6_contention_tests.cpp)
+        target_link_libraries(deep_signal_p6_contention_tests PRIVATE deep_signal_app)
+        target_compile_options(deep_signal_p6_contention_tests PRIVATE ${DEEP_SIGNAL_WARNINGS})
+        add_test(NAME deep_signal_p6_contention_tests COMMAND deep_signal_p6_contention_tests)
+        add_executable(deep_signal_p6_review_pack_tests tests/p6_review_pack_tests.cpp)
+        target_link_libraries(deep_signal_p6_review_pack_tests PRIVATE deep_signal_app)
+        target_compile_options(deep_signal_p6_review_pack_tests PRIVATE ${DEEP_SIGNAL_WARNINGS})
+        add_test(NAME deep_signal_p6_review_pack_tests COMMAND deep_signal_p6_review_pack_tests)
+
         add_executable(deep_signal_information_relationship_tests
             tests/information_relationship_tests.cpp
             src/ui_imgui/InformationRelationships.cpp

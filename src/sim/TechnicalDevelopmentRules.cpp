@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <unordered_set>
 
 namespace deep {
 namespace {
@@ -412,7 +413,42 @@ TechnicalReadiness technicalDevelopmentReadiness(const GameState& state,
 
 std::string technicalDevelopmentCondition(const GameState& state,
                                           const TechnicalDevelopmentProgram& program) {
-    return technicalDevelopmentReadiness(state, program).explanation;
+    return projectedTechnicalDevelopmentReadiness(state, program).explanation;
+}
+
+TechnicalReadiness projectedTechnicalDevelopmentReadiness(
+    const GameState& state, const TechnicalDevelopmentProgram& program) {
+    if (program.lifecycle != TechnicalDevelopmentLifecycle::Authorized ||
+        program.stage == TechnicalDevelopmentStage::Complete)
+        return technicalDevelopmentReadiness(state, program);
+    OpeningProgramContext opening(state);
+    std::unordered_set<std::int64_t> projectedTeams;
+    for (const auto& earlier : state.technicalDevelopmentPrograms) {
+        if (earlier.id == program.id)
+            break;
+        const auto ready = technicalDevelopmentReadiness(state, earlier, &opening);
+        if (!ready.canWork || !ready.teamId || !ready.facilityId ||
+            !projectedTeams.insert(ready.teamId->value).second)
+            continue;
+        opening.debitTechnicalFacility(*ready.facilityId, ready.work);
+        for (std::size_t index = 0; index < processedMaterialCount(); ++index)
+            if (ready.consumed.amount[index] > 0.0)
+                opening.debit(earlier.charter.developmentColonyId,
+                              static_cast<ProcessedMaterial>(index), ready.consumed.amount[index]);
+    }
+    auto result = technicalDevelopmentReadiness(state, program, &opening);
+    if (result.canWork && result.teamId && projectedTeams.contains(result.teamId->value)) {
+        result.canWork = false;
+        result.cause = TechnicalWaitCause::TeamControlled;
+        result.work = 0.0;
+        result.consumed = {};
+        result.explanation = "Waiting: engineering team is committed to earlier technical work this opening";
+    } else if (result.canWork) {
+        const auto unconstrained = technicalDevelopmentReadiness(state, program);
+        if (unconstrained.canWork && result.work + 1e-9 < unconstrained.work)
+            result.explanation = "Ready for partial technical work under shared opening capacity";
+    }
+    return result;
 }
 
 } // namespace deep

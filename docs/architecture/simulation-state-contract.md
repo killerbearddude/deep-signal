@@ -936,3 +936,29 @@ P5 does not introduce a generic technology graph, research points, random
 breakthroughs, equipment freight/warehouse genealogy, broad education,
 Mission Control, formal analysis of P4B operating records, local site refining,
 final propulsion or P6 proving mechanics.
+
+## P6: reporting and technical-readiness corrections
+
+A closed SurveyProgram no longer publishes future 30-day reports. A report due
+on its physical closure day may publish once. Earlier report rows remain
+immutable. Closure is identified by the dated existing survey audit; no new
+status field or schema version is needed. A closed program retains its last
+report cursor, so validation accepts a current v18 snapshot with a historical
+post-closure report sequence while requiring contiguous intervals and a cursor
+that agrees with the rows actually stored. Closed survey cursors do not reserve
+future report-date capacity in the time runner.
+
+TechnicalDevelopment execution still spends one transient opening facility
+budget in stored program order. Query conditions and report waiting reasons now
+project earlier eligible technical work against a separate scratch copy of
+that budget and opening material stock. A later program with zero remaining
+share reports the facility constraint; a positive reduced share reports partial
+work. The projection does not commit work, reserve stock, change program order,
+or replace the executor's physical checks. Already held engineering leases
+retain their typed controller explanation. New draft previews use the same
+mechanical readiness rules and project their proposed position after existing
+technical programs.
+
+P6 proving drivers, independent ledgers, comparison helpers and review saves
+are developer tooling. They create no gameplay authority or persisted state.
+The active gameplay save format remains v18.

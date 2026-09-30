@@ -70,6 +70,10 @@ void reconcileTechnicalStageAfterAmendment(const GameState&, TechnicalDevelopmen
 [[nodiscard]] TechnicalReadiness
 technicalDevelopmentReadiness(const GameState&, const TechnicalDevelopmentProgram&,
                               const OpeningProgramContext* opening = nullptr);
+// Projects earlier technical programs against scratch opening budgets. This is
+// explanatory next-opening advice; it neither reserves stocks nor dispatches.
+[[nodiscard]] TechnicalReadiness projectedTechnicalDevelopmentReadiness(
+    const GameState&, const TechnicalDevelopmentProgram&);
 // Checks structural intent; missing executable resources remain valid waiting state.
 [[nodiscard]] std::optional<std::string>
 validateTechnicalDevelopmentCharter(const GameState&, const TechnicalDevelopmentCharter&,
