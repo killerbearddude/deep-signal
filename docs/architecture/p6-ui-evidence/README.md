@@ -7,7 +7,7 @@ not establish P6 acceptance.
 | Metadata | Recorded value |
 | --- | --- |
 | Evidence branch | `p6-ui-evidence` |
-| P6 UI evidence commit | Recorded after artifact staging; see publication handback. |
+| P6 UI evidence commit | `42bfaaab18f3393138c5f6757e0e5a4a0a29d68a` contains the complete screenshot/session/finding artifacts. The final provenance-only branch head is recorded in the handback. |
 | Source gameplay/UI head | `f0f11672238b5edc70f72a607644b2d2abc447dd` |
 | Evidence branch SHA at capture start | Same as source head; final evidence commit is recorded in the handback. |
 | OS | Linux Mint 22.1 Xia, Linux 6.8.0-139-generic |
@@ -91,6 +91,21 @@ from these findings; no remediation or functional change was performed here.
 Small text, clipped columns and overlapping/translucent content are visible
 readability risks. Keyboard-only navigation, screen-reader support and measured
 contrast were not tested, so no accessibility compliance claim is made.
+
+## Verification and scope
+
+Both `cmake --build build-p6-ui --parallel 2` and the `deep_signal_cli` target
+build completed with no work required at the pinned source head. A fresh
+review pack was generated successfully. All 37 accepted images were inspected
+and their original PNG dimensions checked. Working, staged and committed diff
+checks passed; the branch delta is confined to this evidence directory.
+The complete CTest suites were not rerun for this documentation/image-only pass.
+PR #15's gameplay branch remains the source of the prior automated evidence.
+
+No gameplay/UI source, save schema, constants, scenario rule or automated test
+was changed. No remediation PR or P6 merge was performed. This diagnostic pass
+provides the evidence for an owner scope decision and makes no P6 acceptance
+claim.
 
 ## Screenshot inventory
 
