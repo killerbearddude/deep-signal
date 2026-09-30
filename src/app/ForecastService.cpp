@@ -1,5 +1,6 @@
 #include "app/ForecastService.h"
 #include "sim/ShipDesignRules.h"
+#include "sim/TechnicalShipyardRules.h"
 
 // Responsibility: compute advisory economy, production, and fleet projections
 // without advancing simulation state. Local balances own temporary calculations;
@@ -501,13 +502,15 @@ void addModifierRow(std::vector<ForecastModifierBreakdownRow>& rows, const std::
                                                       const bool constructible,
                                                       const bool blockedByDesignAhead,
                                                       const double colonyCapacity,
-                                                      const bool blockedByMaterial) {
+                                                      const bool blockedByMaterial,
+                                                      const bool blockedByComponentSupply) {
     if (order.status == ShipyardOrderStatus::Completed || order.quantityCompleted >= order.quantityRequested) {
         return "Complete";
     }
 
     if (!constructible) return "Waiting for design";
-    if (blockedByDesignAhead) return "Queued behind design blocker";
+    if (blockedByDesignAhead) return "Queued behind blocked FIFO order";
+    if (blockedByComponentSupply) return "Waiting for developed-component supply";
 
     if (colonyCapacity <= 0.0) {
         return "Waiting for capacity";
@@ -528,7 +531,8 @@ void addModifierRow(std::vector<ForecastModifierBreakdownRow>& rows, const std::
                                                        const std::string& designConstraint,
                                                        const bool blockedByDesignAhead,
                                                        const bool blockedByMaterial,
-                                                       const std::string& blockingMaterialName) {
+                                                       const std::string& blockingMaterialName,
+                                                       const std::string& componentSupplyExplanation) {
     std::ostringstream out;
     out << "Queue position " << queuePosition << "; "
         << buildPointsAhead << " build points ahead + "
@@ -537,12 +541,15 @@ void addModifierRow(std::vector<ForecastModifierBreakdownRow>& rows, const std::
     if (!designConstraint.empty()) {
         out << "; design cannot be constructed: " << designConstraint;
     } else if (blockedByDesignAhead) {
-        out << "; earlier non-constructible design holds the FIFO queue";
+        out << "; an earlier design or developed-component supply blocker holds the FIFO queue";
     } else if (etaDays.has_value()) {
         out << " / " << colonyCapacity << " colony capacity per day = " << *etaDays << " day(s)";
     } else {
         out << "; no positive colony shipyard capacity, so ETA cannot be estimated";
     }
+
+    if (!componentSupplyExplanation.empty())
+        out << "; " << componentSupplyExplanation;
 
     if (blockedByMaterial) {
         out << "; current processed stockpiles are short of " << blockingMaterialName;
@@ -828,10 +835,32 @@ std::vector<ProductionBacklogForecast> ForecastService::productionBacklog() cons
         const int shipsRemaining = std::max(0, order.quantityRequested - order.quantityCompleted);
         const ShipDesignEvaluation design = shipClass == nullptr ? ShipDesignEvaluation{}
             : evaluateShipDesign(state.shipComponents, shipClass->components);
-        const double buildPointsRemaining = shipClass == nullptr ? 0.0 : totalBuildPointsRemaining(order, design.buildPoints);
-        const ProcessedMaterialSet requiredMaterials = shipClass == nullptr
+        DevelopedSupplyPlanResult supplyPlan;
+        bool blockedByComponentSupply = false;
+        if (shipClass && classRequiresDevelopedComponent(state, *shipClass)) {
+            if (order.currentHullSupplyPlan) {
+                supplyPlan.ready = true;
+                supplyPlan.explanation = "Current hull has a frozen developed-component supply plan";
+                supplyPlan.plan = order.currentHullSupplyPlan;
+            } else {
+                supplyPlan = planDevelopedComponentSupply(state, order, *shipClass, order.colonyId,
+                    state.date.day == std::numeric_limits<std::int64_t>::max() ? state.date.day
+                                                                              : state.date.day + 1);
+            }
+            blockedByComponentSupply = !supplyPlan.ready;
+        }
+        const double currentHullBuildPoints = supplyPlan.plan ? supplyPlan.plan->effectiveBuildPoints
+                                                               : design.buildPoints;
+        const double buildPointsRemaining = shipClass == nullptr ? 0.0
+            : std::max(0.0, currentHullBuildPoints - order.accumulatedBuildPoints) +
+                  std::max(0, shipsRemaining - 1) * design.buildPoints;
+        ProcessedMaterialSet requiredMaterials = shipClass == nullptr
             ? ProcessedMaterialSet{}
             : scaledMaterialSet(design.buildCost, shipsRemaining);
+        if (supplyPlan.plan) {
+            requiredMaterials = scaledMaterialSet(design.buildCost, std::max(0, shipsRemaining - 1));
+            requiredMaterials.addSet(supplyPlan.plan->effectiveBuildCost);
+        }
 
         int queuePosition = 0;
         double buildPointsAhead = 0.0;
@@ -853,7 +882,7 @@ std::vector<ProductionBacklogForecast> ForecastService::productionBacklog() cons
                 queuePosition = queueIt->nextQueuePosition;
                 buildPointsAhead = queueIt->buildPointsAhead;
                 blockedByDesignAhead = queueIt->blockedByDesign;
-                if (design.constructible && !blockedByDesignAhead) {
+                if (design.constructible && !blockedByDesignAhead && !blockedByComponentSupply) {
                     etaDays = queueAwareShipyardEtaDays(buildPointsAhead, buildPointsRemaining, colonyCapacity);
                 }
 
@@ -862,7 +891,7 @@ std::vector<ProductionBacklogForecast> ForecastService::productionBacklog() cons
                 // same colony, regardless of whether materials later delay it.
                 ++queueIt->nextQueuePosition;
                 queueIt->buildPointsAhead += buildPointsRemaining;
-                if (!design.constructible) queueIt->blockedByDesign = true;
+                if (!design.constructible || blockedByComponentSupply) queueIt->blockedByDesign = true;
             }
         }
 
@@ -895,11 +924,14 @@ std::vector<ProductionBacklogForecast> ForecastService::productionBacklog() cons
             .buildPointsRemaining = buildPointsRemaining,
             .requiredMaterialsRemaining = requiredMaterials,
             .blockedByMaterial = blockedByMaterial,
+            .blockedByComponentSupply = blockedByComponentSupply,
             .blockingMaterial = blockedByMaterial ? blockingMaterial : std::nullopt,
             .blockingMaterialName = blockedByMaterial ? blockerName : std::string{},
+            .componentSupplyExplanation = blockedByComponentSupply ? supplyPlan.explanation : std::string{},
             .etaDays = etaDays,
             .statusName = productionBacklogStatusName(order, design.constructible,
-                                                      blockedByDesignAhead, colonyCapacity, blockedByMaterial),
+                                                      blockedByDesignAhead, colonyCapacity, blockedByMaterial,
+                                                      blockedByComponentSupply),
             .explanation = productionBacklogExplanation(queuePosition,
                                                         buildPointsAhead,
                                                         buildPointsRemaining,
@@ -908,7 +940,8 @@ std::vector<ProductionBacklogForecast> ForecastService::productionBacklog() cons
                                                         design.constructible ? std::string{} : design.constraints.front(),
                                                         blockedByDesignAhead,
                                                         blockedByMaterial,
-                                                        blockerName)
+                                                        blockerName,
+                                                        blockedByComponentSupply ? supplyPlan.explanation : std::string{})
         });
     }
 

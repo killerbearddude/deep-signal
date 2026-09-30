@@ -9,6 +9,7 @@
 #include "sim/EquipmentServiceRules.h"
 #include "sim/MaintenanceProgramValidation.h"
 #include "sim/ProcessingAllocationRules.h"
+#include "sim/TechnicalDevelopmentValidation.h"
 
 // Implements zero-trust validation for fully assembled simulation snapshots.
 // The checks intentionally duplicate some SQLite CHECK/FOREIGN KEY constraints
@@ -486,6 +487,27 @@ void validateEventPayload(const GameState& state, const SimEventPayload& payload
                          event.cause>=SiteOperatingIssueCause::None && event.cause<=SiteOperatingIssueCause::DutyAllowance &&
                          event.episodeStartedDay>=0 && event.episodeStartedDay<=state.date.day &&
                          isFinite(event.amount) && event.amount>=0 && !event.detail.empty(),"Site audit values invalid");
+        } else if constexpr (std::is_same_v<Event, TechnicalDevelopmentAuditEvent>) {
+            const auto* program = findById(state.technicalDevelopmentPrograms, event.programId);
+            requireState(program && event.opportunityId == program->charter.opportunityId,
+                         "Technical audit program/opportunity mismatch");
+            requireState(event.kind >= TechnicalDevelopmentAuditKind::Authorized &&
+                             event.kind <= TechnicalDevelopmentAuditKind::Closed &&
+                             event.stage >= TechnicalDevelopmentStage::ConceptEngineering &&
+                             event.stage <= TechnicalDevelopmentStage::Complete &&
+                             event.charterRevision > 0 &&
+                             event.charterRevision <= program->charterRevision &&
+                             isFinite(event.amount) && event.amount >= 0.0 && !event.detail.empty(),
+                         "Technical-development audit values are invalid");
+        } else if constexpr (std::is_same_v<Event, PrototypeIntegrationAuditEvent>) {
+            requireState(findById(state.prototypeComponentUnits, event.prototypeId) &&
+                             findById(state.shipyardOrders, event.orderId) && event.hullNumber > 0 &&
+                             event.kind >= PrototypeIntegrationAuditKind::Reserved &&
+                             event.kind <= PrototypeIntegrationAuditKind::Consumed,
+                         "Prototype integration audit identity is invalid");
+            if (event.shipId)
+                requireState(findById(state.ships, *event.shipId),
+                             "Prototype integration audit ship is missing");
         } else if constexpr (std::is_same_v<Event, CommandRejectedEvent>) {
             requireState(!event.reason.empty(), "command-rejected event reason must be non-empty");
         }
@@ -519,6 +541,28 @@ void validateGameState(const GameState& state) {
     validateIdsAndCounter<SimEvent, EventId>(state.eventLog, state.ids.nextEventId, "event");
     validateIdsAndCounter<ResourceSite, SiteId>(state.resourceSites,state.ids.nextSiteId,"resource site");
     validateIdsAndCounter<SiteDevelopmentProgram, SiteDevelopmentProgramId>(state.siteDevelopmentPrograms,state.ids.nextSiteDevelopmentProgramId,"site development");
+    validateIdsAndCounter<TechnologyOpportunity, TechnologyOpportunityId>(
+        state.technologyOpportunities, state.ids.nextTechnologyOpportunityId, "technology opportunity");
+    validateIdsAndCounter<TechnicalFacility, TechnicalFacilityId>(
+        state.technicalFacilities, state.ids.nextTechnicalFacilityId, "technical facility");
+    validateIdsAndCounter<TechnicalDevelopmentProgram, TechnicalDevelopmentProgramId>(
+        state.technicalDevelopmentPrograms, state.ids.nextTechnicalDevelopmentProgramId,
+        "technical development");
+    validateIdsAndCounter<PrototypeDesignRecord, PrototypeDesignId>(
+        state.prototypeDesigns, state.ids.nextPrototypeDesignId, "prototype design");
+    validateIdsAndCounter<PrototypeComponentUnit, PrototypeComponentUnitId>(
+        state.prototypeComponentUnits, state.ids.nextPrototypeComponentUnitId, "prototype component");
+    validateIdsAndCounter<TechnicalTestRecord, TechnicalTestId>(
+        state.technicalTestRecords, state.ids.nextTechnicalTestId, "technical test");
+    validateIdsAndCounter<DevelopedComponentRevision, DevelopedComponentRevisionId>(
+        state.developedComponentRevisions, state.ids.nextDevelopedComponentRevisionId,
+        "developed component revision");
+    validateIdsAndCounter<ComponentProductionCapability, ComponentProductionCapabilityId>(
+        state.componentProductionCapabilities, state.ids.nextComponentProductionCapabilityId,
+        "component production capability");
+    validateIdsAndCounter<SupportQualificationRecord, SupportQualificationId>(
+        state.supportQualificationRecords, state.ids.nextSupportQualificationId,
+        "support qualification");
     validateSiteModuleCatalog(state.siteModuleCatalog);
     if(state.siteConstructionFamilyId)
         requireState(containsId(state.equipmentFamilies,*state.siteConstructionFamilyId),"Site Construction binding references missing family");
@@ -723,6 +767,7 @@ void validateGameState(const GameState& state) {
     validateMaintenanceState(state);
     validateSiteDevelopmentState(state);
     validateSiteOperationState(state);
+    validateTechnicalDevelopmentState(state);
     // Shared physical owners must be unique across purpose-specific programs,
     // including field development and stationary instrument maintenance.
     std::unordered_set<std::int64_t> fleetLeases, engineeringLeases;
@@ -732,6 +777,7 @@ void validateGameState(const GameState& state) {
     for(const auto& p:state.freightPrograms) claimFleet(p.leasedFleetId);
     for(const auto& p:state.maintenancePrograms) {claimFleet(p.leasedTenderId);claimEngineer(p.leasedTeamId);}
     for(const auto& p:state.siteDevelopmentPrograms) {claimFleet(p.leasedBuilderId);claimEngineer(p.leasedTeamId);}
+    for(const auto& p:state.technicalDevelopmentPrograms) claimEngineer(p.leasedTeamId);
     // Opening occupancy protects one team's and one hull's whole action, even
     // when a fractional work step did not exhaust their theoretical throughput.
     std::set<std::pair<std::int64_t,std::int64_t>> engineerDays, workshopDays;
@@ -745,6 +791,9 @@ void validateGameState(const GameState& state) {
         claimWork(r.day,job->teamId,r.workshopShipId);
     }
     for(const auto& p:state.siteDevelopmentPrograms) for(const auto& r:p.workReceipts) claimWork(r.day,r.teamId,r.workshopShipId);
+    for(const auto& p:state.technicalDevelopmentPrograms) for(const auto& r:p.receipts)
+        requireState(engineerDays.emplace(r.day,r.teamId.value).second,
+                     "Engineering team worked for two programs on one opening");
 
     std::int64_t previousEventId = 0;
     std::int64_t previousEventDay = 0;

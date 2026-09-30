@@ -46,6 +46,15 @@ struct AnalysisJobTag;
 struct AssessmentTag;
 struct SiteTag;
 struct SiteDevelopmentProgramTag;
+struct TechnologyOpportunityTag;
+struct TechnicalFacilityTag;
+struct TechnicalDevelopmentProgramTag;
+struct PrototypeDesignTag;
+struct PrototypeComponentUnitTag;
+struct TechnicalTestTag;
+struct DevelopedComponentRevisionTag;
+struct ComponentProductionCapabilityTag;
+struct SupportQualificationTag;
 
 using StarSystemId = Id<StarSystemTag>;
 using BodyId = Id<BodyTag>;
@@ -71,5 +80,14 @@ using AnalysisJobId = Id<AnalysisJobTag>;
 using AssessmentId = Id<AssessmentTag>;
 using SiteId = Id<SiteTag>;
 using SiteDevelopmentProgramId = Id<SiteDevelopmentProgramTag>;
+using TechnologyOpportunityId = Id<TechnologyOpportunityTag>;
+using TechnicalFacilityId = Id<TechnicalFacilityTag>;
+using TechnicalDevelopmentProgramId = Id<TechnicalDevelopmentProgramTag>;
+using PrototypeDesignId = Id<PrototypeDesignTag>;
+using PrototypeComponentUnitId = Id<PrototypeComponentUnitTag>;
+using TechnicalTestId = Id<TechnicalTestTag>;
+using DevelopedComponentRevisionId = Id<DevelopedComponentRevisionTag>;
+using ComponentProductionCapabilityId = Id<ComponentProductionCapabilityTag>;
+using SupportQualificationId = Id<SupportQualificationTag>;
 
 } // namespace deep

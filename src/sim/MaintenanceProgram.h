@@ -11,10 +11,13 @@
 namespace deep {
 
 enum class MaintenanceTeamLocation { Colony, Fleet };
+// Development expertise is independent of equipment-family service training.
+enum class EngineeringQualification { PrototypeInstrumentation };
 struct MaintenanceTeam {
     MaintenanceTeamId id;
     std::string name;
     std::vector<EquipmentFamilyId> qualifiedFamilies{};
+    std::vector<EngineeringQualification> engineeringQualifications{};
     double workdaysPerDay = 1.0;
     MaintenanceTeamLocation location = MaintenanceTeamLocation::Colony;
     std::optional<ColonyId> colonyId;

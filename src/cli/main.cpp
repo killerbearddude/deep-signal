@@ -1,4 +1,5 @@
 #include "app/SiteDevelopmentFixture.h"
+#include "app/TechnicalDevelopmentFixture.h"
 #include "sim/Commands.h"
 #include "sim/Events.h"
 #include "sim/Minerals.h"
@@ -91,6 +92,13 @@ struct EventPrinter {
     void operator()(const deep::SiteOperatingAuditEvent& event) const {
         std::cout << "  Site " << event.siteId.value << ": " << event.detail << '\n';
     }
+    void operator()(const deep::TechnicalDevelopmentAuditEvent& event) const {
+        std::cout << "  Technical development " << event.programId.value << ": " << event.detail << '\n';
+    }
+    void operator()(const deep::PrototypeIntegrationAuditEvent& event) const {
+        std::cout << "  Prototype " << event.prototypeId.value << " audit "
+                  << static_cast<int>(event.kind) << " for order " << event.orderId.value << '\n';
+    }
     void operator()(const deep::CommandRejectedEvent& event) const {
         std::cout << "  Command rejected: " << event.reason << '\n';
     }
@@ -122,6 +130,18 @@ void printAdvance(const deep::Simulation& sim, const deep::AdvanceResult& result
 // fleet return non-zero; the final location is printed but not asserted. Use the
 // regression tests for arrival correctness; exit zero alone does not prove arrival.
 int main(int argc, char** argv) {
+    if (argc == 3 && std::string_view{argv[1]} == "--write-technical-development-fixture") {
+        try {
+            const auto state = deep::earnTechnicalDevelopmentFixture();
+            deep::save::SaveGameRepository::save(argv[2], state);
+            std::cout << "Saved earned technical-development fixture at day " << state.date.day
+                      << " to " << argv[2] << '\n';
+            return 0;
+        } catch (const std::exception& error) {
+            std::cerr << error.what() << '\n';
+            return 1;
+        }
+    }
     if(argc==3&&(std::string_view{argv[1]}=="--write-site-development-fixture"||std::string_view{argv[1]}=="--write-site-development-zero-fixture")) {
         try {
             const auto state=deep::earnSiteDevelopmentFixture(90,std::string_view{argv[1]}=="--write-site-development-fixture");

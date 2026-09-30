@@ -49,6 +49,9 @@ std::optional<ProgramController> controllingEngineeringTeam(const GameState& s, 
     for (const auto& p : s.siteDevelopmentPrograms)
         if (p.leasedTeamId == id)
             return p.id;
+    for (const auto& p : s.technicalDevelopmentPrograms)
+        if (p.leasedTeamId == id)
+            return p.id;
     return std::nullopt;
 }
 std::optional<SiteDevelopmentProgramId> controllingSiteConstruction(const GameState& s, SiteId id) {
@@ -83,12 +86,18 @@ std::string programControllerLabel(const GameState& state, const ProgramControll
                     if (p.id == id)
                         return "analysis program " + p.charter.name + " (#" + std::to_string(id.value) + ")";
                 return std::string("analysis program ") + std::to_string(id.value);
-            } else {
+            } else if constexpr (std::is_same_v<IdType, SiteDevelopmentProgramId>) {
                 for (const auto& p : state.siteDevelopmentPrograms)
                     if (p.id == id)
                         return "site development program " + p.charter.assignments.name + " (#" +
                                std::to_string(id.value) + ")";
                 return std::string("site development program ") + std::to_string(id.value);
+            } else {
+                for (const auto& p : state.technicalDevelopmentPrograms)
+                    if (p.id == id)
+                        return "technical development program " + p.charter.name + " (#" +
+                               std::to_string(id.value) + ")";
+                return std::string("technical development program ") + std::to_string(id.value);
             }
         },
         owner);
@@ -98,15 +107,15 @@ std::vector<ProgramController> programOpeningOrder(const GameState& state) {
     std::vector<ProgramController> result;
     result.reserve(state.surveyPrograms.size() + state.freightPrograms.size() +
                    state.maintenancePrograms.size() + state.analysisPrograms.size() +
-                   state.siteDevelopmentPrograms.size());
-    std::size_t s = 0, f = 0, m = 0, a = 0, d = 0;
+                   state.siteDevelopmentPrograms.size() + state.technicalDevelopmentPrograms.size());
+    std::size_t s = 0, f = 0, m = 0, a = 0, d = 0, t = 0;
     while (s < state.surveyPrograms.size() || f < state.freightPrograms.size() ||
            m < state.maintenancePrograms.size() || a < state.analysisPrograms.size() ||
-           d < state.siteDevelopmentPrograms.size()) {
+           d < state.siteDevelopmentPrograms.size() || t < state.technicalDevelopmentPrograms.size()) {
         int selected = -1;
         std::int64_t day = 0;
         const auto consider = [&](int kind, std::int64_t createdDay) {
-            // Strict comparison keeps Survey/Freight/Maintenance/Analysis tie order.
+            // Strict comparison keeps the declared six-kind tie order.
             if (selected == -1 || createdDay < day) {
                 selected = kind;
                 day = createdDay;
@@ -122,6 +131,8 @@ std::vector<ProgramController> programOpeningOrder(const GameState& state) {
             consider(3, state.analysisPrograms[a].createdDay);
         if (d < state.siteDevelopmentPrograms.size())
             consider(4, state.siteDevelopmentPrograms[d].createdDay);
+        if (t < state.technicalDevelopmentPrograms.size())
+            consider(5, state.technicalDevelopmentPrograms[t].createdDay);
         if (selected == 0)
             result.emplace_back(state.surveyPrograms[s++].id);
         else if (selected == 1)
@@ -130,8 +141,10 @@ std::vector<ProgramController> programOpeningOrder(const GameState& state) {
             result.emplace_back(state.maintenancePrograms[m++].id);
         else if (selected == 3)
             result.emplace_back(state.analysisPrograms[a++].id);
-        else
+        else if (selected == 4)
             result.emplace_back(state.siteDevelopmentPrograms[d++].id);
+        else
+            result.emplace_back(state.technicalDevelopmentPrograms[t++].id);
     }
     return result;
 }
@@ -156,8 +169,10 @@ std::optional<ProgramPendingIssue> pendingProgramIssue(const GameState& state) {
                     return inspect(state.maintenancePrograms);
                 else if constexpr (std::is_same_v<std::decay_t<decltype(id)>, AnalysisProgramId>)
                     return inspect(state.analysisPrograms);
-                else
+                else if constexpr (std::is_same_v<std::decay_t<decltype(id)>, SiteDevelopmentProgramId>)
                     return inspect(state.siteDevelopmentPrograms);
+                else
+                    return inspect(state.technicalDevelopmentPrograms);
             },
             owner);
         if (issue)
@@ -175,6 +190,8 @@ OpeningProgramContext::OpeningProgramContext(const GameState& state) {
             availableObservations.insert(b.id.value);
     for (const auto& c : state.colonies)
         analysisThroughput.push_back({c.id, c.analysisCapacity});
+    for (const auto& facility : state.technicalFacilities)
+        technicalFacilityThroughput.push_back({facility.id, facility.engineeringWorkdaysPerDay});
     stock.reserve(state.colonies.size() + state.resourceSites.size());
     for (const auto& c : state.colonies)
         stock.push_back({c.id, c.processedStockpile, c.stockpile});
@@ -193,6 +210,9 @@ OpeningProgramContext::OpeningProgramContext(const GameState& state) {
         if (p.holdsSiteConstruction)
             occupiedConstructionSites.insert(p.charter.siteId.value);
     }
+    for (const auto& p : state.technicalDevelopmentPrograms)
+        if (p.leasedTeamId)
+            occupiedMaintenanceTeams.insert(p.leasedTeamId->value);
     for (const auto& p : state.surveyPrograms) {
         if (p.leasedFleetId)
             occupiedFleets.insert(p.leasedFleetId->value);
@@ -282,6 +302,21 @@ void OpeningProgramContext::debitSiteRawRoom(SiteId id, double amount) {
             return;
         }
     throw std::logic_error("Missing opening site raw room");
+}
+
+double OpeningProgramContext::availableTechnicalFacility(TechnicalFacilityId id) const {
+    const auto it = std::find_if(technicalFacilityThroughput.begin(), technicalFacilityThroughput.end(),
+                                 [&](const auto& row) { return row.first == id; });
+    return it == technicalFacilityThroughput.end() ? 0.0 : it->second;
+}
+
+void OpeningProgramContext::debitTechnicalFacility(TechnicalFacilityId id, double amount) {
+    const auto it = std::find_if(technicalFacilityThroughput.begin(), technicalFacilityThroughput.end(),
+                                 [&](const auto& row) { return row.first == id; });
+    if (it == technicalFacilityThroughput.end() || !std::isfinite(amount) || amount < 0.0 ||
+        it->second + 1e-9 < amount)
+        throw std::logic_error("Technical-development work exceeded opening facility budget");
+    it->second = std::max(0.0, it->second - amount);
 }
 std::optional<PendingDecision> pendingDecision(const GameState& state) {
     if (const auto issue = pendingProgramIssue(state))

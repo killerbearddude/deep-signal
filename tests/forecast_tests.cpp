@@ -598,7 +598,7 @@ void test_production_backlog_explains_non_constructible_revision() {
             backlog.front().explanation.find("Internal volume") != std::string::npos &&
             !backlog.front().etaDays.has_value(),
             "overflow order names the physical blocker without inventing ETA");
-    require(backlog.at(1).statusName == "Queued behind design blocker" &&
+    require(backlog.at(1).statusName == "Queued behind blocked FIFO order" &&
             !backlog.at(1).etaDays.has_value(),
             "later FIFO order cannot leapfrog a non-constructible predecessor");
 }

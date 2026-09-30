@@ -113,6 +113,8 @@ struct ShipyardOrderSummary {
     double requiredBuildPoints = 0.0;
     ShipyardOrderStatus status = ShipyardOrderStatus::Active;
     std::string statusName;
+    std::string developedComponentSupply;
+    std::vector<PrototypeComponentUnitId> reservedPrototypes;
 };
 
 // Display-ready production backlog row. This mirrors app-layer production
@@ -137,6 +139,8 @@ struct ProductionBacklogSummary {
     std::vector<ProcessedMaterialStockpileSummary> requiredMaterialsRemaining;
     std::optional<int> etaDays;
     std::string blockingMaterialName;
+    bool blockedByComponentSupply = false;
+    std::string componentSupplyExplanation;
     std::string statusName;
     std::string explanation;
 };
@@ -173,6 +177,13 @@ struct ShipComponentSummary {
     std::optional<EquipmentServiceProfile> serviceProfile;
     std::vector<WorkshopFamilyRate> workshopRates;
     std::optional<MeasurementProfile> measurementProfile;
+    bool demonstrated = false;
+    std::optional<TechnologyOpportunityId> opportunityId;
+    std::optional<double> publicTargetThreshold;
+    std::vector<TechnicalTestId> testProvenance;
+    std::vector<ColonyId> serialProductionColonies;
+    std::vector<ColonyId> availablePrototypeColonies;
+    std::vector<MaintenanceTeamId> supportQualifiedTeams;
 };
 
 struct ShipDesignDraftPreview {
@@ -769,6 +780,55 @@ struct SiteDevelopmentPreview {
     SitePackageEvaluation package;
 };
 
+// Technical projections expose public objectives and acquired evidence only.
+// Candidate truth is deliberately absent before completed physical tests.
+enum class TechnologyOpportunityStatus {
+    NotPursued,
+    InDevelopment,
+    PrototypeDemonstrated,
+    LocalProductionReady,
+    Supported
+};
+struct TechnologyOpportunitySummary {
+    TechnologyOpportunity opportunity;
+    std::string baselineComponentName;
+    TechnologyOpportunityStatus status = TechnologyOpportunityStatus::NotPursued;
+    std::string statusName;
+    std::optional<double> demonstratedThreshold;
+    std::vector<ColonyId> productionColonies;
+    std::vector<MaintenanceTeamId> supportTeams;
+};
+struct TechnicalDevelopmentSummary {
+    TechnicalDevelopmentProgram program;
+    std::string condition;
+    std::string opportunityName;
+    std::string colonyName;
+    std::string requestedFacilityName;
+    std::string requestedTeamName;
+    bool facilityRequestPending = false;
+    bool teamRequestPending = false;
+    std::string facilityName;
+    std::string teamName;
+    std::string teamLocation;
+    std::string teamOwner;
+    double facilityRate = 0.0;
+    double requiredStageWork = 0.0;
+    ProcessedMaterialSet requiredStageMaterials;
+    std::optional<PrototypeComponentUnit> prototype;
+    std::vector<TechnicalTestRecord> tests;
+    std::optional<DevelopedComponentRevision> developed;
+    bool localProductionReady = false;
+    bool supportQualified = false;
+};
+struct TechnicalDevelopmentPreview {
+    bool structurallyValid = false;
+    std::string validationMessage;
+    std::string condition;
+    TechnicalDevelopmentStage startingStage = TechnicalDevelopmentStage::ConceptEngineering;
+    double requiredWork = 0.0;
+    ProcessedMaterialSet requiredMaterials;
+};
+
 class SimulationQueries {
 public:
     [[nodiscard]] std::vector<StockLocationSummary> stockLocations() const;
@@ -776,6 +836,12 @@ public:
     [[nodiscard]] std::vector<SiteSummary> sites() const;
     [[nodiscard]] std::vector<SiteDevelopmentSummary> siteDevelopments() const;
     [[nodiscard]] SiteDevelopmentPreview previewSiteDevelopment(const CreateSiteDevelopmentCommand&) const;
+    [[nodiscard]] std::vector<TechnologyOpportunitySummary> technologyOpportunities() const;
+    [[nodiscard]] std::vector<TechnicalFacility> technicalFacilities() const;
+    [[nodiscard]] std::vector<TechnicalDevelopmentSummary> technicalDevelopments() const;
+    [[nodiscard]] TechnicalDevelopmentPreview previewTechnicalDevelopment(
+        const TechnicalDevelopmentCharter&,
+        std::optional<TechnicalDevelopmentProgramId> amending = std::nullopt) const;
 
     // Binds queries to an application service. Returned summaries are snapshots
     // copied from the service state at the time each query is called.

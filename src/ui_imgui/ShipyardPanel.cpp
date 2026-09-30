@@ -240,6 +240,17 @@ void ShipyardPanel::renderDesignEditor(const SimulationQueries& queries, Simulat
             ImGui::Text("%s v%d: threshold %.1f normalized signal; accessibility %s",method.name.c_str(),
                 method.methodVersion,method.detectionThreshold,method.measuresAccessibility?"coarse class":"unmeasured");
         }
+        if (catalog[i].demonstrated) {
+            ImGui::Text("Demonstrated technical component; public target %.3f, acquired tests %zu",
+                        catalog[i].publicTargetThreshold.value_or(0.0),
+                        catalog[i].testProvenance.size());
+            ImGui::Text("Serial production colonies: %zu | Available local prototypes: %zu | Support teams: %zu",
+                        catalog[i].serialProductionColonies.size(),
+                        catalog[i].availablePrototypeColonies.size(),
+                        catalog[i].supportQualifiedTeams.size());
+            ImGui::TextWrapped("Design admission is independent of production and support readiness. "
+                               "A shipyard order waits for a local prototype or qualified process.");
+        }
         if (catalog[i].serviceProfile) {
             const auto& profile = *catalog[i].serviceProfile;
             ImGui::TextDisabled("Survey duty capacity %.1f/unit | family #%lld | %.3f team-workdays/restored duty/unit",

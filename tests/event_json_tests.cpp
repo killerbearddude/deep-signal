@@ -119,6 +119,15 @@ bool samePayload(const deep::SimEventPayload& lhs, const deep::SimEventPayload& 
             return left.siteId==right.siteId && left.kind==right.kind && left.operatingRevision==right.operatingRevision &&
                 left.cause==right.cause && left.episodeStartedDay==right.episodeStartedDay &&
                 almostEqual(left.amount,right.amount) && left.detail==right.detail;
+        } else if constexpr (std::is_same_v<Left, deep::TechnicalDevelopmentAuditEvent>) {
+            return left.programId == right.programId && left.kind == right.kind &&
+                   left.opportunityId == right.opportunityId && left.stage == right.stage &&
+                   left.charterRevision == right.charterRevision &&
+                   almostEqual(left.amount, right.amount) && left.detail == right.detail;
+        } else if constexpr (std::is_same_v<Left, deep::PrototypeIntegrationAuditEvent>) {
+            return left.kind == right.kind && left.prototypeId == right.prototypeId &&
+                   left.orderId == right.orderId && left.hullNumber == right.hullNumber &&
+                   left.shipId == right.shipId;
         } else if constexpr (std::is_same_v<Left, deep::CommandRejectedEvent>) {
             return left.reason == right.reason;
         }
@@ -399,6 +408,11 @@ void test_event_type_names_are_stable_schema_v1_strings() {
             "resource_survey_completed type name is stable");
     require(deep::save::eventTypeName(deep::SurveyProgramAuditEvent{}) == "survey_program_audit",
             "survey_program_audit type name is stable");
+    require(deep::save::eventTypeName(deep::TechnicalDevelopmentAuditEvent{}) ==
+                "technical_development_audit" &&
+                deep::save::eventTypeName(deep::PrototypeIntegrationAuditEvent{}) ==
+                    "prototype_integration_audit",
+            "P5 audit type names are stable");
     require(deep::save::eventTypeName(deep::CommandRejectedEvent{}) == "command_rejected",
             "command_rejected type name is stable");
 }
@@ -418,6 +432,15 @@ void runAllTests() {
     requireRoundTrip(deep::SiteOperatingAuditEvent{deep::SiteId{7},deep::SiteOperatingAuditKind::IssueRaised,
         3,deep::SiteOperatingIssueCause::ZeroRecovery,10,0,"No Water Ice recovered under these operating conditions"},
         "site operating issue preserves cause and dated episode without geological truth");
+    requireRoundTrip(deep::TechnicalDevelopmentAuditEvent{
+        deep::TechnicalDevelopmentProgramId{2}, deep::TechnicalDevelopmentAuditKind::TestCompleted,
+        deep::TechnologyOpportunityId{3}, deep::TechnicalDevelopmentStage::PrototypeTesting,
+        2, 6.0, "Measured prototype threshold"},
+        "technical evidence audit preserves opportunity/stage/result identity");
+    requireRoundTrip(deep::PrototypeIntegrationAuditEvent{
+        deep::PrototypeIntegrationAuditKind::Consumed, deep::PrototypeComponentUnitId{4},
+        deep::ShipyardOrderId{5}, 1, deep::ShipId{6}},
+        "prototype integration audit preserves exact unit/order/hull/ship identity");
     // P3C operating work and service history use distinct typed envelopes.
     requireRoundTrip(deep::EquipmentDutyUsedEvent{deep::FleetId{1},deep::ShipId{2},deep::ShipComponentId{4},
         deep::SurveyProgramId{1},1.0,8.0,9.0}, "actual timed duty event round-trips");

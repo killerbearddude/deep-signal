@@ -1,7 +1,8 @@
 # Simulation state contract
 
 This document records the H1A processing-configuration, H1B save-continuity,
-P1 shipyard-intent, P2 vessel-design, P3A delegated-survey, P3B freight, P3C service, P4A scientific evidence and P4B site-development contracts.
+P1 shipyard-intent, P2 vessel-design, P3A delegated-survey, P3B freight, P3C service,
+P4A scientific evidence, P4B site development, and P5 technical-development contracts.
 The in-memory `GameState` remains the authority for
 gameplay; SQLite stores explicit snapshots, not a second live world or a replay
 stream.
@@ -123,6 +124,12 @@ vectors:
 | `siteModuleCatalog` (v17) | `site_module_catalog` |
 | `resourceSites` (v17) | `resource_sites` |
 | `siteDevelopmentPrograms` (v17) | `site_development_programs` |
+| `technologyOpportunities` (v18) | `technology_opportunities` |
+| `technicalFacilities` (v18) | `technical_facilities` |
+| `technicalDevelopmentPrograms` (v18) | `technical_development_programs` |
+| `prototypeDesigns` / `prototypeComponentUnits` (v18) | `prototype_designs` / `prototype_component_units` |
+| `technicalTestRecords` / `developedComponentRevisions` (v18) | `technical_test_records` / `developed_component_revisions` |
+| `componentProductionCapabilities` / `supportQualificationRecords` (v18) | `component_production_capabilities` / `support_qualifications` |
 | `shipClasses` | `ship_classes` |
 | `shipyardOrders` | `shipyard_orders` |
 | `ships` | `ships` |
@@ -144,44 +151,44 @@ by mineral/material enum index, while metadata and ID counters remain keyed by
 name. `event_log` remains ordered by Event ID, with strictly increasing IDs and
 nondecreasing event days validated; it has no second ordinal.
 
-The current v17 writer assigns contiguous ordinals beginning at zero. Schema
+The current v18 writer assigns contiguous ordinals beginning at zero. Schema
 constraints require non-null integer, nonnegative, unique values in each scope;
 the reader also checks storage type and contiguity before accepting a sequence.
 Every ordered read uses explicit `ORDER BY`. Missing, duplicate, fractional,
-negative, or gapped v17 order data is rejected rather than reconstructed in
+negative, or gapped v18 order data is rejected rather than reconstructed in
 legacy ID order. Empty collections are valid.
 
 ## Schema versions and destination policy
 
-H1A wrote schema v10, H1B wrote v11, P2 wrote v12, P3A wrote v13 and P3B wrote v14. P3C wrote v15 and P4A wrote v16. P4B writes and reads
-**v17 only**. Deep Signal is in active pre-release development: development
+H1A wrote schema v10, H1B wrote v11, P2 wrote v12, P3A wrote v13 and P3B wrote v14. P3C wrote v15, P4A wrote v16, and P4B wrote v17. P5 writes and reads
+**v18 only**. Deep Signal is in active pre-release development: development
 save files are disposable, and compatibility across schema versions is not
 guaranteed unless a future milestone explicitly establishes it. This is the
 current development policy, not a permanent release policy. An older file,
-including v16, fails with an unsupported-schema error before gameplay
+including v17, fails with an unsupported-schema error before gameplay
 reconstruction. Load opens it read-only and does not modify it. Save refuses to
 overwrite older or unknown schemas. No automatic migration or in-place repair
 is performed.
 
-The v17 reader requires the current table, column, key, and foreign-key shape,
+The v18 reader requires the current table, column, key, and foreign-key shape,
 complete component and material-cost rows, class revision identity, ordered
 installations, program/team references, scoped target/receipt/report ordinals,
 freight commitment/custody/history references, and all H1B ordering checks. New
 freight numeric values and enums use strict SQLite storage-type readers. A
 version marker alone does not make a file valid.
 Destination recognition compares the user schema object set and each table's
-`table_xinfo`, `foreign_key_list`, and index shape with a freshly built v17
+`table_xinfo`, `foreign_key_list`, and index shape with a freshly built v18
 reference. Save rejects user triggers even on known tables because their write
 effects are not trusted. Read-only Load may tolerate triggers on known tables.
 The check does not require byte-identical `CREATE TABLE` text or silently add
 missing columns.
 
 Save accepts a new path, a schema-empty database, or an existing compatible,
-valid v17 save. It validates its input state before opening the destination.
+valid v18 save. It validates its input state before opening the destination.
 The connection enables foreign keys before an immediate write transaction.
-Inside that transaction it verifies an existing v17 snapshot before replacement,
-creates v17 schema only if empty, replaces rows, rereads the new snapshot, and
-commits only after validation. Load opens read-only, checks v17 structure and
+Inside that transaction it verifies an existing v18 snapshot before replacement,
+creates v18 schema only if empty, replaces rows, rereads the new snapshot, and
+commits only after validation. Load opens read-only, checks v18 structure and
 foreign keys, and validates a detached snapshot within one read transaction.
 A failed replacement rolls back the previous valid save's **logical** contents
 and schema. A failed first save may leave an empty new file; neither path
@@ -199,16 +206,16 @@ references, processing-editor drafts, and window geometry are also outside the
 game snapshot. Successful Load replaces the world and clears old-world
 interaction and editor state through the existing lifecycle.
 
-The H1B ordering contract, retained in v17, supports comparisons of durable state, ordered
+The H1B ordering contract, retained in v18, supports comparisons of durable state, ordered
 children, counters, and meaningful event order when an unsaved and reloaded
 simulation continue under the **same build and same inputs**. It does not
 promise bitwise identical floating-point results across compilers, platforms,
-or build flags, or unchanged outcomes after gameplay rules change. The H1A processing checks remain in force for current v17 snapshots.
+or build flags, or unchanged outcomes after gameplay rules change. The H1A processing checks remain in force for current v18 snapshots.
 
 ## Review evidence
 
 H1A processing-allocation and H1B durable-ordering tests remain part of the
-current suite. Current persistence evidence covers v17 round trips,
+current suite. Current persistence evidence covers v18 round trips,
 same-build continuation, malformed-state rejection, transactional rollback,
 and explicit rejection of older development schemas without changing their
 source files. Historical v10/v11 fixtures remain documented as evidence of
@@ -646,10 +653,11 @@ remains the record of the pre-P4A scope decision; R04 is addressed by this secti
 
 ## P4B: v17 persistence boundary
 
-Only the active v17 snapshot is read or written. A v16 or older development
-file is rejected before gameplay reconstruction or replacement; no migration,
-synthetic site, catalog conversion, or in-place repair is provided. Historical
-rejection fixtures remain in use and have not been removed.
+P4B introduced the v17 snapshot described in this historical subsection. P5
+supersedes it with the current v18-only boundary below; v17 and older files are
+rejected before gameplay reconstruction or replacement. No migration, synthetic
+site/technology conversion, or in-place repair is provided. Historical rejection
+fixtures remain in use and have not been removed.
 
 `SiteSchema.cpp` and `SitePersistence.cpp` add focused relational records:
 
@@ -805,3 +813,126 @@ authored stocks, freight and commissioning transfers do not increment it. The
 existing recipe remains 1 Water Ice + 0.5 Volatiles per Propellant unit, subject
 to the existing allocation and capacity rules. These totals do not claim that
 mixed inventory can be attributed to an individual site after delivery.
+
+## P5: optional technical development and reusable capability
+
+The ordinary scenario exposes one public `TechnologyOpportunity`: Precision
+Characterization Array. Its target threshold is public; the deterministic
+candidate threshold is separate authored truth. Opportunity lists, authoring,
+readiness, estimates, component catalogs and controls never read candidate truth.
+Only completed physical prototype test work creates `TechnicalTestRecord`
+evidence. Three repeated tests establish the measured threshold without improving
+it. The demonstrated measurement profile and component are allocated once from
+that acquired result; the existing Specialist Survey Array and Characterization
+profile remain ordinary established catalog records.
+
+Technical development reuses `MaintenanceTeam` as the finite engineering
+workforce but keeps `EngineeringQualification::PrototypeInstrumentation`
+separate from service-family qualifications. Maintenance, SiteDevelopment and
+TechnicalDevelopment derive one shared engineering owner. A local
+`TechnicalFacility` supplies a transient opening work budget. Equal-day program
+ties retain Survey → Freight → Maintenance → Analysis → SiteDevelopment →
+TechnicalDevelopment. Requested identities confer no ownership, and the team
+must be physically at the fixed development colony. Missing people, facility,
+throughput, stock, or authority are valid waits.
+
+The reference stages are sequential, with at most one positive engineering
+action per program opening:
+
+| Stage | Workdays | Processed material | Durable result |
+| --- | ---: | --- | --- |
+| Concept engineering | 5 | 10 Electronics + 5 Composites | Immutable prototype design |
+| Prototype fabrication | 4 | 80 Electronics + 20 Composites | One physical local prototype unit |
+| Prototype testing | 3 | 15 Electronics + 6 Composites | Three dated tests and demonstrated component/profile |
+| Local process qualification | 4 | 40 Alloys + 30 Electronics + 20 Composites | Colony/facility-local serial process, available D+1 |
+| Support qualification | 2 | 10 Electronics + 10 Composites | Exact team gains Specialist Survey Instruments, usable D+1 |
+
+Every positive step is bounded by remaining stage work, team throughput,
+unspent opening facility capacity, actual/opening colony stock, floors and
+lifetime authority. Consumption is proportional and representable. Freight
+unloaded during the opening and material made in the later processing phase are
+first eligible on the next opening. Completed artifacts survive cancellation;
+a new program resumes at the first missing completed artifact and does not
+inherit cancelled partial work. Closed technical programs publish no later
+period reports.
+
+Completed test records are reusable evidence for the same physical prototype,
+including across cancelled programs. A successor pays one full workday,
+5 Electronics and 2 Composites for each missing test; its own stage work starts
+at zero. A cancelled fractional test remains sunk and supplies no credit. The
+third completed test publishes exactly one demonstrated revision, component and
+profile. Each test is backed by its originating program's complete-work receipt,
+with the actual facility, team and leader recorded there. Testing requires the
+prototype at the fixed development colony; P5 provides no prototype transport.
+
+Amendments change future authority without changing historical participants.
+The first positive production-qualification receipt pins that stage to its
+facility; the first positive support-qualification receipt pins its course to
+the exact team. These bindings are derived from receipts, with no extra saved
+assignment state. The UI distinguishes requested participants from the current
+stage's actual participants. Four process workdays must be paid at the recorded
+facility, and two support workdays must be performed by the recorded team.
+Finishing the pinned support course completes that program; qualifying a newly
+requested team requires another program. Scope amendments before closure may
+restore the same program's paid stage work after narrowing, while successors
+never inherit cancelled fractional work. Published reports retain their
+participant snapshots; a period containing work names its last actual action's
+participants, with the full sequence retained in receipts.
+
+The candidate mechanical design is known after concept work, while sensitivity
+remains unestablished. Its immutable demonstrated component has mass 35, volume
+100, power demand 55, survey capability 1, 90 BP, and serial cost 60 Electronics
++ 10 Composites. Its service profile uses Specialist Survey Instruments, 90
+duty, 0.25 team-workdays/restored duty and 0.75 Electronics + 0.75 Composites
+per restored duty. The measurement threshold comes from the three tests. A miss
+of the public target is a typed observed decision; acknowledgment permits the
+real component to continue toward production.
+
+### Prototype and serial shipyard supply
+
+A demonstrated component is immediately a normal immutable design option.
+Saving a class and authorizing an order do not require a production process.
+Only developed components consult P5 supply; established catalog components
+retain their existing manufacturability.
+
+When the next hull first receives positive yard capacity, its developed
+component supply is planned atomically. A complete local path is either an
+effective serial process or the exact number of available local prototype units.
+Zero capacity does not reserve a prototype. An incomplete path yields zero build
+progress and holds local FIFO. The resulting current-hull plan is durable and
+frozen until completion, so a process becoming available later cannot replace a
+reserved prototype in work.
+
+Prototype-backed requirements subtract only the component's embodied serial
+cost and component BP from that hull. Prototype/tooling overhead remains sunk
+development expenditure. Completion consumes each reserved unit once and links
+it to the produced ship; the next quantity receives a new plan. Serial hulls pay
+the full component cost/BP. Production capability is local to its exact colony
+and facility and becomes effective on the opening after qualification. P5 does
+not provide prototype freight, generic equipment inventory, refits or process
+copying.
+
+Ships containing the component use the normal power, survey exposure,
+observation, duty and maintenance paths. Threshold 6 detects normalized signal
+7 where established threshold 10 does not; a demonstrated threshold 9 does not.
+There is no target-based or P5-specific survey bonus. Developing the component
+does not train service skill. Support qualification changes only the exact real
+team; actual maintenance still needs compatible powered workshop hardware,
+co-location, parts and elapsed work.
+
+### v18 persistence boundary
+
+Schema v18 persists public opportunity and hidden truth separately, technical
+facilities and engineering qualifications, complete program work/report history,
+design/prototype/test/developed-component provenance, local process and support
+records, dynamic catalog/profile identities, frozen current-hull supply plans,
+prototype reservations/consumption receipts, audit events and counters. Reverse
+owners and daily facility budgets remain derived. Validation reconstructs
+stage material/work totals, test-derived component/profile values, D+1 dates,
+locality, support family, and effective prototype cost/BP credits. v17 and older
+development files are rejected read-only and are never migrated or overwritten.
+
+P5 does not introduce a generic technology graph, research points, random
+breakthroughs, equipment freight/warehouse genealogy, broad education,
+Mission Control, formal analysis of P4B operating records, local site refining,
+final propulsion or P6 proving mechanics.

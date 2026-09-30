@@ -12,6 +12,7 @@
 #include "sim/MaintenanceProgram.h"
 #include "sim/AnalysisProgram.h"
 #include "sim/SiteDevelopmentProgram.h"
+#include "sim/TechnicalDevelopment.h"
 
 #include <cstdint>
 #include <vector>
@@ -45,6 +46,15 @@ struct IdCounters {
     std::int64_t nextAssessmentId = 1;
     std::int64_t nextSiteId = 1;
     std::int64_t nextSiteDevelopmentProgramId = 1;
+    std::int64_t nextTechnologyOpportunityId = 1;
+    std::int64_t nextTechnicalFacilityId = 1;
+    std::int64_t nextTechnicalDevelopmentProgramId = 1;
+    std::int64_t nextPrototypeDesignId = 1;
+    std::int64_t nextPrototypeComponentUnitId = 1;
+    std::int64_t nextTechnicalTestId = 1;
+    std::int64_t nextDevelopedComponentRevisionId = 1;
+    std::int64_t nextComponentProductionCapabilityId = 1;
+    std::int64_t nextSupportQualificationId = 1;
 };
 
 // Complete state snapshot for the headless simulation. Public vectors are kept
@@ -85,6 +95,17 @@ struct GameState {
     std::optional<EquipmentFamilyId> siteConstructionFamilyId;
     std::vector<ResourceSite> resourceSites;
     std::vector<SiteDevelopmentProgram> siteDevelopmentPrograms;
+    std::vector<TechnologyOpportunity> technologyOpportunities;
+    std::vector<TechnologyCandidateTruth> technologyCandidateTruths;
+    std::vector<TechnicalFacility> technicalFacilities;
+    std::vector<TechnicalDevelopmentProgram> technicalDevelopmentPrograms;
+    std::vector<PrototypeDesignRecord> prototypeDesigns;
+    std::vector<PrototypeComponentUnit> prototypeComponentUnits;
+    std::vector<TechnicalTestRecord> technicalTestRecords;
+    std::vector<DevelopedComponentRevision> developedComponentRevisions;
+    std::vector<ComponentProductionCapability> componentProductionCapabilities;
+    std::vector<SupportQualificationRecord> supportQualificationRecords;
+    std::vector<PrototypeIntegrationReceipt> prototypeIntegrationReceipts;
 
     // Runtime-only economy telemetry is separated from the audit log so routine
     // mining can feed current-session UI, forecasts, and debugging without

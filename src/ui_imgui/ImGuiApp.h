@@ -28,6 +28,7 @@
 #include "ui_imgui/FreightProgramsPanel.h"
 #include "ui_imgui/MaintenanceProgramsPanel.h"
 #include "ui_imgui/SiteDevelopmentPanel.h"
+#include "ui_imgui/TechnicalDevelopmentPanel.h"
 #include "ui_imgui/SciencePanel.h"
 #include "ui_imgui/TimeControlPanel.h"
 
@@ -95,6 +96,7 @@ private:
     FreightProgramsPanel freightProgramsPanel_;
     MaintenanceProgramsPanel maintenanceProgramsPanel_;
     SiteDevelopmentPanel siteDevelopmentPanel_;
+    TechnicalDevelopmentPanel technicalDevelopmentPanel_;
     SciencePanel sciencePanel_;
     EventLogPanel eventLogPanel_;
     InspectorPanel inspectorPanel_;
