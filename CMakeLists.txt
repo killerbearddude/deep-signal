@@ -35,6 +35,11 @@ add_library(deep_signal_sim
     src/sim/SiteOperationValidation.cpp
     src/sim/SiteOperationExecution.cpp
     src/sim/SimulationSiteOperation.cpp
+    src/sim/TechnicalDevelopmentRules.cpp
+    src/sim/TechnicalDevelopmentExecution.cpp
+    src/sim/SimulationTechnicalDevelopment.cpp
+    src/sim/TechnicalShipyardRules.cpp
+    src/sim/TechnicalDevelopmentValidation.cpp
     src/sim/SiteOperationRules.cpp
     src/sim/StockAccess.cpp
     src/sim/ObservationRules.cpp
@@ -91,6 +96,8 @@ if(DEEP_SIGNAL_BUILD_SAVE)
         src/save/SciencePersistence.cpp
         src/save/SiteSchema.cpp
         src/save/SitePersistence.cpp
+        src/save/TechnicalSchema.cpp
+        src/save/TechnicalPersistence.cpp
         src/save/Schema.cpp
         src/save/SaveGameRepository.cpp
     )
@@ -116,7 +123,9 @@ if(DEEP_SIGNAL_BUILD_APP)
         src/app/MaintenanceQueries.cpp
         src/app/ScienceQueries.cpp
         src/app/SiteQueries.cpp
+        src/app/TechnicalDevelopmentQueries.cpp
         src/app/SiteDevelopmentFixture.cpp
+        src/app/TechnicalDevelopmentFixture.cpp
         src/app/SimulationService.cpp
     )
 
@@ -153,6 +162,7 @@ if(DEEP_SIGNAL_BUILD_UI)
         src/ui_imgui/FleetOrdersPanel.cpp
         src/ui_imgui/FreightProgramsPanel.cpp
         src/ui_imgui/SiteDevelopmentPanel.cpp
+        src/ui_imgui/TechnicalDevelopmentPanel.cpp
         src/ui_imgui/MaintenanceProgramsPanel.cpp
         src/ui_imgui/SciencePanel.cpp
         src/ui_imgui/ImGuiApp.cpp
@@ -193,6 +203,25 @@ if(DEEP_SIGNAL_BUILD_TESTS)
     target_link_libraries(deep_signal_site_package_tests PRIVATE deep_signal_sim)
     target_compile_options(deep_signal_site_package_tests PRIVATE ${DEEP_SIGNAL_WARNINGS})
     add_test(NAME deep_signal_site_package_tests COMMAND deep_signal_site_package_tests)
+
+    add_executable(deep_signal_technical_development_tests tests/technical_development_tests.cpp)
+    target_link_libraries(deep_signal_technical_development_tests PRIVATE deep_signal_sim)
+    target_compile_options(deep_signal_technical_development_tests PRIVATE ${DEEP_SIGNAL_WARNINGS})
+    add_test(NAME deep_signal_technical_development_tests COMMAND deep_signal_technical_development_tests)
+    add_executable(deep_signal_technical_program_edge_tests tests/technical_program_edge_tests.cpp)
+    target_link_libraries(deep_signal_technical_program_edge_tests PRIVATE deep_signal_sim)
+    target_compile_options(deep_signal_technical_program_edge_tests PRIVATE ${DEEP_SIGNAL_WARNINGS})
+    add_test(NAME deep_signal_technical_program_edge_tests COMMAND deep_signal_technical_program_edge_tests)
+    add_executable(deep_signal_technical_shipyard_tests tests/technical_shipyard_tests.cpp)
+    target_link_libraries(deep_signal_technical_shipyard_tests PRIVATE deep_signal_sim)
+    target_compile_options(deep_signal_technical_shipyard_tests PRIVATE ${DEEP_SIGNAL_WARNINGS})
+    add_test(NAME deep_signal_technical_shipyard_tests COMMAND deep_signal_technical_shipyard_tests)
+    if(DEEP_SIGNAL_BUILD_APP)
+        add_executable(deep_signal_technical_observation_tests tests/technical_observation_tests.cpp)
+        target_link_libraries(deep_signal_technical_observation_tests PRIVATE deep_signal_app)
+        target_compile_options(deep_signal_technical_observation_tests PRIVATE ${DEEP_SIGNAL_WARNINGS})
+        add_test(NAME deep_signal_technical_observation_tests COMMAND deep_signal_technical_observation_tests)
+    endif()
     # Independent science fixtures exercise the truth/record interpretation boundary.
     if(DEEP_SIGNAL_BUILD_APP)
         add_executable(deep_signal_analysis_readiness_tests tests/analysis_readiness_tests.cpp)
@@ -345,6 +374,15 @@ if(DEEP_SIGNAL_BUILD_TESTS)
         target_link_libraries(deep_signal_development_ui_tests PRIVATE deep_signal_app ${DEEP_SIGNAL_UI_DEPENDENCY_TARGET})
         target_compile_options(deep_signal_development_ui_tests PRIVATE ${DEEP_SIGNAL_WARNINGS})
         add_test(NAME deep_signal_development_ui_tests COMMAND deep_signal_development_ui_tests)
+        add_executable(deep_signal_technical_development_ui_tests
+            tests/technical_development_ui_tests.cpp
+            src/ui_imgui/TechnicalDevelopmentPanel.cpp
+            src/ui_imgui/OperationalWindow.cpp
+            src/ui_imgui/ShellLayout.cpp)
+        target_link_libraries(deep_signal_technical_development_ui_tests
+            PRIVATE deep_signal_app ${DEEP_SIGNAL_UI_DEPENDENCY_TARGET})
+        target_compile_options(deep_signal_technical_development_ui_tests PRIVATE ${DEEP_SIGNAL_WARNINGS})
+        add_test(NAME deep_signal_technical_development_ui_tests COMMAND deep_signal_technical_development_ui_tests)
         add_executable(deep_signal_maintenance_ui_tests tests/maintenance_ui_tests.cpp
             src/ui_imgui/MaintenanceProgramsPanel.cpp src/ui_imgui/OperationalWindow.cpp src/ui_imgui/ShellLayout.cpp)
         target_link_libraries(deep_signal_maintenance_ui_tests PRIVATE deep_signal_app ${DEEP_SIGNAL_UI_DEPENDENCY_TARGET})
@@ -486,6 +524,14 @@ if(DEEP_SIGNAL_BUILD_TESTS)
         target_link_libraries(deep_signal_maintenance_save_tests PRIVATE deep_signal_app)
         target_compile_options(deep_signal_maintenance_save_tests PRIVATE ${DEEP_SIGNAL_WARNINGS})
         add_test(NAME deep_signal_maintenance_save_tests COMMAND deep_signal_maintenance_save_tests)
+        add_executable(deep_signal_technical_save_tests tests/technical_save_tests.cpp)
+        target_link_libraries(deep_signal_technical_save_tests PRIVATE deep_signal_app)
+        target_compile_options(deep_signal_technical_save_tests PRIVATE ${DEEP_SIGNAL_WARNINGS})
+        add_test(NAME deep_signal_technical_save_tests COMMAND deep_signal_technical_save_tests)
+        add_executable(deep_signal_technical_integration_tests tests/technical_integration_tests.cpp)
+        target_link_libraries(deep_signal_technical_integration_tests PRIVATE deep_signal_app)
+        target_compile_options(deep_signal_technical_integration_tests PRIVATE ${DEEP_SIGNAL_WARNINGS})
+        add_test(NAME deep_signal_technical_integration_tests COMMAND deep_signal_technical_integration_tests)
         add_executable(deep_signal_maintenance_app_tests tests/maintenance_app_tests.cpp)
         target_link_libraries(deep_signal_maintenance_app_tests PRIVATE deep_signal_app)
         target_compile_options(deep_signal_maintenance_app_tests PRIVATE ${DEEP_SIGNAL_WARNINGS})
@@ -520,7 +566,9 @@ if(DEEP_SIGNAL_BUILD_TESTS)
             tests/save_contract_tests.cpp
             src/save/Database.cpp
             src/save/SiteSchema.cpp
-        src/save/SitePersistence.cpp
+            src/save/SitePersistence.cpp
+            src/save/TechnicalSchema.cpp
+            src/save/TechnicalPersistence.cpp
         src/save/Schema.cpp
             src/save/SaveGameRepository.cpp
             src/save/EventJson.cpp

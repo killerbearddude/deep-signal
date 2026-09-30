@@ -470,11 +470,11 @@ deep::GameState fifoShipyardFixture() {
     const deep::ShipyardOrderId higher{state.ids.nextShipyardOrderId++};
     state.shipyardOrders.push_back(deep::ShipyardOrder{
         .id = higher, .colonyId = colonyId, .shipClassId = shipClassId,
-        .quantityRequested = 1
+        .quantityRequested = 1, .currentHullSupplyPlan = std::nullopt
     });
     state.shipyardOrders.push_back(deep::ShipyardOrder{
         .id = lower, .colonyId = colonyId, .shipClassId = shipClassId,
-        .quantityRequested = 1
+        .quantityRequested = 1, .currentHullSupplyPlan = std::nullopt
     });
     require(state.shipyardOrders.front().id.value > state.shipyardOrders.back().id.value,
             "shipyard fixture reverses order ID versus execution order");
@@ -865,11 +865,13 @@ deep::GameState mixedOrderingFixture() {
     const deep::ShipyardOrderId highOrder{state.ids.nextShipyardOrderId++};
     state.shipyardOrders.push_back(deep::ShipyardOrder{
         .id = highOrder, .colonyId = terraColonyId,
-        .shipClassId = originalClassId, .quantityRequested = 1
+        .shipClassId = originalClassId, .quantityRequested = 1,
+        .currentHullSupplyPlan = std::nullopt
     });
     state.shipyardOrders.push_back(deep::ShipyardOrder{
         .id = lowOrder, .colonyId = terraColonyId,
-        .shipClassId = originalClassId, .quantityRequested = 1
+        .shipClassId = originalClassId, .quantityRequested = 1,
+        .currentHullSupplyPlan = std::nullopt
     });
 
     const deep::FleetId lowFleet = addSingleShipFleet(state, terraId, "Mixed lower fleet");

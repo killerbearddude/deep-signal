@@ -99,6 +99,12 @@ private:
     CommandResult amendSiteDevelopment(const AmendSiteDevelopmentCommand&);
     CommandResult setSiteDevelopmentLifecycle(SiteDevelopmentProgramId, SiteDevelopmentLifecycle);
     CommandResult acknowledgeSiteDevelopmentIssue(const AcknowledgeSiteDevelopmentIssueCommand&);
+    CommandResult createTechnicalDevelopment(const CreateTechnicalDevelopmentCommand&);
+    CommandResult amendTechnicalDevelopment(const AmendTechnicalDevelopmentCommand&);
+    CommandResult setTechnicalDevelopmentLifecycle(TechnicalDevelopmentProgramId,
+                                                   TechnicalDevelopmentLifecycle);
+    CommandResult acknowledgeTechnicalDevelopmentIssue(
+        const AcknowledgeTechnicalDevelopmentIssueCommand&);
     CommandResult createAnalysisProgram(const CreateAnalysisProgramCommand&);
     CommandResult amendAnalysisProgram(const AmendAnalysisProgramCommand&);
     CommandResult setAnalysisLifecycle(AnalysisProgramId, AnalysisLifecycle);

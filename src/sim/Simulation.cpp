@@ -1,6 +1,8 @@
 #include "sim/AnalysisProgramExecution.h"
 #include "sim/SiteDevelopmentExecution.h"
 #include "sim/SiteOperationExecution.h"
+#include "sim/TechnicalDevelopmentExecution.h"
+#include "sim/TechnicalShipyardRules.h"
 #include "sim/Simulation.h"
 #include "sim/ObservationAcquisition.h"
 #include "sim/ObservationRules.h"
@@ -469,6 +471,21 @@ CommandResult Simulation::execute(const SimCommand& command) {
             return setSiteDevelopmentLifecycle(concreteCommand.programId,SiteDevelopmentLifecycle::Closing);
         } else if constexpr (std::is_same_v<Command, AcknowledgeSiteDevelopmentIssueCommand>) {
             return acknowledgeSiteDevelopmentIssue(concreteCommand);
+        } else if constexpr (std::is_same_v<Command, CreateTechnicalDevelopmentCommand>) {
+            return createTechnicalDevelopment(concreteCommand);
+        } else if constexpr (std::is_same_v<Command, AmendTechnicalDevelopmentCommand>) {
+            return amendTechnicalDevelopment(concreteCommand);
+        } else if constexpr (std::is_same_v<Command, SuspendTechnicalDevelopmentCommand>) {
+            return setTechnicalDevelopmentLifecycle(concreteCommand.programId,
+                                                    TechnicalDevelopmentLifecycle::Suspended);
+        } else if constexpr (std::is_same_v<Command, ResumeTechnicalDevelopmentCommand>) {
+            return setTechnicalDevelopmentLifecycle(concreteCommand.programId,
+                                                    TechnicalDevelopmentLifecycle::Authorized);
+        } else if constexpr (std::is_same_v<Command, CancelTechnicalDevelopmentCommand>) {
+            return setTechnicalDevelopmentLifecycle(concreteCommand.programId,
+                                                    TechnicalDevelopmentLifecycle::Closed);
+        } else if constexpr (std::is_same_v<Command, AcknowledgeTechnicalDevelopmentIssueCommand>) {
+            return acknowledgeTechnicalDevelopmentIssue(concreteCommand);
         } else if constexpr (std::is_same_v<Command, CreateAnalysisProgramCommand>) {
             return createAnalysisProgram(concreteCommand);
         } else if constexpr (std::is_same_v<Command, AmendAnalysisProgramCommand>) {
@@ -530,6 +547,11 @@ AdvanceResult Simulation::advanceDaysDetailed(const int days) {
                 [=](const auto& p){return p.lifecycle!=AnalysisLifecycle::Closed && p.nextReportDay==nextDay;}) ||
              std::any_of(state_.siteDevelopmentPrograms.begin(),state_.siteDevelopmentPrograms.end(),
                 [=](const auto& p){return p.lifecycle!=SiteDevelopmentLifecycle::Closed && p.nextReportDay==nextDay;}) ||
+             std::any_of(state_.technicalDevelopmentPrograms.begin(),
+                         state_.technicalDevelopmentPrograms.end(), [=](const auto& p) {
+                             return p.lifecycle != TechnicalDevelopmentLifecycle::Closed &&
+                                    p.nextReportDay == nextDay;
+                         }) ||
              std::any_of(state_.resourceSites.begin(),state_.resourceSites.end(),
                 [=](const auto& p){return p.nextReportDay==nextDay;}))) {
             result.interrupted = true;
@@ -574,7 +596,8 @@ CommandResult Simulation::assignShipyardBuild(const AssignShipyardBuildCommand& 
         .quantityRequested = command.quantity,
         .quantityCompleted = 0,
         .accumulatedBuildPoints = 0.0,
-        .status = ShipyardOrderStatus::Active
+        .status = ShipyardOrderStatus::Active,
+        .currentHullSupplyPlan = std::nullopt
     };
 
     // Capture the ID before moving/copying the order into GameState so the event
@@ -1333,6 +1356,8 @@ void Simulation::simulateOneDay(std::vector<SimEvent>& emitted) {
             return startProgramMove(id,fleet,body,fuel,emitted);
         }, programHooks.emit,programHooks.prepareEvents};
     const SiteOperationHooks siteHooks{programHooks.emit,programHooks.prepareEvents};
+    const TechnicalDevelopmentExecutionHooks technicalHooks{programHooks.emit,
+                                                             programHooks.prepareEvents};
     runSitesOpeningDay(state_,opening,siteHooks);
     // Compare only unvisited vector heads. Released assets and inbound stock
     // stay unavailable to later programs until the next opening boundary.
@@ -1346,8 +1371,12 @@ void Simulation::simulateOneDay(std::vector<SimEvent>& emitted) {
                 runMaintenanceProgramOpeningDay(state_, *findById(state_.maintenancePrograms, id), opening, maintenanceHooks);
             } else if constexpr (std::is_same_v<decltype(id),AnalysisProgramId>) {
                 runAnalysisOpeningDay(state_,*findById(state_.analysisPrograms,id),opening,{programHooks.emit,programHooks.prepareEvents});
-            } else {
+            } else if constexpr (std::is_same_v<decltype(id), SiteDevelopmentProgramId>) {
                 runSiteDevelopmentOpeningDay(state_,*findById(state_.siteDevelopmentPrograms,id),opening,developmentHooks);
+            } else {
+                runTechnicalDevelopmentOpeningDay(
+                    state_, *findById(state_.technicalDevelopmentPrograms, id), opening,
+                    technicalHooks);
             }
         }, owner);
     }
@@ -1367,6 +1396,7 @@ void Simulation::simulateOneDay(std::vector<SimEvent>& emitted) {
     finishAnalysisDay(state_,{programHooks.emit,programHooks.prepareEvents});
     finishSiteDevelopmentsDay(state_,developmentHooks);
     finishSitesDay(state_,siteHooks);
+    finishTechnicalDevelopmentDay(state_, technicalHooks);
 }
 
 void Simulation::simulateMining(std::vector<SimEvent>&) {
@@ -1501,27 +1531,65 @@ void Simulation::simulateShipyards(std::vector<SimEvent>& emitted) {
             continue;
         }
 
+        // Bind developed-component supply only when this hull can receive
+        // positive yard work. Zero-capacity intent does not reserve prototypes.
+        if (!order.currentHullSupplyPlan && classRequiresDevelopedComponent(state_, *shipClass)) {
+            if (poolIt->remainingBuildPoints <= kBuildPointEpsilon) {
+                poolIt->remainingBuildPoints = 0.0;
+                continue;
+            }
+            auto supply = planDevelopedComponentSupply(state_, order, *shipClass, colony->id,
+                                                       state_.date.day);
+            if (!supply.ready || !supply.plan) {
+                poolIt->remainingBuildPoints = 0.0;
+                continue;
+            }
+            std::size_t prototypeCount = 0;
+            for (const auto& row : supply.plan->developedComponents)
+                prototypeCount += row.prototypeUnits.size();
+            if (prototypeCount > static_cast<std::size_t>(
+                                     std::numeric_limits<std::int64_t>::max() -
+                                     state_.ids.nextEventId))
+                throw std::runtime_error("Prototype reservation audit identity limit reached");
+            state_.eventLog.reserve(state_.eventLog.size() + prototypeCount);
+            emitted.reserve(emitted.size() + prototypeCount);
+            reservePrototypeSupply(state_, order, *supply.plan);
+            order.currentHullSupplyPlan = std::move(supply.plan);
+            for (const auto& row : order.currentHullSupplyPlan->developedComponents)
+                for (auto prototype : row.prototypeUnits)
+                    emitEvent(emitted, EventSeverity::Info,
+                              PrototypeIntegrationAuditEvent{
+                                  PrototypeIntegrationAuditKind::Reserved, prototype, order.id,
+                                  order.currentHullSupplyPlan->hullNumber, std::nullopt});
+        }
+        const double hullBuildPoints = order.currentHullSupplyPlan
+                                           ? order.currentHullSupplyPlan->effectiveBuildPoints
+                                           : design.buildPoints;
+        const ProcessedMaterialSet& hullBuildCost = order.currentHullSupplyPlan
+                                                        ? order.currentHullSupplyPlan->effectiveBuildCost
+                                                        : design.buildCost;
+
         // Complete as many ships as the order's existing progress plus this
         // colony's remaining daily capacity allows. When this order still needs
         // build points, it consumes the colony pool before later orders at the
         // same colony can receive any capacity.
         while (order.quantityCompleted < order.quantityRequested) {
-            if (order.accumulatedBuildPoints + kBuildPointEpsilon < design.buildPoints) {
+            if (order.accumulatedBuildPoints + kBuildPointEpsilon < hullBuildPoints) {
                 if (poolIt->remainingBuildPoints <= kBuildPointEpsilon) {
                     break;
                 }
 
-                const double buildPointsNeeded = design.buildPoints - order.accumulatedBuildPoints;
+                const double buildPointsNeeded = hullBuildPoints - order.accumulatedBuildPoints;
                 const double allocatedBuildPoints = std::min(poolIt->remainingBuildPoints, buildPointsNeeded);
                 order.accumulatedBuildPoints += allocatedBuildPoints;
                 poolIt->remainingBuildPoints -= allocatedBuildPoints;
 
-                if (order.accumulatedBuildPoints + kBuildPointEpsilon < design.buildPoints) {
+                if (order.accumulatedBuildPoints + kBuildPointEpsilon < hullBuildPoints) {
                     break;
                 }
             }
 
-            if (!colony->processedStockpile.canPay(design.buildCost)) {
+            if (!colony->processedStockpile.canPay(hullBuildCost)) {
                 // Processed-material shortages are temporary production pauses.
                 // Keep the order Active so future processing can satisfy the
                 // cost and complete the ship automatically. The blocked FIFO
@@ -1532,8 +1600,26 @@ void Simulation::simulateShipyards(std::vector<SimEvent>& emitted) {
                 break;
             }
 
-            colony->processedStockpile.subtract(design.buildCost);
-            order.accumulatedBuildPoints -= design.buildPoints;
+            std::size_t prototypeCount = 0;
+            if (order.currentHullSupplyPlan)
+                for (const auto& row : order.currentHullSupplyPlan->developedComponents)
+                    prototypeCount += row.prototypeUnits.size();
+            const std::size_t requiredEvents = 1 + prototypeCount;
+            if (requiredEvents > static_cast<std::size_t>(
+                                     std::numeric_limits<std::int64_t>::max() -
+                                     state_.ids.nextEventId) ||
+                state_.ids.nextFleetId == std::numeric_limits<std::int64_t>::max() ||
+                state_.ids.nextShipId == std::numeric_limits<std::int64_t>::max())
+                throw std::runtime_error("Developed-component hull identity limit reached");
+            state_.eventLog.reserve(state_.eventLog.size() + requiredEvents);
+            emitted.reserve(emitted.size() + requiredEvents);
+            state_.fleets.reserve(state_.fleets.size() + 1);
+            state_.ships.reserve(state_.ships.size() + 1);
+            state_.prototypeIntegrationReceipts.reserve(
+                state_.prototypeIntegrationReceipts.size() + prototypeCount);
+
+            colony->processedStockpile.subtract(hullBuildCost);
+            order.accumulatedBuildPoints -= hullBuildPoints;
             ++order.quantityCompleted;
 
             const double transferredPropellant = std::min(design.propellantCapacity,
@@ -1567,6 +1653,18 @@ void Simulation::simulateShipyards(std::vector<SimEvent>& emitted) {
             state_.fleets.push_back(std::move(fleet));
             state_.ships.push_back(std::move(ship));
 
+            if (order.currentHullSupplyPlan) {
+                const auto plan = *order.currentHullSupplyPlan;
+                consumePrototypeSupply(state_, order, shipId, state_.date.day);
+                for (const auto& row : plan.developedComponents)
+                    for (auto prototype : row.prototypeUnits)
+                        emitEvent(emitted, EventSeverity::Info,
+                                  PrototypeIntegrationAuditEvent{
+                                      PrototypeIntegrationAuditKind::Consumed, prototype, order.id,
+                                      plan.hullNumber, shipId});
+                order.currentHullSupplyPlan.reset();
+            }
+
             emitEvent(emitted, EventSeverity::Info, ShipCompletedEvent{
                 .orderId = order.id,
                 .colonyId = colony->id,
@@ -1574,6 +1672,8 @@ void Simulation::simulateShipyards(std::vector<SimEvent>& emitted) {
                 .fleetId = fleetId,
                 .shipClassId = shipClass->id
             });
+            if (classRequiresDevelopedComponent(state_, *shipClass))
+                break; // The next hull requires a newly bound local supply plan.
         }
 
         if (order.quantityCompleted >= order.quantityRequested) {

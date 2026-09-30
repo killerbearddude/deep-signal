@@ -194,8 +194,10 @@ void FleetOrdersPanel::render(const SimulationQueries& queries,
                         return service.execute(SuspendMaintenanceProgramCommand{id});
                     } else if constexpr (std::is_same_v<decltype(id),const AnalysisProgramId>) {
                         return service.execute(SuspendAnalysisProgramCommand{id});
-                    } else {
+                    } else if constexpr (std::is_same_v<decltype(id), const SiteDevelopmentProgramId>) {
                         return service.execute(SuspendSiteDevelopmentCommand{id});
+                    } else {
+                        return service.execute(SuspendTechnicalDevelopmentCommand{id});
                     }
                 }, *fleet->controllingProgram);
                 commandSucceeded_ = result.ok;
@@ -213,8 +215,10 @@ void FleetOrdersPanel::render(const SimulationQueries& queries,
                         return service.execute(CancelMaintenanceProgramCommand{id});
                     } else if constexpr (std::is_same_v<decltype(id),const AnalysisProgramId>) {
                         return service.execute(CancelAnalysisProgramCommand{id});
-                    } else {
+                    } else if constexpr (std::is_same_v<decltype(id), const SiteDevelopmentProgramId>) {
                         return service.execute(CancelSiteDevelopmentCommand{id});
+                    } else {
+                        return service.execute(CancelTechnicalDevelopmentCommand{id});
                     }
                 }, *fleet->controllingProgram);
                 commandSucceeded_ = result.ok;

@@ -2,8 +2,9 @@
 #include "save/MaintenancePersistence.h"
 #include "save/SciencePersistence.h"
 #include "save/SitePersistence.h"
+#include "save/TechnicalPersistence.h"
 
-// Responsibility: define the active v17 schema and inspect its structure.
+// Responsibility: define the active v18 schema and inspect its structure.
 // Tables mirror durable GameState records; event payloads remain inspectable JSON
 // text. Foreign keys and CHECK constraints provide a first line of validation,
 // not complete type/graph validation. Repository reconstruction and the domain
@@ -127,11 +128,11 @@ struct IndexShape {
 
 } // namespace
 
-void createSchemaV17(Database& db) {
+void createSchemaV18(Database& db) {
     db.execute(R"sql(
         CREATE TABLE schema_version (
             id INTEGER PRIMARY KEY CHECK(id = 1),
-            version INTEGER NOT NULL CHECK(version = 17)
+            version INTEGER NOT NULL CHECK(version = 18)
         );
 
         CREATE TABLE game_meta (
@@ -697,6 +698,7 @@ void createSchemaV17(Database& db) {
     createMaintenanceSchema(db);
     createScienceSchema(db);
     createSiteSchema(db);
+    createTechnicalSchema(db);
 }
 
 
@@ -726,10 +728,10 @@ std::int64_t readSchemaVersion(Database& db) {
 namespace {
 
 void requireStructure(Database& db, const bool allowKnownTableTriggers) {
-    // Compare against a fresh v17 declaration. Load permits known-table
+    // Compare against a fresh v18 declaration. Load permits known-table
     // triggers only because it is read-only; Save rejects their write effects.
     Database reference{std::filesystem::path{":memory:"}};
-    createSchemaV17(reference);
+    createSchemaV18(reference);
     const auto expectedObjects = readUserObjects(reference);
     std::vector<std::string> tables;
     for (const auto& object : expectedObjects) {
@@ -752,7 +754,7 @@ void requireStructure(Database& db, const bool allowKnownTableTriggers) {
 
 } // namespace
 
-void requireV17Structure(Database& db, const bool allowKnownTableTriggers) {
+void requireV18Structure(Database& db, const bool allowKnownTableTriggers) {
     requireStructure(db, allowKnownTableTriggers);
 }
 

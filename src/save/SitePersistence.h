@@ -6,7 +6,7 @@
 #include "sim/GameState.h"
 
 namespace deep::save {
-// Creates the v17-only site tables; no legacy reader or migration is provided.
+// Creates the current v18 site tables; no legacy reader or migration is provided.
 void createSiteSchema(Database&);
 // Delete site children before their construction/family/personnel parents.
 void clearSiteState(Database&);

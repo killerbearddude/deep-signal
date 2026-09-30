@@ -68,6 +68,12 @@ template <typename EnumT>
         return value >= 0 && value <= static_cast<std::int64_t>(SiteOperatingAuditKind::IssueAcknowledged);
     } else if constexpr (std::is_same_v<EnumT, SiteOperatingIssueCause>) {
         return value >= 0 && value <= static_cast<std::int64_t>(SiteOperatingIssueCause::DutyAllowance);
+    } else if constexpr (std::is_same_v<EnumT, TechnicalDevelopmentAuditKind>) {
+        return value >= 0 && value <= static_cast<std::int64_t>(TechnicalDevelopmentAuditKind::Closed);
+    } else if constexpr (std::is_same_v<EnumT, TechnicalDevelopmentStage>) {
+        return value >= 0 && value <= static_cast<std::int64_t>(TechnicalDevelopmentStage::Complete);
+    } else if constexpr (std::is_same_v<EnumT, PrototypeIntegrationAuditKind>) {
+        return value >= 0 && value <= static_cast<std::int64_t>(PrototypeIntegrationAuditKind::Consumed);
     } else {
         static_assert(std::is_enum_v<EnumT>, "enumFromValue requires an enum type");
         return false;
@@ -309,6 +315,25 @@ std::optional<SimEventPayload> readSiteAndFreightAudit(std::string_view type,Int
         e.operatingRevision=checkedIntFromPayload(integer("operating_revision"),"event.operating_revision");
         e.cause=enumFromValue<SiteOperatingIssueCause>(integer("cause"));e.episodeStartedDay=integer("episode_started_day");e.amount=number("amount");e.detail=text("detail");return e;
     }
+    if (type == "technical_development_audit") {
+        return TechnicalDevelopmentAuditEvent{
+            TechnicalDevelopmentProgramId{integer("program_id")},
+            enumFromValue<TechnicalDevelopmentAuditKind>(integer("kind")),
+            TechnologyOpportunityId{integer("opportunity_id")},
+            enumFromValue<TechnicalDevelopmentStage>(integer("stage")),
+            checkedIntFromPayload(integer("charter_revision"), "event.charter_revision"),
+            number("amount"), text("detail")};
+    }
+    if (type == "prototype_integration_audit") {
+        const auto ship = integer("ship_id");
+        if (ship < 0) throw std::runtime_error("Invalid prototype integration ship ID");
+        return PrototypeIntegrationAuditEvent{
+            enumFromValue<PrototypeIntegrationAuditKind>(integer("kind")),
+            PrototypeComponentUnitId{integer("prototype_id")},
+            ShipyardOrderId{integer("order_id")},
+            checkedIntFromPayload(integer("hull_number"), "event.hull_number"),
+            ship == 0 ? std::nullopt : std::optional{ShipId{ship}}};
+    }
     return std::nullopt;
 }
 
@@ -345,6 +370,10 @@ std::optional<SimEventPayload> readSiteAndFreightAudit(std::string_view type,Int
             return "site_development_audit";
         } else if constexpr (std::is_same_v<Event, SiteOperatingAuditEvent>) {
             return "site_operating_audit";
+        } else if constexpr (std::is_same_v<Event, TechnicalDevelopmentAuditEvent>) {
+            return "technical_development_audit";
+        } else if constexpr (std::is_same_v<Event, PrototypeIntegrationAuditEvent>) {
+            return "prototype_integration_audit";
         } else if constexpr (std::is_same_v<Event, CommandRejectedEvent>) {
             return "command_rejected";
         }
@@ -437,6 +466,16 @@ std::optional<SimEventPayload> readSiteAndFreightAudit(std::string_view type,Int
             object["site_id"]=event.siteId.value;object["kind"]=enumValue(event.kind);object["operating_revision"]=event.operatingRevision;
             object["cause"]=enumValue(event.cause);object["episode_started_day"]=event.episodeStartedDay;
             object["amount"]=checkedFiniteDoubleFromPayload(event.amount,"event.amount");object["detail"]=event.detail;
+        } else if constexpr (std::is_same_v<Event, TechnicalDevelopmentAuditEvent>) {
+            object["program_id"] = event.programId.value; object["kind"] = enumValue(event.kind);
+            object["opportunity_id"] = event.opportunityId.value; object["stage"] = enumValue(event.stage);
+            object["charter_revision"] = event.charterRevision;
+            object["amount"] = checkedFiniteDoubleFromPayload(event.amount, "event.amount");
+            object["detail"] = event.detail;
+        } else if constexpr (std::is_same_v<Event, PrototypeIntegrationAuditEvent>) {
+            object["kind"] = enumValue(event.kind); object["prototype_id"] = event.prototypeId.value;
+            object["order_id"] = event.orderId.value; object["hull_number"] = event.hullNumber;
+            object["ship_id"] = event.shipId ? event.shipId->value : 0;
         } else if constexpr (std::is_same_v<Event, CommandRejectedEvent>) {
             object["reason"] = event.reason;
         }
@@ -529,6 +568,16 @@ std::optional<SimEventPayload> readSiteAndFreightAudit(std::string_view type,Int
             out << "\"site_id\":" << event.siteId.value << ",\"kind\":" << enumValue(event.kind) << ",\"operating_revision\":" << event.operatingRevision
                 << ",\"cause\":" << enumValue(event.cause) << ",\"episode_started_day\":" << event.episodeStartedDay
                 << ",\"amount\":" << numberToJson(event.amount,"event.amount") << ",\"detail\":" << quoteJson(event.detail);
+        } else if constexpr (std::is_same_v<Event, TechnicalDevelopmentAuditEvent>) {
+            out << "\"program_id\":" << event.programId.value << ",\"kind\":" << enumValue(event.kind)
+                << ",\"opportunity_id\":" << event.opportunityId.value << ",\"stage\":" << enumValue(event.stage)
+                << ",\"charter_revision\":" << event.charterRevision
+                << ",\"amount\":" << numberToJson(event.amount,"event.amount")
+                << ",\"detail\":" << quoteJson(event.detail);
+        } else if constexpr (std::is_same_v<Event, PrototypeIntegrationAuditEvent>) {
+            out << "\"kind\":" << enumValue(event.kind) << ",\"prototype_id\":" << event.prototypeId.value
+                << ",\"order_id\":" << event.orderId.value << ",\"hull_number\":" << event.hullNumber
+                << ",\"ship_id\":" << (event.shipId ? event.shipId->value : 0);
         } else if constexpr (std::is_same_v<Event, CommandRejectedEvent>) {
             out << "\"reason\":" << quoteJson(event.reason);
         }

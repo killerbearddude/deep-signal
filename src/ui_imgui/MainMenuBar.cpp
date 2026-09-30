@@ -25,6 +25,7 @@ void applyWorkspace(Workspace workspace, PanelVisibility& visibility) {
     visibility.freightPrograms = false;
     visibility.maintenancePrograms = false;
     visibility.siteDevelopment = false;
+    visibility.technicalDevelopment = false;
     visibility.science = false;
     visibility.shipyard = false;
     visibility.economyForecast = false;
@@ -40,6 +41,7 @@ void applyWorkspace(Workspace workspace, PanelVisibility& visibility) {
         break;
     case Workspace::Production:
         visibility.siteDevelopment = true;
+        visibility.technicalDevelopment = true;
         visibility.shipyard = true;
         visibility.colonies = true;
         visibility.economyForecast = true;
@@ -126,6 +128,7 @@ float MainMenuBar::render(SimulationService& service, SaveLoadPanel& saveLoadPan
         ImGui::MenuItem("Freight / Supply Programs", nullptr, &visibility.freightPrograms);
         ImGui::MenuItem("Maintenance / Support Programs", nullptr, &visibility.maintenancePrograms);
         ImGui::MenuItem("Sites / Development", nullptr, &visibility.siteDevelopment);
+        ImGui::MenuItem("Technical Development", nullptr, &visibility.technicalDevelopment);
         ImGui::MenuItem("Evidence / Analysis",nullptr,&visibility.science);
         ImGui::MenuItem("Shipyard / Production", nullptr, &visibility.shipyard);
         ImGui::MenuItem("Economy Forecast", nullptr, &visibility.economyForecast);

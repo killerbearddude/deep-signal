@@ -69,6 +69,36 @@ void test_stable_merge_and_budget() {
     near(tomorrow.available(state,source.id,ProcessedMaterial::Propellant,20.0),1090.0,"actual credits spendable next opening");
 }
 
+void test_six_kind_tie_and_technical_facility_budget() {
+    auto state = createHomeSystemScenario();
+    SurveyProgram survey; survey.id = SurveyProgramId{1};
+    FreightProgram freightProgram; freightProgram.id = FreightProgramId{1};
+    MaintenanceProgram maintenance; maintenance.id = MaintenanceProgramId{1};
+    AnalysisProgram analysis; analysis.id = AnalysisProgramId{1};
+    SiteDevelopmentProgram site; site.id = SiteDevelopmentProgramId{1};
+    TechnicalDevelopmentProgram technical; technical.id = TechnicalDevelopmentProgramId{1};
+    state.surveyPrograms = {survey}; state.freightPrograms = {freightProgram};
+    state.maintenancePrograms = {maintenance}; state.analysisPrograms = {analysis};
+    state.siteDevelopmentPrograms = {site}; state.technicalDevelopmentPrograms = {technical};
+    require(programOpeningOrder(state) == std::vector<ProgramController>{
+                survey.id, freightProgram.id, maintenance.id, analysis.id, site.id, technical.id},
+            "equal-day program heads preserve Survey/Freight/Maintenance/Analysis/Site/Technical order");
+    require(ProgramController{maintenance.id} != ProgramController{technical.id},
+            "equal numeric maintenance and technical IDs remain typed identities");
+    // Detached ordering records above are intentionally not validated as full
+    // programs; facility scratch is independently derived from authored state.
+    state.surveyPrograms.clear(); state.freightPrograms.clear(); state.maintenancePrograms.clear();
+    state.analysisPrograms.clear(); state.siteDevelopmentPrograms.clear();
+    state.technicalDevelopmentPrograms.clear();
+    OpeningProgramContext opening(state);
+    const auto facility = state.technicalFacilities.front();
+    near(opening.availableTechnicalFacility(facility.id), 1.0,
+         "opening facility begins with one actual workday");
+    opening.debitTechnicalFacility(facility.id, 0.25);
+    near(opening.availableTechnicalFacility(facility.id), 0.75,
+         "technical facility throughput cannot be double-spent");
+}
+
 void test_report_date_limit_stops_before_physical_tick() {
     auto state=createDelegatedFreightScenario();
     const auto finalBoundary=std::numeric_limits<std::int64_t>::max()/30*30;
@@ -386,6 +416,7 @@ void test_replacement_fleet_waits_for_committed_return() {
 int main() {
     try {
         test_stable_merge_and_budget();
+        test_six_kind_tie_and_technical_facility_budget();
         test_report_date_limit_stops_before_physical_tick();
         test_scheduled_closure_report_once();
         test_typed_arbitration_and_manual_guards();

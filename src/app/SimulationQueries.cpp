@@ -1,4 +1,6 @@
 #include "sim/SiteOperationRules.h"
+#include "sim/TechnicalDevelopmentRules.h"
+#include "sim/TechnicalShipyardRules.h"
 #include "sim/StockAccess.h"
 #include "app/SimulationQueries.h"
 
@@ -885,6 +887,10 @@ void addProcessingWeight(ProcessingShares& weights, const ProcessedMaterial mate
             return "site_development";
         } else if constexpr (std::is_same_v<Event, SiteOperatingAuditEvent>) {
             return "site_operation";
+        } else if constexpr (std::is_same_v<Event, TechnicalDevelopmentAuditEvent>) {
+            return "technical_development";
+        } else if constexpr (std::is_same_v<Event, PrototypeIntegrationAuditEvent>) {
+            return "prototype_integration";
         } else if constexpr (std::is_same_v<Event, CommandRejectedEvent>) {
             return "command_rejected";
         }
@@ -933,6 +939,12 @@ void addProcessingWeight(ProcessingShares& weights, const ProcessedMaterial mate
             out << "Site development " << event.programId.value << ": " << event.detail;
         } else if constexpr (std::is_same_v<Event, SiteOperatingAuditEvent>) {
             out << "Site " << event.siteId.value << ": " << event.detail;
+        } else if constexpr (std::is_same_v<Event, TechnicalDevelopmentAuditEvent>) {
+            out << "Technical development " << event.programId.value << ": " << event.detail;
+        } else if constexpr (std::is_same_v<Event, PrototypeIntegrationAuditEvent>) {
+            out << "Prototype " << event.prototypeId.value << " "
+                << (event.kind == PrototypeIntegrationAuditKind::Reserved ? "reserved" : "consumed")
+                << " for shipyard order " << event.orderId.value;
         } else if constexpr (std::is_same_v<Event, CommandRejectedEvent>) {
             out << event.reason;
         }
@@ -1058,7 +1070,7 @@ std::vector<ShipyardOrderSummary> SimulationQueries::shipyardOrders() const {
     summaries.reserve(state.shipyardOrders.size());
 
     for (const ShipyardOrder& order : state.shipyardOrders) {
-        summaries.push_back(ShipyardOrderSummary{
+        ShipyardOrderSummary summary{
             .id = order.id,
             .colonyId = order.colonyId,
             .shipClassId = order.shipClassId,
@@ -1069,8 +1081,32 @@ std::vector<ShipyardOrderSummary> SimulationQueries::shipyardOrders() const {
             .accumulatedBuildPoints = order.accumulatedBuildPoints,
             .requiredBuildPoints = shipClassBuildPoints(state, order.shipClassId),
             .status = order.status,
-            .statusName = statusName(order.status)
-        });
+            .statusName = statusName(order.status),
+            .developedComponentSupply = {},
+            .reservedPrototypes = {}};
+        if (order.currentHullSupplyPlan) {
+            bool prototype = false;
+            for (const auto& supply : order.currentHullSupplyPlan->developedComponents) {
+                prototype |= supply.kind == DevelopedComponentSupplyKind::PrototypeUnit;
+                summary.reservedPrototypes.insert(summary.reservedPrototypes.end(),
+                                                  supply.prototypeUnits.begin(),
+                                                  supply.prototypeUnits.end());
+            }
+            summary.developedComponentSupply = prototype
+                ? "Prototype unit reserved for current hull"
+                : "Serial process available at this colony";
+            summary.requiredBuildPoints = order.currentHullSupplyPlan->effectiveBuildPoints;
+        } else if (const auto* shipClass = findById(state.shipClasses, order.shipClassId);
+                   shipClass && classRequiresDevelopedComponent(state, *shipClass)) {
+            const auto planned = planDevelopedComponentSupply(state, order, *shipClass,
+                order.colonyId, state.date.day == std::numeric_limits<std::int64_t>::max()
+                                    ? state.date.day
+                                    : state.date.day + 1);
+            summary.developedComponentSupply = planned.ready
+                ? "Local developed-component supply available when positive yard work begins"
+                : planned.explanation;
+        }
+        summaries.push_back(std::move(summary));
     }
 
     return summaries;
@@ -1101,6 +1137,8 @@ std::vector<ProductionBacklogSummary> SimulationQueries::productionBacklog() con
             .requiredMaterialsRemaining = summarizeMaterialRequirements(row.requiredMaterialsRemaining),
             .etaDays = row.etaDays,
             .blockingMaterialName = row.blockingMaterialName,
+            .blockedByComponentSupply = row.blockedByComponentSupply,
+            .componentSupplyExplanation = row.componentSupplyExplanation,
             .statusName = row.statusName,
             .explanation = row.explanation
         });
@@ -1134,8 +1172,9 @@ std::vector<ShipClassSummary> SimulationQueries::shipClasses() const {
 
 std::vector<ShipComponentSummary> SimulationQueries::shipComponents() const {
     std::vector<ShipComponentSummary> rows;
-    for (const ShipComponentDefinition& component : service_.state().shipComponents) {
-        rows.push_back(ShipComponentSummary{
+    const auto& state = service_.state();
+    for (const ShipComponentDefinition& component : state.shipComponents) {
+        ShipComponentSummary row{
             .id = component.id, .name = component.name, .kind = component.kind,
             .mass = component.mass, .volume = component.volume,
             .internalVolumeCapacity = component.internalVolumeCapacity,
@@ -1147,8 +1186,37 @@ std::vector<ShipComponentSummary> SimulationQueries::shipComponents() const {
             .buildCost = component.buildCost, .buildPoints = component.buildPoints,
             .serviceProfile = component.serviceProfile, .workshopRates = component.workshopRates,
             .measurementProfile = component.measurementProfileId ?
-                std::optional{*findById(service_.state().measurementProfiles,*component.measurementProfileId)} : std::nullopt
-        });
+                std::optional{*findById(state.measurementProfiles,*component.measurementProfileId)} : std::nullopt,
+            .demonstrated = false,
+            .opportunityId = std::nullopt,
+            .publicTargetThreshold = std::nullopt,
+            .testProvenance = {},
+            .serialProductionColonies = {},
+            .availablePrototypeColonies = {},
+            .supportQualifiedTeams = {}
+        };
+        if (const auto* developed = developedRevisionForComponent(state, component.id)) {
+            row.demonstrated = true;
+            row.opportunityId = developed->opportunityId;
+            row.testProvenance = developed->testIds;
+            if (const auto* opportunity = findById(state.technologyOpportunities,
+                                                   developed->opportunityId))
+                row.publicTargetThreshold = opportunity->targetDetectionThreshold;
+            for (const auto& process : state.componentProductionCapabilities)
+                if (process.componentId == component.id && process.availableDay <= state.date.day)
+                    row.serialProductionColonies.push_back(process.colonyId);
+            for (const auto& prototype : state.prototypeComponentUnits)
+                if (prototype.componentId == component.id &&
+                    prototype.state == PrototypeComponentState::Available &&
+                    prototype.availableDay && *prototype.availableDay <= state.date.day)
+                    row.availablePrototypeColonies.push_back(prototype.colonyId);
+            if (component.serviceProfile)
+                for (const auto& team : state.maintenanceTeams)
+                    if (teamHasEffectiveSupportQualification(
+                            state, team.id, component.serviceProfile->familyId, state.date.day))
+                        row.supportQualifiedTeams.push_back(team.id);
+        }
+        rows.push_back(std::move(row));
     }
     return rows;
 }

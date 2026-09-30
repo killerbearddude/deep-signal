@@ -492,7 +492,7 @@ void malformedAndOrdering(const GameState& earned, const std::filesystem::path& 
         SimulationService active(reordered);
         const auto result = active.loadGame(bad);
         if (result.ok || fingerprint(active.state()) != clean)
-            throw std::runtime_error("Malformed v17 case " + std::to_string(index) +
+            throw std::runtime_error("Malformed v18 case " + std::to_string(index) +
                                      " accepted or changed active game: " + mutations[index] + " / " +
                                      result.message);
         bool refused = false;
@@ -501,7 +501,7 @@ void malformedAndOrdering(const GameState& earned, const std::filesystem::path& 
         } catch (const std::exception&) {
             refused = true;
         }
-        require(refused, "malformed v17 destination was silently repaired by Save");
+        require(refused, "malformed v18 destination was silently repaired by Save");
     }
     // Rejected new input is validated before opening the existing destination.
     auto invalid = reordered;

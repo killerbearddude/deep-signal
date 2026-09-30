@@ -163,6 +163,15 @@ bool samePayload(const deep::SimEventPayload& lhs, const deep::SimEventPayload& 
             return left.siteId==right.siteId && left.kind==right.kind && left.operatingRevision==right.operatingRevision &&
                 left.cause==right.cause && left.episodeStartedDay==right.episodeStartedDay &&
                 almostEqual(left.amount,right.amount) && left.detail==right.detail;
+        } else if constexpr (std::is_same_v<Left, deep::TechnicalDevelopmentAuditEvent>) {
+            return left.programId == right.programId && left.kind == right.kind &&
+                   left.opportunityId == right.opportunityId && left.stage == right.stage &&
+                   left.charterRevision == right.charterRevision &&
+                   almostEqual(left.amount, right.amount) && left.detail == right.detail;
+        } else if constexpr (std::is_same_v<Left, deep::PrototypeIntegrationAuditEvent>) {
+            return left.kind == right.kind && left.prototypeId == right.prototypeId &&
+                   left.orderId == right.orderId && left.hullNumber == right.hullNumber &&
+                   left.shipId == right.shipId;
         } else if constexpr (std::is_same_v<Left, deep::CommandRejectedEvent>) {
             return left.reason == right.reason;
         }
@@ -1047,7 +1056,7 @@ void test_design_revision_round_trip() {
     require(service.execute(deep::AssignShipyardBuildCommand{colonyId, original.id, 1}).ok,
             "later order binds original revision before save");
     const deep::GameState expected = service.state();
-    require(service.saveGame(path).ok, "v17 component revision snapshot saves");
+    require(service.saveGame(path).ok, "v18 component revision snapshot saves");
     const deep::GameState loaded = deep::save::SaveGameRepository::load(path);
     requireSameState(expected, loaded);
     require(loaded.shipClasses.back().components == draft &&

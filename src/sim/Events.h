@@ -9,6 +9,7 @@
 #include "sim/Minerals.h"
 #include "sim/SurveyProgram.h"
 #include "sim/SiteEvents.h"
+#include "sim/TechnicalDevelopmentEvents.h"
 
 #include <cstdint>
 #include <optional>
@@ -206,6 +207,8 @@ using SimEventPayload = std::variant<
     AnalysisProgramAuditEvent,
     SiteDevelopmentAuditEvent,
     SiteOperatingAuditEvent,
+    TechnicalDevelopmentAuditEvent,
+    PrototypeIntegrationAuditEvent,
     CommandRejectedEvent
 >;
 

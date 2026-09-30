@@ -1,7 +1,7 @@
 #include "save/SciencePersistence.h"
 #include "save/SaveGameRepository.h"
 
-// Responsibility: map durable simulation records to active v17 rows.
+// Responsibility: map durable simulation records to active v18 rows.
 // Older development schemas are rejected without modifying their files.
 // Each operation owns its connection and reconstructed data; the input snapshot
 // is borrowed unchanged during save. Parameter binding separates values from SQL.
@@ -14,6 +14,7 @@
 #include "save/MaintenancePersistence.h"
 #include "save/Schema.h"
 #include "save/SitePersistence.h"
+#include "save/TechnicalPersistence.h"
 #include "sim/Minerals.h"
 #include "sim/GameStateValidation.h"
 
@@ -217,10 +218,11 @@ void reuse(Statement& stmt) {
 }
 
 void clearExistingSave(Database& db) {
+    clearTechnicalState(db);
     clearSiteState(db);
     clearScienceState(db);
     clearMaintenanceState(db);
-    // Delete child tables first because v17 retains explicit foreign keys
+    // Delete child tables first because v18 retains explicit foreign keys
     // without ON DELETE CASCADE. This all runs inside the write transaction.
     db.execute(R"sql(
         DELETE FROM event_log;
@@ -309,6 +311,15 @@ void saveIdCounters(Database& db, const IdCounters& ids) {
     insertCounter("next_measurement_profile_id",ids.nextMeasurementProfileId);
     insertCounter("next_site_id",ids.nextSiteId);
     insertCounter("next_site_development_program_id",ids.nextSiteDevelopmentProgramId);
+    insertCounter("next_technology_opportunity_id", ids.nextTechnologyOpportunityId);
+    insertCounter("next_technical_facility_id", ids.nextTechnicalFacilityId);
+    insertCounter("next_technical_development_program_id", ids.nextTechnicalDevelopmentProgramId);
+    insertCounter("next_prototype_design_id", ids.nextPrototypeDesignId);
+    insertCounter("next_prototype_component_unit_id", ids.nextPrototypeComponentUnitId);
+    insertCounter("next_technical_test_id", ids.nextTechnicalTestId);
+    insertCounter("next_developed_component_revision_id", ids.nextDevelopedComponentRevisionId);
+    insertCounter("next_component_production_capability_id", ids.nextComponentProductionCapabilityId);
+    insertCounter("next_support_qualification_id", ids.nextSupportQualificationId);
 }
 
 void saveStarSystems(Database& db, const GameState& state) {
@@ -899,6 +910,15 @@ void loadIdCounters(Database& db, IdCounters& ids) {
     ids.nextMeasurementProfileId=loadCounter(db,"next_measurement_profile_id");
     ids.nextSiteId=loadCounter(db,"next_site_id");
     ids.nextSiteDevelopmentProgramId=loadCounter(db,"next_site_development_program_id");
+    ids.nextTechnologyOpportunityId = loadCounter(db, "next_technology_opportunity_id");
+    ids.nextTechnicalFacilityId = loadCounter(db, "next_technical_facility_id");
+    ids.nextTechnicalDevelopmentProgramId = loadCounter(db, "next_technical_development_program_id");
+    ids.nextPrototypeDesignId = loadCounter(db, "next_prototype_design_id");
+    ids.nextPrototypeComponentUnitId = loadCounter(db, "next_prototype_component_unit_id");
+    ids.nextTechnicalTestId = loadCounter(db, "next_technical_test_id");
+    ids.nextDevelopedComponentRevisionId = loadCounter(db, "next_developed_component_revision_id");
+    ids.nextComponentProductionCapabilityId = loadCounter(db, "next_component_production_capability_id");
+    ids.nextSupportQualificationId = loadCounter(db, "next_support_qualification_id");
 }
 
 void loadStarSystems(Database& db, GameState& state) {
@@ -1066,7 +1086,7 @@ void loadColonies(Database& db, GameState& state) {
     for (const Colony& colony : state.colonies) {
         if (mineralRows[colony.id.value] != mineralCount() ||
             materialRows[colony.id.value] != processedMaterialCount()) {
-            throw std::runtime_error{"v17 colony resource rows must be complete"};
+            throw std::runtime_error{"v18 colony resource rows must be complete"};
         }
     }
 
@@ -1142,7 +1162,7 @@ void loadShipComponentsAndClasses(Database& db, GameState& state) {
     }
     for (const ShipComponentDefinition& row : state.shipComponents) {
         if (costRows[row.id.value] != processedMaterialCount()) {
-            throw std::runtime_error{"v17 component cost rows must be complete"};
+            throw std::runtime_error{"v18 component cost rows must be complete"};
         }
     }
     Statement classes{db, R"sql(
@@ -1197,7 +1217,8 @@ void loadShipyardOrders(Database& db, GameState& state) {
             .quantityRequested = checkedIntFromSql(stmt.columnInt64(3), "shipyard_orders.quantity_requested"),
             .quantityCompleted = checkedIntFromSql(stmt.columnInt64(4), "shipyard_orders.quantity_completed"),
             .accumulatedBuildPoints = stmt.columnDouble(5),
-            .status = enumFromValue<ShipyardOrderStatus>(stmt.columnInt64(6))
+            .status = enumFromValue<ShipyardOrderStatus>(stmt.columnInt64(6)),
+            .currentHullSupplyPlan = std::nullopt
         });
     }
 }
@@ -1500,6 +1521,7 @@ void loadEvents(Database& db, GameState& state) {
     loadMaintenanceState(db, state);
     loadScienceState(db,state);
     loadSiteState(db,state);
+    loadTechnicalState(db, state);
     loadAppointments(db, state);
     loadEvents(db, state);
 
@@ -1527,12 +1549,12 @@ void SaveGameRepository::save(const std::filesystem::path& path, const GameState
     if (hasUserSchema(db)) {
         const std::int64_t version = readSchemaVersion(db);
         if (version != kSchemaVersion) throw std::runtime_error{"Unsupported save schema version"};
-        requireV17Structure(db);
+        requireV18Structure(db);
         (void)readSnapshot(db);
     } else {
         // DDL and rows share this transaction. A failed new-path save may
         // leave an empty file, but not a partially initialized schema.
-        createSchemaV17(db);
+        createSchemaV18(db);
     }
     clearExistingSave(db);
     saveSchemaVersion(db);
@@ -1562,6 +1584,7 @@ void SaveGameRepository::save(const std::filesystem::path& path, const GameState
     saveMaintenanceState(db, state);
     saveScienceState(db,state);
     saveSiteState(db,state);
+    saveTechnicalState(db, state);
     saveEvents(db, state);
     // Re-read on this connection before commit. This catches incomplete rows,
     // ordinal gaps, and foreign-key problems while rollback can still restore
@@ -1583,7 +1606,7 @@ GameState SaveGameRepository::load(const std::filesystem::path& path) {
     Transaction transaction{db, Transaction::Mode::Read};
     const std::int64_t version = readSchemaVersion(db);
     if (version != kSchemaVersion) throw std::runtime_error{"Unsupported save schema version"};
-    requireV17Structure(db, true);
+    requireV18Structure(db, true);
     GameState state = readSnapshot(db);
 
     transaction.commit();

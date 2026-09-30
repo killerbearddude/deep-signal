@@ -1,6 +1,6 @@
 #include "save/SitePersistence.h"
 
-// Explicit v17 site schema. Repeated fixed material channels use the current
+// Site portion of the explicit v18 schema. Repeated fixed material channels use the current
 // enum's stable ordinal as a column suffix; changing that enum requires a new
 // schema. There are no dynamic player-supplied SQL identifiers or migrations.
 #include <string>

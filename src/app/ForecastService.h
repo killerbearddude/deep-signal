@@ -142,8 +142,10 @@ struct ProductionBacklogForecast {
     double buildPointsRemaining = 0.0;
     ProcessedMaterialSet requiredMaterialsRemaining;
     bool blockedByMaterial = false;
+    bool blockedByComponentSupply = false;
     std::optional<ProcessedMaterial> blockingMaterial;
     std::string blockingMaterialName;
+    std::string componentSupplyExplanation;
     std::optional<int> etaDays;
     std::string statusName;
     std::string explanation;

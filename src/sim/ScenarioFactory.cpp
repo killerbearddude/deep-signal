@@ -541,6 +541,38 @@ GameState createHomeSystemScenario() {
         .qualifiedFamilies = {EquipmentFamilyId{1}}, .workdaysPerDay = 1.0,
         .location = MaintenanceTeamLocation::Colony, .colonyId = terraColonyId, .fleetId = std::nullopt
     });
+    state.maintenanceTeams.push_back(MaintenanceTeam{
+        .id = MaintenanceTeamId{state.ids.nextMaintenanceTeamId++},
+        .name = "Prototype Engineering Team",
+        .qualifiedFamilies = {},
+        .engineeringQualifications = {EngineeringQualification::PrototypeInstrumentation},
+        .workdaysPerDay = 1.0,
+        .location = MaintenanceTeamLocation::Colony,
+        .colonyId = terraColonyId,
+        .fleetId = std::nullopt});
+    const auto specialist = std::find_if(state.shipComponents.begin(), state.shipComponents.end(),
+                                         [](const auto& component) {
+                                             return component.name == "Specialist Survey Array";
+                                         });
+    if (specialist == state.shipComponents.end())
+        throw std::logic_error("Scenario is missing its established characterization comparator");
+    const TechnologyOpportunityId precisionOpportunity{state.ids.nextTechnologyOpportunityId++};
+    state.technologyOpportunities.push_back(TechnologyOpportunity{
+        .id = precisionOpportunity,
+        .name = "Precision Characterization Array",
+        .baselineComponentId = specialist->id,
+        .targetDetectionThreshold = 7.0,
+        .requiresAccessibility = true,
+        .objective = "Demonstrate detection threshold <= 7 normalized signal while retaining accessibility classification",
+        .knownTradeoff = "Expected higher mass, volume, power, Electronics cost, and service burden"});
+    state.technologyCandidateTruths.push_back(
+        TechnologyCandidateTruth{precisionOpportunity, 6.0});
+    state.technicalFacilities.push_back(TechnicalFacility{
+        .id = TechnicalFacilityId{state.ids.nextTechnicalFacilityId++},
+        .colonyId = terraColonyId,
+        .name = "Terra Instrument Development Laboratory",
+        .engineeringWorkdaysPerDay = 1.0,
+        .capability = TechnicalFacilityCapability::PrototypeInstrumentation});
     state.shipClasses.push_back(ShipClass{
         .id = surveyCutterId,
         .name = "Survey Cutter",

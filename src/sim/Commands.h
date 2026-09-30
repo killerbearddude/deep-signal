@@ -11,6 +11,7 @@
 #include "sim/MaintenanceProgram.h"
 #include "sim/AnalysisProgram.h"
 #include "sim/SiteDevelopmentCommands.h"
+#include "sim/TechnicalDevelopmentCommands.h"
 
 #include <cstdint>
 #include <optional>
@@ -198,6 +199,12 @@ using SimCommand = std::variant<
     ResumeSiteDevelopmentCommand,
     CancelSiteDevelopmentCommand,
     AcknowledgeSiteDevelopmentIssueCommand,
+    CreateTechnicalDevelopmentCommand,
+    AmendTechnicalDevelopmentCommand,
+    SuspendTechnicalDevelopmentCommand,
+    ResumeTechnicalDevelopmentCommand,
+    CancelTechnicalDevelopmentCommand,
+    AcknowledgeTechnicalDevelopmentIssueCommand,
     CreateAnalysisProgramCommand,
     AmendAnalysisProgramCommand,
     SuspendAnalysisProgramCommand,

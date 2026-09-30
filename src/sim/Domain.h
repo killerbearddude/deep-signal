@@ -451,6 +451,35 @@ struct ShipClass {
     double speedKmPerDay = 0.0;
 };
 
+// Developed components use an explicit per-hull supply source. Established
+// catalog components retain their current implicit serial path and never appear
+// in this plan.
+enum class DevelopedComponentSupplyKind { SerialProduction, PrototypeUnit };
+struct DevelopedComponentSupply {
+    ShipComponentId componentId;
+    int quantity = 1;
+    DevelopedComponentSupplyKind kind = DevelopedComponentSupplyKind::SerialProduction;
+    std::vector<PrototypeComponentUnitId> prototypeUnits;
+    auto operator<=>(const DevelopedComponentSupply&) const = default;
+};
+
+// Frozen when the next hull first receives positive yard capacity. Later
+// process qualification cannot rewrite a prototype-backed hull already in work.
+struct ShipyardCurrentHullSupplyPlan {
+    ShipClassId shipClassId;
+    int hullNumber = 1;
+    std::vector<DevelopedComponentSupply> developedComponents;
+    ProcessedMaterialSet effectiveBuildCost;
+    double effectiveBuildPoints = 0.0;
+    std::int64_t boundDay = 0;
+    bool operator==(const ShipyardCurrentHullSupplyPlan& other) const {
+        return shipClassId == other.shipClassId && hullNumber == other.hullNumber &&
+               developedComponents == other.developedComponents &&
+               effectiveBuildCost.amount == other.effectiveBuildCost.amount &&
+               effectiveBuildPoints == other.effectiveBuildPoints && boundDay == other.boundDay;
+    }
+};
+
 // Order lifecycle for shipyard production.
 // Only states produced by valid Prototype 0.1 simulation ticks are modeled here.
 // Recoverable processed-material shortages keep an order Active rather than
@@ -472,6 +501,7 @@ struct ShipyardOrder {
     int quantityCompleted = 0;
     double accumulatedBuildPoints = 0.0;
     ShipyardOrderStatus status = ShipyardOrderStatus::Active;
+    std::optional<ShipyardCurrentHullSupplyPlan> currentHullSupplyPlan;
 };
 
 // One physical lot held on one hull. Propellant cargo is separate from engine
