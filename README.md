@@ -23,7 +23,10 @@ First buildable headless simulation slice for **Deep Signal Prototype 0.1 - Home
 - P4A immutable observations, staffed laboratory analysis, dated assessments, and knowledge-limited geology views
 - P4B unrestricted resource-site investment: real deliveries, qualified field builders,
   finite assembly/commissioning, paid operating support, raw Ice collection and colony processing
-- SQLite schema v17 save/load layer; older development saves are unsupported
+- P5 optional Precision Characterization Array development with finite engineering,
+  a physical local prototype, acquired test evidence, colony-local serial process,
+  and separate real-team support qualification
+- SQLite schema v18 save/load layer; older development saves are unsupported
 - Full-save/full-load transactions
 - Prepared statements for value-bearing SQL
 - CLI smoke runner
@@ -34,6 +37,24 @@ First buildable headless simulation slice for **Deep Signal Prototype 0.1 - Home
 - Malformed-save rejection tests for schema singleton, enum, range, stale counter, metadata, event chronology, shipyard lifecycle, fleet-order, foreign-key, and event-payload failures
 
 ## Architecture status
+
+For an earned P5 inspection save, run:
+
+```sh
+./build-p5/deep_signal_cli --write-technical-development-fixture /tmp/deep-signal-p5.sqlite
+```
+
+Load it and open **Technical Development**, **Shipyard / Production**,
+**Maintenance / Support Programs**, and **Evidence / Analysis**. The exported
+world begins with the established catalog and earns the Precision component
+through real concept, fabrication, and three test workdays. One local prototype
+is integrated without charging its embodied component cost/BP twice; a later
+hull uses Terra's separately qualified serial process. Technical target and
+measured result remain distinct. The exact engineering team also completes the
+separate specialist support work before normal workshop/material service.
+
+The [P5 implementation report](docs/architecture/p5-implementation-report.md)
+maps all acceptance scenarios to executable evidence and records residual scope.
 
 For an earned P4B inspection save (actual shipyard builds, cold-site deliveries,
 field construction, supported extraction, and a standing Ice collection route):
@@ -87,7 +108,7 @@ The project has three active CMake libraries by default:
 
 ```text
 deep_signal_sim   # pure deterministic simulation; no SQLite/UI/platform deps
-deep_signal_save  # SQLite C API repository and schema v17 mapping
+deep_signal_save  # SQLite C API repository and schema v18 mapping
 deep_signal_app   # application service wrapping simulation plus save/load
 ```
 
@@ -100,7 +121,7 @@ The simulation library now owns domain validation through `src/sim/GameStateVali
 The persistence layer is intentionally isolated under `src/save`:
 
 - `Database.*` owns the SQLite connection, prepared statements, and transactions.
-- `Schema.*` creates and validates only the active schema v17 structure.
+- `Schema.*` creates and validates only the active schema v18 structure.
 - `SaveGameRepository.*` maps `GameState` to/from SQLite rows.
 - `EventJson.*` owns event payload JSON serialization/parsing so the repository does not contain event-specific JSON grammar.
 
@@ -132,7 +153,7 @@ The source also follows the current project C++ direction:
 - no raw owning pointers,
 - warning-clean CMake targets with `-Wall -Wextra -Wpedantic -Wconversion` on GCC/Clang.
 
-## SQLite schema v17 coverage
+## SQLite schema v18 coverage
 
 The save file persists:
 
@@ -148,6 +169,10 @@ The save file persists:
 - mineral deposits,
 - immutable ship-class revisions and component installations,
 - component processed-material construction costs,
+- public technical opportunities and separate hidden deterministic candidate truth,
+- technical facilities, engineering qualifications, programs, paid work, tests,
+  physical prototypes, local production capabilities, and support records,
+- frozen current-hull developed-component supply plans and prototype integrations,
 - survey teams, charters, assignments, receipts, issues, and 30/90-day reports,
 - freight charters, committed per-hull manifests, actual cargo lots, transfer
   receipts, issues, closure dates, and reports,
@@ -156,7 +181,7 @@ The save file persists:
 - ships,
 - typed event log rows with JSON payload text.
 
-The current writer uses a replace-all save strategy inside one write transaction. Loading uses one read transaction, runs `PRAGMA foreign_key_check`, parses integer metadata strictly as canonical text, validates enum ordinals, validates the fully assembled `GameState`, and rejects missing, duplicate, or unsupported schema metadata. Schema v17 includes `CHECK` constraints for core non-negative quantities, enum ranges, ID counters, production-order invariants, fleet-order consistency, and program references.
+The current writer uses a replace-all save strategy inside one write transaction. Loading uses one read transaction, runs `PRAGMA foreign_key_check`, parses integer metadata strictly as canonical text, validates enum ordinals, validates the fully assembled `GameState`, and rejects missing, duplicate, or unsupported schema metadata. Schema v18 includes `CHECK` constraints for core non-negative quantities, enum ranges, ID counters, production-order invariants, fleet-order and prototype-supply consistency, and program/artifact references.
 
 ## Zero-trust hardening status
 
@@ -178,11 +203,12 @@ Direct validation tests now cover invalid in-memory `GameState` snapshots such a
 ## What is intentionally not included yet
 
 - Combat
-- Sensors
-- Research
+- Generic technology trees/research points or arbitrary component invention
+- General equipment cargo, prototype transport, refits, and warehouse genealogy
+- Mission Control, crew/population, final propulsion, and formal P4B operating-evidence analysis
 - Procedural generation
 - Incremental save diffs
-- Schema migrations beyond v1
+- Backward save-schema migrations; only active pre-release v18 is supported
 - full hard dependency on nlohmann/json; `EventJson.*` uses `<nlohmann/json.hpp>` automatically when the header is available and falls back to the local strict schema-v1 parser when it is not installed
 
 ## Build
