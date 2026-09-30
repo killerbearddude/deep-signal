@@ -1,0 +1,12 @@
+Source gameplay/UI and review-pack generator: f0f11672238b5edc70f72a607644b2d2abc447dd
+Fresh pack: /tmp/deep-signal-p6-ui-evidence-f0f1167
+Generated: 2026-09-30 09:36:37 America/Denver
+Hashes captured after native walkthrough; all file modification times remain at generation.
+
+f251b7eca8fbf7092bef9a40ec7adc785e697637f043f868507687ad580ec81a  01-waiting-intent.sqlite
+d3863bbf234f56e0f1fcc26c811bcfd97d58e0e735bea7bfddbb2488c64c8f98  02-design-choice.sqlite
+d5870148bff9f0cf30c53d83fb65462dcecaed4155ff4b16d133ee0c21296ad5  03-blind-development.sqlite
+8d079d49fd44428d7b63044bc90fdb1f75ca82bda39c7e3ddbc0c94d512b72d8  04-evidence-and-operation.sqlite
+68feb9a367f39097cf83c72bd0fdbfb968b6a6052bb5f0b3ae82f2ab457d41af  05-accepted-bottleneck.sqlite
+8d079d49fd44428d7b63044bc90fdb1f75ca82bda39c7e3ddbc0c94d512b72d8  06-lasting-capability.sqlite
+e21f76731020b4816721b2148de3dd4d9a0b8c468242f15b20f122b151c27e86  07-delegated-90-day.sqlite
