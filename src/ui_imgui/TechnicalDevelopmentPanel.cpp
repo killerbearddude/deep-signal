@@ -197,9 +197,18 @@ void TechnicalDevelopmentPanel::renderProgram(const TechnicalDevelopmentSummary&
     ImGui::Text("%s at %s | Scope: %s", row.opportunityName.c_str(), row.colonyName.c_str(),
                 scopeName(program.charter.scope));
     ImGui::TextWrapped("%s", row.condition.c_str());
-    ImGui::Text("Facility: %s (%.3f workdays/day) | Team: %s at %s",
+    ImGui::Text("Requested facility: %s | Requested team: %s",
+                row.requestedFacilityName.empty() ? "Unassigned" : row.requestedFacilityName.c_str(),
+                row.requestedTeamName.empty() ? "Unassigned" : row.requestedTeamName.c_str());
+    ImGui::Text("Current work facility: %s (%.3f workdays/day) | Team: %s at %s",
                 row.facilityName.empty() ? "Unassigned" : row.facilityName.c_str(), row.facilityRate,
                 row.teamName.empty() ? "Unassigned" : row.teamName.c_str(), row.teamLocation.c_str());
+    if (row.facilityRequestPending)
+        ImGui::TextWrapped("Started production qualification stays at its original facility. The new "
+                           "facility request applies to future work.");
+    if (row.teamRequestPending)
+        ImGui::TextWrapped("Started support qualification stays with its original team. Qualifying another "
+                           "team requires a later program.");
     ImGui::Text("Actual engineering lease: %s",
                 program.leasedTeamId ? ("team #" + std::to_string(program.leasedTeamId->value)).c_str()
                                      : "none");
@@ -217,7 +226,7 @@ void TechnicalDevelopmentPanel::renderProgram(const TechnicalDevelopmentSummary&
     }
     ImGui::Text("Lifetime engineering work: %.3f", lifetimeWork);
     materials(lifetimeMaterials);
-    ImGui::TextUnformatted("Full current-stage requirement:");
+    ImGui::TextUnformatted("This program's current-stage requirement (completed prior tests credited):");
     materials(row.requiredStageMaterials);
     if (row.prototype)
         ImGui::Text(
@@ -234,7 +243,7 @@ void TechnicalDevelopmentPanel::renderProgram(const TechnicalDevelopmentSummary&
         ImGui::Text("Demonstrated component #%lld / profile #%lld",
                     static_cast<long long>(row.developed->componentId.value),
                     static_cast<long long>(row.developed->measurementProfileId.value));
-    ImGui::Text("Local serial process: %s | Selected-team support: %s",
+    ImGui::Text("Local serial process: %s | Requested-team support: %s",
                 row.localProductionReady ? "effective" : "not effective",
                 row.supportQualified ? "qualified" : "not qualified");
     if (!program.issue.signature.empty())

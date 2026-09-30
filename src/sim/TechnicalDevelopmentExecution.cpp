@@ -97,16 +97,18 @@ void publishTestAndMaybeDemonstration(GameState& state, TechnicalDevelopmentProg
     const auto* truth = truthFor(state, program.charter.opportunityId);
     const auto* opportunity = find(state.technologyOpportunities, program.charter.opportunityId);
     const auto* design = designFor(state, program.charter.opportunityId);
-    const auto* facility = program.charter.requestedFacilityId
-                               ? find(state.technicalFacilities, *program.charter.requestedFacilityId)
-                               : nullptr;
-    if (!prototype || !truth || !opportunity || !design || !facility || !program.charter.requestedTeamId ||
-        !program.charter.requestedLeaderId)
+    // The receipt identifies the actual action that completed this test. Later
+    // requested participants cannot rewrite that historical provenance.
+    const auto& work = program.receipts.back();
+    const auto* facility = find(state.technicalFacilities, work.facilityId);
+    if (!prototype || !truth || !opportunity || !design || !facility)
         throw std::logic_error("Prototype test lost its physical or authoritative provenance");
     int sequence = 1;
     for (const auto& row : state.technicalTestRecords)
         if (row.prototypeId == prototype->id)
             ++sequence;
+    if (sequence > 3 || developedRevisionForOpportunity(state, opportunity->id))
+        throw std::logic_error("Prototype testing cannot republish a completed demonstration");
     const TechnicalTestId testId{state.ids.nextTechnicalTestId++};
     state.technicalTestRecords.push_back(TechnicalTestRecord{
         .id = testId,
@@ -114,8 +116,8 @@ void publishTestAndMaybeDemonstration(GameState& state, TechnicalDevelopmentProg
         .prototypeId = prototype->id,
         .programId = program.id,
         .facilityId = facility->id,
-        .teamId = *program.charter.requestedTeamId,
-        .leaderId = *program.charter.requestedLeaderId,
+        .teamId = work.teamId,
+        .leaderId = work.leaderId,
         .sequence = sequence,
         .day = state.date.day,
         .measuredDetectionThreshold = truth->achievedDetectionThreshold,
@@ -124,7 +126,7 @@ void publishTestAndMaybeDemonstration(GameState& state, TechnicalDevelopmentProg
         .limitation = "Deterministic prototype method test; three workdays establish repeatability"});
     audit(program, TechnicalDevelopmentAuditKind::TestCompleted, truth->achievedDetectionThreshold,
           "Prototype test recorded measured detection threshold", hooks);
-    if (sequence < 3)
+    if (sequence != 3)
         return;
 
     const auto* baseline = find(state.shipComponents, opportunity->baselineComponentId);
@@ -154,9 +156,16 @@ void publishTestAndMaybeDemonstration(GameState& state, TechnicalDevelopmentProg
                                                            .serviceProfile = design->serviceProfile,
                                                            .measurementProfileId = profileId});
     std::vector<TechnicalTestId> tests;
-    for (const auto& row : state.technicalTestRecords)
-        if (row.prototypeId == prototype->id)
-            tests.push_back(row.id);
+    // Provenance follows the explicit test sequence, independently from the
+    // persisted vector order of records belonging to different programs.
+    for (int number = 1; number <= 3; ++number) {
+        const auto test = std::find_if(
+            state.technicalTestRecords.begin(), state.technicalTestRecords.end(),
+            [&](const auto& row) { return row.prototypeId == prototype->id && row.sequence == number; });
+        if (test == state.technicalTestRecords.end())
+            throw std::logic_error("Demonstration requires all three completed test records");
+        tests.push_back(test->id);
+    }
     state.developedComponentRevisions.push_back(DevelopedComponentRevision{
         .id = DevelopedComponentRevisionId{state.ids.nextDevelopedComponentRevisionId++},
         .opportunityId = opportunity->id,
@@ -184,14 +193,15 @@ void publishTestAndMaybeDemonstration(GameState& state, TechnicalDevelopmentProg
 void publishProductionCapability(GameState& state, TechnicalDevelopmentProgram& program,
                                  const TechnicalDevelopmentExecutionHooks& hooks) {
     const auto* developed = developedRevisionForOpportunity(state, program.charter.opportunityId);
-    if (!developed || !program.charter.requestedFacilityId)
+    const auto facility = technicalWorkFacility(program);
+    if (!developed || !facility)
         throw std::logic_error("Production qualification lost demonstrated design or facility");
     state.componentProductionCapabilities.push_back(ComponentProductionCapability{
         .id = ComponentProductionCapabilityId{state.ids.nextComponentProductionCapabilityId++},
         .componentId = developed->componentId,
         .opportunityId = developed->opportunityId,
         .colonyId = program.charter.developmentColonyId,
-        .facilityId = *program.charter.requestedFacilityId,
+        .facilityId = *facility,
         .qualifyingProgramId = program.id,
         .qualifiedDay = state.date.day,
         .availableDay = state.date.day + 1});
@@ -203,12 +213,13 @@ void publishSupportQualification(GameState& state, TechnicalDevelopmentProgram& 
     const auto* opportunity = find(state.technologyOpportunities, program.charter.opportunityId);
     const auto* baseline =
         opportunity ? find(state.shipComponents, opportunity->baselineComponentId) : nullptr;
-    if (!baseline || !baseline->serviceProfile || !program.charter.requestedTeamId)
+    const auto team = technicalWorkTeam(program);
+    if (!baseline || !baseline->serviceProfile || !team)
         throw std::logic_error("Support qualification lost team or specialist family");
     state.supportQualificationRecords.push_back(
         SupportQualificationRecord{.id = SupportQualificationId{state.ids.nextSupportQualificationId++},
                                    .opportunityId = opportunity->id,
-                                   .teamId = *program.charter.requestedTeamId,
+                                   .teamId = *team,
                                    .familyId = baseline->serviceProfile->familyId,
                                    .programId = program.id,
                                    .qualifiedDay = state.date.day,
@@ -252,8 +263,12 @@ void runTechnicalDevelopmentOpeningDay(GameState& state, TechnicalDevelopmentPro
     }
     if (!readiness.teamId || !readiness.facilityId)
         throw std::logic_error("Ready technical work lacks physical participants");
-    const bool finalStep =
-        program.stageWork + readiness.work + 1e-9 >= technicalStageRequiredWork(program.stage);
+    const double required = technicalProgramStageRequiredWork(state, program);
+    const bool finalStep = program.stageWork + readiness.work + 1e-9 >= required;
+    const int testsToPublish = program.stage == TechnicalDevelopmentStage::PrototypeTesting
+                                   ? static_cast<int>(std::floor(program.stageWork + readiness.work + 1e-9)) -
+                                         static_cast<int>(std::floor(program.stageWork + 1e-9))
+                                   : 0;
     bool identitiesAvailable = state.ids.nextEventId < std::numeric_limits<std::int64_t>::max();
     if (program.stage == TechnicalDevelopmentStage::ConceptEngineering && finalStep)
         identitiesAvailable &= state.ids.nextPrototypeDesignId < std::numeric_limits<std::int64_t>::max();
@@ -261,7 +276,8 @@ void runTechnicalDevelopmentOpeningDay(GameState& state, TechnicalDevelopmentPro
         identitiesAvailable &=
             state.ids.nextPrototypeComponentUnitId < std::numeric_limits<std::int64_t>::max();
     if (program.stage == TechnicalDevelopmentStage::PrototypeTesting) {
-        identitiesAvailable &= state.ids.nextTechnicalTestId < std::numeric_limits<std::int64_t>::max();
+        identitiesAvailable &=
+            testsToPublish <= std::numeric_limits<std::int64_t>::max() - state.ids.nextTechnicalTestId;
         if (finalStep)
             identitiesAvailable &=
                 state.ids.nextMeasurementProfileId < std::numeric_limits<std::int64_t>::max() &&
@@ -311,7 +327,8 @@ void runTechnicalDevelopmentOpeningDay(GameState& state, TechnicalDevelopmentPro
     state.eventLog.reserve(state.eventLog.size() + 8);
     state.prototypeDesigns.reserve(state.prototypeDesigns.size() + 1);
     state.prototypeComponentUnits.reserve(state.prototypeComponentUnits.size() + 1);
-    state.technicalTestRecords.reserve(state.technicalTestRecords.size() + 1);
+    state.technicalTestRecords.reserve(state.technicalTestRecords.size() +
+                                       static_cast<std::size_t>(testsToPublish));
     state.measurementProfiles.reserve(state.measurementProfiles.size() + 1);
     state.shipComponents.reserve(state.shipComponents.size() + 1);
     state.developedComponentRevisions.reserve(state.developedComponentRevisions.size() + 1);
@@ -351,7 +368,6 @@ void runTechnicalDevelopmentOpeningDay(GameState& state, TechnicalDevelopmentPro
         for (int test = oldTests; test < newTests; ++test)
             publishTestAndMaybeDemonstration(state, program, hooks);
     }
-    const double required = technicalStageRequiredWork(program.stage);
     if (program.stageWork + 1e-9 < required)
         return;
     switch (program.stage) {
@@ -372,9 +388,14 @@ void runTechnicalDevelopmentOpeningDay(GameState& state, TechnicalDevelopmentPro
     case TechnicalDevelopmentStage::Complete:
         break;
     }
-    program.stage =
-        firstMissingTechnicalStage(state, program.charter.opportunityId, program.charter.developmentColonyId,
-                                   program.charter.requestedTeamId, program.charter.scope);
+    // Support is the final committed artifact. Finish the pinned team's course
+    // once; a request for a different team cannot silently start a second course
+    // with the first team's accumulated work.
+    program.stage = program.stage == TechnicalDevelopmentStage::SupportQualification
+                        ? TechnicalDevelopmentStage::Complete
+                        : firstMissingTechnicalStage(state, program.charter.opportunityId,
+                                                     program.charter.developmentColonyId,
+                                                     program.charter.requestedTeamId, program.charter.scope);
     program.stageWork = 0.0;
     program.stageConsumed = {};
     program.leasedTeamId.reset();
@@ -402,9 +423,18 @@ void finishTechnicalDevelopmentDay(GameState& state, const TechnicalDevelopmentE
         report.charterRevision = program.charterRevision;
         report.scope = program.charter.scope;
         report.stage = program.stage;
-        report.facilityId = program.charter.requestedFacilityId;
-        report.teamId = program.leasedTeamId ? program.leasedTeamId : program.charter.requestedTeamId;
+        report.facilityId = technicalWorkFacility(program);
+        report.teamId = technicalWorkTeam(program);
         report.leaderId = program.charter.requestedLeaderId;
+        // If this period performed work, the single participant summary names
+        // the last actual action; every earlier participant remains in receipts.
+        for (auto it = program.receipts.rbegin(); it != program.receipts.rend(); ++it)
+            if (it->day > report.startDay && it->day <= report.endDay) {
+                report.facilityId = it->facilityId;
+                report.teamId = it->teamId;
+                report.leaderId = it->leaderId;
+                break;
+            }
         report.waitingReason = technicalDevelopmentCondition(state, program);
         for (const auto& receipt : program.receipts) {
             report.lifetimeWork += receipt.work;
@@ -429,9 +459,9 @@ void finishTechnicalDevelopmentDay(GameState& state, const TechnicalDevelopmentE
         const auto* opportunity = find(state.technologyOpportunities, program.charter.opportunityId);
         const auto* baseline =
             opportunity ? find(state.shipComponents, opportunity->baselineComponentId) : nullptr;
-        if (program.charter.requestedTeamId && baseline && baseline->serviceProfile) {
+        if (report.teamId && baseline && baseline->serviceProfile) {
             report.supportQualified = teamHasEffectiveSupportQualification(
-                state, *program.charter.requestedTeamId, baseline->serviceProfile->familyId, state.date.day);
+                state, *report.teamId, baseline->serviceProfile->familyId, state.date.day);
         }
         report.auditThroughId = state.ids.nextEventId - 1;
         program.reports.reserve(program.reports.size() + 1);

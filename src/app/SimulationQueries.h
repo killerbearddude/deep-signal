@@ -803,6 +803,10 @@ struct TechnicalDevelopmentSummary {
     std::string condition;
     std::string opportunityName;
     std::string colonyName;
+    std::string requestedFacilityName;
+    std::string requestedTeamName;
+    bool facilityRequestPending = false;
+    bool teamRequestPending = false;
     std::string facilityName;
     std::string teamName;
     std::string teamLocation;

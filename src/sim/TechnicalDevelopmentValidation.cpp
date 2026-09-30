@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <map>
 #include <set>
 #include <stdexcept>
@@ -43,6 +44,20 @@ double workForStage(const TechnicalDevelopmentProgram& program, TechnicalDevelop
         if (receipt.stage == stage)
             result += receipt.work;
     return result;
+}
+const TechnicalWorkReceipt* firstStageReceipt(const TechnicalDevelopmentProgram& program,
+                                              TechnicalDevelopmentStage stage) {
+    const auto it = std::find_if(program.receipts.begin(), program.receipts.end(), [=](const auto& receipt) {
+        return receipt.stage == stage && receipt.work > 0.0;
+    });
+    return it == program.receipts.end() ? nullptr : &*it;
+}
+const TechnicalWorkReceipt* lastStageReceipt(const TechnicalDevelopmentProgram& program,
+                                             TechnicalDevelopmentStage stage) {
+    const auto it =
+        std::find_if(program.receipts.rbegin(), program.receipts.rend(),
+                     [=](const auto& receipt) { return receipt.stage == stage && receipt.work > 0.0; });
+    return it == program.receipts.rend() ? nullptr : &*it;
 }
 } // namespace
 
@@ -90,6 +105,10 @@ void validateTechnicalDevelopmentState(const GameState& state) {
     }
 
     std::unordered_set<std::int64_t> activeOpportunities;
+    // A complete test is one integer crossing of THIS program's paid testing
+    // work. Reused records reduce the later program's obligation, but a canceled
+    // fractional remainder can never create a crossing in another program.
+    std::map<std::int64_t, std::vector<const TechnicalWorkReceipt*>> testWorkBoundaries;
     for (const auto& program : state.technicalDevelopmentPrograms) {
         require(program.id.value > 0 && !validateTechnicalDevelopmentCharter(state, program.charter, true),
                 "Technical-development program charter is invalid");
@@ -117,7 +136,7 @@ void validateTechnicalDevelopmentState(const GameState& state) {
                         program.lifecycle == TechnicalDevelopmentLifecycle::Authorized,
                     "Technical-development team lease is invalid");
         require(finiteNonnegative(program.stageWork) &&
-                    program.stageWork <= technicalStageRequiredWork(program.stage) + 1e-9,
+                    program.stageWork <= technicalProgramStageRequiredWork(state, program) + 1e-9,
                 "Technical-development current-stage work is invalid");
         validMaterials(program.stageConsumed, "Technical-development current-stage material is invalid");
         std::map<TechnicalDevelopmentStage, double> work;
@@ -125,8 +144,14 @@ void validateTechnicalDevelopmentState(const GameState& state) {
         int sequence = 1;
         std::int64_t priorDay = program.createdDay;
         TechnicalDevelopmentStage priorStage = TechnicalDevelopmentStage::ConceptEngineering;
+        std::optional<TechnicalFacilityId> productionFacility;
+        std::optional<MaintenanceTeamId> supportTeam;
+        const int inheritedTests = inheritedTechnicalTestCount(state, program);
+        require(inheritedTests >= 0 && inheritedTests <= 3,
+                "Technical program inherited invalid completed test evidence");
         for (const auto& receipt : program.receipts) {
-            require(receipt.sequence == sequence++ && receipt.day > priorDay && receipt.day <= state.date.day,
+            require(receipt.sequence == sequence++ && receipt.day > priorDay && receipt.day <= state.date.day &&
+                        (!program.closedDay || receipt.day <= *program.closedDay),
                     "Technical work receipt sequence/date is invalid");
             priorDay = receipt.day;
             require(receipt.charterRevision > 0 && receipt.charterRevision <= program.charterRevision &&
@@ -137,9 +162,24 @@ void validateTechnicalDevelopmentState(const GameState& state) {
             require(receipt.stage >= priorStage,
                     "Technical work receipt stages must be nondecreasing within one program");
             priorStage = receipt.stage;
-            require(find(state.technicalFacilities, receipt.facilityId) &&
+            const auto* facility = find(state.technicalFacilities, receipt.facilityId);
+            require(facility && facility->colonyId == program.charter.developmentColonyId &&
                         find(state.maintenanceTeams, receipt.teamId) && find(state.people, receipt.leaderId),
-                    "Technical work receipt participant is missing");
+                    "Technical work receipt participant is missing or outside its fixed colony");
+            // Only the qualification-specific participant is pinned. Future
+            // requested IDs and leaders may change without rewriting evidence.
+            if (receipt.stage == TechnicalDevelopmentStage::ProductionQualification) {
+                if (!productionFacility)
+                    productionFacility = receipt.facilityId;
+                require(*productionFacility == receipt.facilityId,
+                        "Production qualification combines work from different facilities");
+            }
+            if (receipt.stage == TechnicalDevelopmentStage::SupportQualification) {
+                if (!supportTeam)
+                    supportTeam = receipt.teamId;
+                require(*supportTeam == receipt.teamId,
+                        "Support qualification combines work from different physical teams");
+            }
             validMaterials(receipt.consumed, "Technical work receipt material is invalid");
             const auto expectedCost = technicalStageCost(receipt.stage);
             const double expectedWork = technicalStageRequiredWork(receipt.stage);
@@ -147,9 +187,27 @@ void validateTechnicalDevelopmentState(const GameState& state) {
                 require(near(receipt.consumed.amount[material],
                              expectedCost.amount[material] * receipt.work / expectedWork),
                         "Technical work receipt material is not proportional to positive work");
+            const double before = work[receipt.stage];
             work[receipt.stage] += receipt.work;
+            const double required = receipt.stage == TechnicalDevelopmentStage::PrototypeTesting
+                                        ? kPrototypeTestingWork - inheritedTests
+                                        : expectedWork;
+            require(finiteNonnegative(work[receipt.stage]) && work[receipt.stage] <= required + 1e-9,
+                    "Technical work receipts exceed this program's stage obligation");
+            if (receipt.stage == TechnicalDevelopmentStage::PrototypeTesting) {
+                // The bounded sums above make conversion safe. A high-throughput
+                // opening may earn several tests from the same real receipt.
+                const int oldCount = static_cast<int>(std::floor(before + 1e-9));
+                const int newCount = static_cast<int>(std::floor(work[receipt.stage] + 1e-9));
+                for (int count = oldCount; count < newCount; ++count)
+                    testWorkBoundaries[program.id.value].push_back(&receipt);
+            }
             consumed[receipt.stage].addSet(receipt.consumed);
         }
+        if (program.stage == TechnicalDevelopmentStage::SupportQualification && program.leasedTeamId &&
+            supportTeam)
+            require(program.leasedTeamId == supportTeam,
+                    "Support qualification lease differs from its pinned physical team");
         if (program.stage != TechnicalDevelopmentStage::Complete) {
             require(near(work[program.stage], program.stageWork),
                     "Technical current-stage work does not reconcile to receipts");
@@ -280,6 +338,7 @@ void validateTechnicalDevelopmentState(const GameState& state) {
     }
 
     std::map<std::int64_t, std::vector<const TechnicalTestRecord*>> testsByPrototype;
+    std::map<std::int64_t, std::size_t> testsByProgram;
     for (const auto& test : state.technicalTestRecords) {
         const auto* unit = find(state.prototypeComponentUnits, test.prototypeId);
         require(test.id.value > 0 && unit && test.opportunityId == unit->opportunityId &&
@@ -291,33 +350,36 @@ void validateTechnicalDevelopmentState(const GameState& state) {
         require(testingProgram && testingProgram->charter.opportunityId == test.opportunityId &&
                     testingProgram->charter.developmentColonyId ==
                         find(state.technicalFacilities, test.facilityId)->colonyId &&
-                    testingProgram->charter.requestedFacilityId == test.facilityId &&
-                    testingProgram->charter.requestedTeamId == test.teamId &&
-                    testingProgram->charter.requestedLeaderId == test.leaderId,
-                "Technical test participants do not match the actual program charter");
-        require(std::any_of(testingProgram->receipts.begin(), testingProgram->receipts.end(),
-                            [&](const auto& receipt) {
-                                return receipt.day == test.day &&
-                                       receipt.stage == TechnicalDevelopmentStage::PrototypeTesting &&
-                                       receipt.facilityId == test.facilityId &&
-                                       receipt.teamId == test.teamId && receipt.leaderId == test.leaderId;
-                            }),
-                "Technical test has no matching positive physical test-work receipt");
-        require(test.sequence > 0 && test.sequence <= 3 && test.day >= unit->fabricationDay &&
+                    testingProgram->charter.developmentColonyId == unit->colonyId,
+                "Technical test opportunity or physical prototype locality is inconsistent");
+        require(test.sequence > 0 && test.sequence <= 3 && test.day > unit->fabricationDay &&
                     test.day <= state.date.day && std::isfinite(test.measuredDetectionThreshold) &&
                     test.measuredDetectionThreshold > 0.0 &&
                     near(test.targetDetectionThreshold,
                          opportunity(state, test.opportunityId)->targetDetectionThreshold) &&
                     test.meetsTarget == (test.measuredDetectionThreshold <= test.targetDetectionThreshold),
                 "Technical test result/date/target is invalid");
+        const int localSequence = test.sequence - inheritedTechnicalTestCount(state, *testingProgram);
+        const auto& boundaries = testWorkBoundaries[testingProgram->id.value];
+        require(localSequence > 0 && static_cast<std::size_t>(localSequence) <= boundaries.size(),
+                "Technical test has no complete newly paid test-work boundary");
+        const auto* receipt = boundaries[static_cast<std::size_t>(localSequence - 1)];
+        require(receipt->day == test.day && receipt->facilityId == test.facilityId &&
+                    receipt->teamId == test.teamId && receipt->leaderId == test.leaderId,
+                "Technical test differs from its historical complete-work receipt");
+        ++testsByProgram[test.programId.value];
         testsByPrototype[test.prototypeId.value].push_back(&test);
     }
+    for (const auto& [programId, boundaries] : testWorkBoundaries)
+        require(testsByProgram[programId] == boundaries.size(),
+                "Completed technical test work lost or duplicated its acquired evidence");
     for (auto& [prototype, tests] : testsByPrototype) {
         std::sort(tests.begin(), tests.end(),
                   [](const auto* a, const auto* b) { return a->sequence < b->sequence; });
         for (std::size_t index = 0; index < tests.size(); ++index)
-            require(tests[index]->sequence == static_cast<int>(index + 1),
-                    "Technical test sequence is not contiguous");
+            require(tests[index]->sequence == static_cast<int>(index + 1) &&
+                        (index == 0 || tests[index]->day >= tests[index - 1]->day),
+                    "Technical test sequence or physical chronology is not contiguous");
         require(tests.size() <= 3, "Prototype has more than three reference tests");
         for (const auto* test : tests)
             require(near(test->measuredDetectionThreshold, tests.front()->measuredDetectionThreshold),
@@ -332,22 +394,16 @@ void validateTechnicalDevelopmentState(const GameState& state) {
         const auto* component = find(state.shipComponents, developed.componentId);
         require(developed.id.value > 0 && unit && design && profile && component &&
                     developed.opportunityId == unit->opportunityId &&
-                    developed.opportunityId == design->opportunityId &&
+                    developed.opportunityId == design->opportunityId && unit->designId == design->id &&
                     developedOpportunities.insert(developed.opportunityId.value).second,
                 "Developed component provenance is invalid or duplicate");
         require(developed.testIds.size() == 3 && testsByPrototype[developed.prototypeId.value].size() == 3 &&
-                    developed.demonstratedDay >= unit->fabricationDay &&
+                    developed.demonstratedDay == testsByPrototype[developed.prototypeId.value].back()->day &&
+                    developed.demonstratedDay < std::numeric_limits<std::int64_t>::max() &&
                     developed.availableDay == developed.demonstratedDay + 1,
                 "Developed component test/date evidence is incomplete");
-        const auto* testingProgram = find(state.technicalDevelopmentPrograms,
-                                          testsByPrototype[developed.prototypeId.value].front()->programId);
-        require(testingProgram &&
-                    near(workForStage(*testingProgram, TechnicalDevelopmentStage::PrototypeTesting),
-                         kPrototypeTestingWork),
-                "Developed component was not earned by three complete test workdays");
-        for (const auto* test : testsByPrototype[developed.prototypeId.value])
-            require(test->programId == testingProgram->id,
-                    "One demonstration cannot combine unrelated program test records");
+        // Exactly three independently paid boundaries establish one prototype.
+        // Their programs may differ because cancellation preserves full tests.
         for (std::size_t index = 0; index < developed.testIds.size(); ++index)
             require(developed.testIds[index] == testsByPrototype[developed.prototypeId.value][index]->id,
                     "Developed component test-ID provenance is incomplete or reordered");
@@ -374,6 +430,12 @@ void validateTechnicalDevelopmentState(const GameState& state) {
         require(unit->componentId == component->id && unit->availableDay == developed.availableDay,
                 "Prototype unit was not assigned the demonstrated component/date");
     }
+    for (const auto& [prototypeId, tests] : testsByPrototype)
+        if (tests.size() == 3)
+            require(std::any_of(
+                        state.developedComponentRevisions.begin(), state.developedComponentRevisions.end(),
+                        [=](const auto& developed) { return developed.prototypeId.value == prototypeId; }),
+                    "Three completed prototype tests lack their single demonstrated revision");
 
     std::set<std::pair<std::int64_t, std::int64_t>> processLocations;
     for (const auto& process : state.componentProductionCapabilities) {
@@ -384,12 +446,19 @@ void validateTechnicalDevelopmentState(const GameState& state) {
                     facility && facility->colonyId == process.colonyId && qualifyingProgram &&
                     processLocations.emplace(process.componentId.value, process.colonyId.value).second &&
                     process.qualifiedDay >= developed->demonstratedDay &&
+                    process.qualifiedDay <= state.date.day &&
+                    process.qualifiedDay < std::numeric_limits<std::int64_t>::max() &&
                     process.availableDay == process.qualifiedDay + 1,
                 "Local component-production capability is invalid or duplicate");
         require(qualifyingProgram->charter.opportunityId == process.opportunityId &&
-                    qualifyingProgram->charter.developmentColonyId == process.colonyId &&
-                    qualifyingProgram->charter.requestedFacilityId == process.facilityId,
+                    qualifyingProgram->charter.developmentColonyId == process.colonyId,
                 "Production capability differs from its qualifying local charter");
+        const auto* first =
+            firstStageReceipt(*qualifyingProgram, TechnicalDevelopmentStage::ProductionQualification);
+        const auto* last =
+            lastStageReceipt(*qualifyingProgram, TechnicalDevelopmentStage::ProductionQualification);
+        require(first && last && first->facilityId == process.facilityId && last->day == process.qualifiedDay,
+                "Production capability differs from its pinned facility or final paid-work date");
         require(near(workForStage(*qualifyingProgram, TechnicalDevelopmentStage::ProductionQualification),
                      kProductionQualificationWork),
                 "Production capability was not earned by complete local process work");
@@ -404,12 +473,18 @@ void validateTechnicalDevelopmentState(const GameState& state) {
         require(support.id.value > 0 && opportunity(state, support.opportunityId) && team &&
                     find(state.equipmentFamilies, support.familyId) && qualifyingProgram &&
                     supportPairs.emplace(support.teamId.value, support.familyId.value).second &&
-                    support.availableDay == support.qualifiedDay + 1 &&
-                    support.availableDay <= state.date.day + 1,
+                    support.qualifiedDay >= 0 && support.qualifiedDay <= state.date.day &&
+                    support.qualifiedDay < std::numeric_limits<std::int64_t>::max() &&
+                    support.availableDay == support.qualifiedDay + 1,
                 "Support qualification record is invalid or duplicate");
-        require(qualifyingProgram->charter.opportunityId == support.opportunityId &&
-                    qualifyingProgram->charter.requestedTeamId == support.teamId,
-                "Support qualification differs from its actual program/team");
+        require(qualifyingProgram->charter.opportunityId == support.opportunityId,
+                "Support qualification differs from its program opportunity");
+        const auto* first =
+            firstStageReceipt(*qualifyingProgram, TechnicalDevelopmentStage::SupportQualification);
+        const auto* last =
+            lastStageReceipt(*qualifyingProgram, TechnicalDevelopmentStage::SupportQualification);
+        require(first && last && first->teamId == support.teamId && last->day == support.qualifiedDay,
+                "Support qualification differs from its exact trained team or final paid-work date");
         require(baseline && baseline->serviceProfile &&
                     support.familyId == baseline->serviceProfile->familyId,
                 "Support qualification does not match the opportunity's specialist service family");

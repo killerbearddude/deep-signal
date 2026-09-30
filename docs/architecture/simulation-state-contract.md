@@ -856,6 +856,29 @@ a new program resumes at the first missing completed artifact and does not
 inherit cancelled partial work. Closed technical programs publish no later
 period reports.
 
+Completed test records are reusable evidence for the same physical prototype,
+including across cancelled programs. A successor pays one full workday,
+5 Electronics and 2 Composites for each missing test; its own stage work starts
+at zero. A cancelled fractional test remains sunk and supplies no credit. The
+third completed test publishes exactly one demonstrated revision, component and
+profile. Each test is backed by its originating program's complete-work receipt,
+with the actual facility, team and leader recorded there. Testing requires the
+prototype at the fixed development colony; P5 provides no prototype transport.
+
+Amendments change future authority without changing historical participants.
+The first positive production-qualification receipt pins that stage to its
+facility; the first positive support-qualification receipt pins its course to
+the exact team. These bindings are derived from receipts, with no extra saved
+assignment state. The UI distinguishes requested participants from the current
+stage's actual participants. Four process workdays must be paid at the recorded
+facility, and two support workdays must be performed by the recorded team.
+Finishing the pinned support course completes that program; qualifying a newly
+requested team requires another program. Scope amendments before closure may
+restore the same program's paid stage work after narrowing, while successors
+never inherit cancelled fractional work. Published reports retain their
+participant snapshots; a period containing work names its last actual action's
+participants, with the full sequence retained in receipts.
+
 The candidate mechanical design is known after concept work, while sensitivity
 remains unestablished. Its immutable demonstrated component has mass 35, volume
 100, power demand 55, survey capability 1, 90 BP, and serial cost 60 Electronics

@@ -116,9 +116,13 @@ struct TechnicalDevelopmentProgram {
     TechnicalDevelopmentClosure closure = TechnicalDevelopmentClosure::None;
     std::optional<std::int64_t> closedDay;
     TechnicalDevelopmentStage stage = TechnicalDevelopmentStage::ConceptEngineering;
+    // Actual paid work by this program only. Previously completed prototype tests
+    // reduce its required testing work; cancelled fractional work is never copied.
     double stageWork = 0.0;
     ProcessedMaterialSet stageConsumed;
     std::optional<MaintenanceTeamId> leasedTeamId;
+    // Receipts also pin a started production qualification's facility and a
+    // started support qualification's exact team. These are derived commitments.
     std::vector<TechnicalWorkReceipt> receipts;
     std::vector<TechnicalDevelopmentReport> reports;
     std::int64_t reportStartDay = 0;

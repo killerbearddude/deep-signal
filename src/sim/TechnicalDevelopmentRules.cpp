@@ -80,6 +80,43 @@ double technicalStageRequiredWork(TechnicalDevelopmentStage stage) noexcept {
     return 0.0;
 }
 
+int inheritedTechnicalTestCount(const GameState& state, const TechnicalDevelopmentProgram& program) {
+    const auto prototype =
+        std::find_if(state.prototypeComponentUnits.begin(), state.prototypeComponentUnits.end(),
+                     [&](const auto& unit) { return unit.opportunityId == program.charter.opportunityId; });
+    if (prototype == state.prototypeComponentUnits.end())
+        return 0;
+    return static_cast<int>(std::count_if(
+        state.technicalTestRecords.begin(), state.technicalTestRecords.end(), [&](const auto& test) {
+            // Later programs must not change the work owed by a historical
+            // cancelled program. Same-day tests already existed at authorization.
+            return test.opportunityId == program.charter.opportunityId && test.prototypeId == prototype->id &&
+                   test.programId != program.id && test.day <= program.createdDay;
+        }));
+}
+
+double technicalProgramStageRequiredWork(const GameState& state, const TechnicalDevelopmentProgram& program) {
+    if (program.stage == TechnicalDevelopmentStage::PrototypeTesting)
+        return std::max(0.0, kPrototypeTestingWork - inheritedTechnicalTestCount(state, program));
+    return technicalStageRequiredWork(program.stage);
+}
+
+std::optional<TechnicalFacilityId> technicalWorkFacility(const TechnicalDevelopmentProgram& program) {
+    if (program.stage == TechnicalDevelopmentStage::ProductionQualification)
+        for (const auto& receipt : program.receipts)
+            if (receipt.stage == program.stage && receipt.work > 0.0)
+                return receipt.facilityId;
+    return program.charter.requestedFacilityId;
+}
+
+std::optional<MaintenanceTeamId> technicalWorkTeam(const TechnicalDevelopmentProgram& program) {
+    if (program.stage == TechnicalDevelopmentStage::SupportQualification)
+        for (const auto& receipt : program.receipts)
+            if (receipt.stage == program.stage && receipt.work > 0.0)
+                return receipt.teamId;
+    return program.charter.requestedTeamId;
+}
+
 bool teamHasEngineeringQualification(const MaintenanceTeam& team,
                                      EngineeringQualification qualification) noexcept {
     return std::find(team.engineeringQualifications.begin(), team.engineeringQualifications.end(),
@@ -204,6 +241,37 @@ std::optional<std::string> validateTechnicalDevelopmentCharter(const GameState& 
     return std::nullopt;
 }
 
+TechnicalDevelopmentStage technicalStageUnderCurrentAuthority(const GameState& state,
+                                                              const TechnicalDevelopmentProgram& program) {
+    auto supportTeam = program.charter.requestedTeamId;
+    for (const auto& receipt : program.receipts)
+        if (receipt.stage == TechnicalDevelopmentStage::SupportQualification && receipt.work > 0.0) {
+            // A completed or temporarily out-of-scope course still belongs to
+            // its original team when future authority is amended.
+            supportTeam = receipt.teamId;
+            break;
+        }
+    return firstMissingTechnicalStage(state, program.charter.opportunityId,
+                                      program.charter.developmentColonyId, supportTeam,
+                                      program.charter.scope);
+}
+
+void reconcileTechnicalStageAfterAmendment(const GameState& state, TechnicalDevelopmentProgram& program) {
+    const auto nextStage = technicalStageUnderCurrentAuthority(state, program);
+    if (nextStage == program.stage)
+        return;
+    program.stage = nextStage;
+    program.stageWork = 0.0;
+    program.stageConsumed = {};
+    // Scope may be narrowed and expanded before closure. Restore only this
+    // program's own paid stage work, never a cancelled predecessor's fraction.
+    for (const auto& receipt : program.receipts)
+        if (receipt.stage == nextStage) {
+            program.stageWork += receipt.work;
+            program.stageConsumed.addSet(receipt.consumed);
+        }
+}
+
 TechnicalReadiness technicalDevelopmentReadiness(const GameState& state,
                                                  const TechnicalDevelopmentProgram& program,
                                                  const OpeningProgramContext* opening) {
@@ -225,8 +293,8 @@ TechnicalReadiness technicalDevelopmentReadiness(const GameState& state,
         result.explanation = "Waiting for a responsible technical leader";
         return result;
     }
-    const auto* team =
-        charter.requestedTeamId ? find(state.maintenanceTeams, *charter.requestedTeamId) : nullptr;
+    const auto teamId = technicalWorkTeam(program);
+    const auto* team = teamId ? find(state.maintenanceTeams, *teamId) : nullptr;
     if (!team) {
         result.cause = TechnicalWaitCause::NoEngineeringTeam;
         result.explanation = "Waiting for an actual engineering team";
@@ -250,8 +318,8 @@ TechnicalReadiness technicalDevelopmentReadiness(const GameState& state,
         result.explanation = "Waiting for the engineering team at the development colony";
         return result;
     }
-    const auto* facility =
-        charter.requestedFacilityId ? find(state.technicalFacilities, *charter.requestedFacilityId) : nullptr;
+    const auto facilityId = technicalWorkFacility(program);
+    const auto* facility = facilityId ? find(state.technicalFacilities, *facilityId) : nullptr;
     if (!facility || facility->colonyId != charter.developmentColonyId ||
         facility->capability != TechnicalFacilityCapability::PrototypeInstrumentation) {
         result.cause = TechnicalWaitCause::NoFacility;
@@ -259,6 +327,18 @@ TechnicalReadiness technicalDevelopmentReadiness(const GameState& state,
         return result;
     }
     result.facilityId = facility->id;
+    if (program.stage == TechnicalDevelopmentStage::PrototypeTesting) {
+        const auto prototype =
+            std::find_if(state.prototypeComponentUnits.begin(), state.prototypeComponentUnits.end(),
+                         [&](const auto& unit) { return unit.opportunityId == charter.opportunityId; });
+        if (prototype == state.prototypeComponentUnits.end() ||
+            prototype->colonyId != charter.developmentColonyId) {
+            result.cause = TechnicalWaitCause::NoFacility;
+            result.explanation = "Waiting for the physical prototype at the development colony; "
+                                 "prototype transport is unavailable";
+            return result;
+        }
+    }
     double facilityRate = facility->engineeringWorkdaysPerDay;
     if (opening)
         facilityRate = opening->availableTechnicalFacility(facility->id);
@@ -267,7 +347,10 @@ TechnicalReadiness technicalDevelopmentReadiness(const GameState& state,
         result.explanation = "Waiting for finite technical-facility throughput";
         return result;
     }
-    const double required = technicalStageRequiredWork(program.stage);
+    const double required = technicalProgramStageRequiredWork(state, program);
+    // The material rate remains the full stage's rate. Inherited tests reduce
+    // paid work, not the per-test bill of five Electronics and two Composites.
+    const double fullStageWork = technicalStageRequiredWork(program.stage);
     const double remaining = std::max(0.0, required - program.stageWork);
     double work = std::min({remaining, team->workdaysPerDay, facilityRate});
     if (!(team->workdaysPerDay > 0.0)) {
@@ -280,7 +363,7 @@ TechnicalReadiness technicalDevelopmentReadiness(const GameState& state,
     const auto* colony = find(state.colonies, charter.developmentColonyId);
     bool floorLimited = false, allowanceLimited = false, stockLimited = false;
     for (std::size_t index = 0; index < processedMaterialCount(); ++index) {
-        const double coefficient = required > 0.0 ? cost.amount[index] / required : 0.0;
+        const double coefficient = fullStageWork > 0.0 ? cost.amount[index] / fullStageWork : 0.0;
         if (coefficient <= 0.0)
             continue;
         const auto material = static_cast<ProcessedMaterial>(index);
@@ -320,7 +403,7 @@ TechnicalReadiness technicalDevelopmentReadiness(const GameState& state,
         work = remaining;
     result.work = work;
     for (std::size_t index = 0; index < processedMaterialCount(); ++index)
-        result.consumed.amount[index] = cost.amount[index] * work / required;
+        result.consumed.amount[index] = cost.amount[index] * work / fullStageWork;
     result.canWork = true;
     result.cause = TechnicalWaitCause::None;
     result.explanation = "Ready for finite technical-development work";

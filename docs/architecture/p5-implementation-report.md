@@ -242,3 +242,124 @@ Control, remote rescue/refueling, local site refining, formal P4B operating-data
 analysis, final propulsion, random failure, shipyard cancellation, manual transit
 cancellation cleanup, closed-survey report cleanup, or P6 human/whole-slice proving.
 Native human play review remains separate from compilation and ImGui submission.
+
+## PR #14 review revision: completed tests and participant provenance
+
+This revision is relative to reviewed head
+`bc0a37941554db8d863f9ed2fa84894e2f3d7381`, on the same
+`p5-precision-characterization-development` branch. The original implementation
+and verification above remain a historical record. The corrected P5 baseline
+remains `0bd66f555102e9d18488b650d5b2729c8569b231`.
+
+### Corrected behavior
+
+- Completed test records reduce a successor's testing obligation to the missing
+  tests. Its own `stageWork` and expenditure start at zero. Cancellation after
+  one, two, or 1.5 paid test-workdays leaves two, one, or two new full workdays,
+  respectively. Each newly paid test costs 5 Electronics and 2 Composites;
+  cancelled fractional work remains sunk.
+- Test publication is bounded at three records. Only sequence three creates
+  the one demonstrated revision, measurement profile and component. Provenance
+  links follow explicit test sequence without reordering persisted records.
+- Validation accepts evidence from multiple programs for the same prototype and
+  opportunity. Every test must match a complete-work boundary and its actual
+  dated receipt's facility, team and leader. Duplicate/out-of-range sequences,
+  mixed prototypes, inconsistent measurements, unpaid tests and duplicate
+  demonstrated revisions still reject.
+- Historical tests and qualification artifacts no longer depend on mutable
+  current requested IDs. Positive production work pins its facility; positive
+  support work pins its exact team. All four production workdays must occur at
+  that facility, and all two support workdays must belong to that team.
+- Pins are derived from existing receipts. Requests can change without
+  transferring paid qualification work. Completing the pinned support course
+  finishes that program; another team requires a later program. Query/UI labels
+  distinguish requested participants from current work participants.
+- Commands and previews share scope reconciliation. Extending scope before
+  administrative closure starts the newly authorized stage. Narrowing and
+  reexpanding a stage in the same program restores only that program's paid
+  receipts, including its participant pin. Suspension remains suspension.
+- Testing requires the actual prototype at the development colony. A remote
+  successor remains accepted waiting intent, incurs no cost, and cannot create
+  invalid remote test evidence. Completed demonstration knowledge still permits
+  production qualification at another colony.
+- Published reports keep their historical snapshots. For a period containing
+  work, the participant summary names the last actual receipt in that period;
+  every action remains individually inspectable through receipts.
+
+### Changed files
+
+| Files | Review correction |
+| --- | --- |
+| `src/sim/TechnicalDevelopmentRules.h/.cpp` | Shared remaining test bill, receipt-derived qualification participants, amendment reconciliation, and physical prototype readiness. |
+| `src/sim/TechnicalDevelopmentExecution.cpp` | Bounded test publication, actual receipt provenance, canonical evidence links, pinned artifact publication, and report participants. |
+| `src/sim/TechnicalDevelopmentValidation.cpp` | Cross-program evidence reconstruction, complete-work boundaries, qualification locality/team integrity, and malformed evidence rejection. |
+| `src/sim/SimulationTechnicalDevelopment.cpp` | Shared reconciliation after a valid charter amendment. |
+| `src/sim/TechnicalDevelopment.h` | Comments documenting own-program work and receipt-derived commitments; no new saved fields. |
+| `src/app/SimulationQueries.h`, `src/app/TechnicalDevelopmentQueries.cpp` | Accurate remaining test bills and effective/requested participant projections; shared amendment preview. |
+| `src/ui_imgui/TechnicalDevelopmentPanel.cpp` | Requested/current participant labels, qualification commitment explanation, and credited testing bill. |
+| `tests/technical_revision_tests.cpp`, `CMakeLists.txt` | One focused regression target with unique temporary save directories. |
+| `docs/architecture/simulation-state-contract.md`, this report | Corrected durable evidence, participant and amendment contracts, plus review evidence. |
+
+### Regression coverage
+
+`deep_signal_technical_revision_tests` adds seven groups:
+
+1. Cancellation after one, two and 1.5 testing workdays, Save/Load before and
+   during continuation, exact new material debit, one demonstration and no
+   fourth test. Reversed predecessor storage order survives continuation.
+2. Independent leader, team and facility amendments after test one, Save/Load,
+   correct later participants and immutable day-30 report snapshots.
+3. Production and support reassignment after partial work: only the original
+   facility/team finishes and qualifies; requested/effective query labels agree.
+4. A 2.5-workday opening publishes two tests, the remaining half completes the
+   third, and a forged full test backed by only half a workday rejects.
+5. Scope extension before closure and partial qualification narrow/reexpand
+   preserve same-program work, cost and pins across Save/Load and suspension.
+6. Remote cancelled-test continuation waits without work or consumption; later
+   remote production qualification remains possible after local demonstration.
+7. Duplicate/out-of-range sequences, inconsistent measurements, missing physical
+   receipts, mixed real prototypes, dangling references and duplicate
+   demonstrated revisions reject.
+
+This completes the missing P5-32 test-evidence coverage. The original P5-32
+mapping above covered concept reuse and partial fabrication only. The first
+focused run against the reviewed behavior reproduced the cross-program
+demonstration rejection: `Developed component was not earned by three complete
+test workdays`.
+
+### Revision verification
+
+The exact headless and UI configure commands in the original Verification
+section were rerun with the same build directories, flags and dependency paths.
+Both configurations and complete builds succeeded with no compiler warnings.
+The full CTest suites ran sequentially after the final code changes:
+
+| Gate | Revision result |
+| --- | --- |
+| Complete headless CTest | **48/48 passed**, 27.23 seconds |
+| Complete UI-enabled CTest | **59/59 passed**, 27.28 seconds |
+| New technical revision target | Passed in both suites, 2.10 / 2.00 seconds |
+| Existing technical save and integration tests | Passed in both suites |
+| Existing full Save/Load and continuation tests | Passed in both suites |
+| `git diff --check` | Passed |
+| Native click-through | Not performed; `DISPLAY` and `WAYLAND_DISPLAY` are absent |
+
+Exact build and suite commands:
+
+```sh
+cmake --build build-p5 --parallel 2
+ctest --test-dir build-p5 --output-on-failure -j 2
+cmake --build build-p5-ui --parallel 2
+ctest --test-dir build-p5-ui --output-on-failure -j 2
+git diff --check
+```
+
+These are local results. The earlier CLI/export/dummy-SDL results above belong
+to the original implementation run; those checks were not repeated for this
+revision. Automated ImGui tests and successful UI compilation do not establish
+native usability. PR #14 remains open for re-review and is not merged.
+
+Schema remains **v18**, with no persistence-layout changes, migration, or new
+saved scheduling/assignment state. No existing tests, assertions or fixtures
+were removed. Six-kind ordering, shipyard accounting, transit and P3/P4 mechanics
+are unchanged by this revision. No P6 or broader technology work was introduced.

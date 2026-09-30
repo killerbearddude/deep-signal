@@ -80,15 +80,7 @@ CommandResult Simulation::amendTechnicalDevelopment(const AmendTechnicalDevelopm
     ++program->charterRevision;
     program->leasedTeamId.reset();
     program->issue.acknowledged = true;
-    const auto missing = firstMissingTechnicalStage(state_, program->charter.opportunityId,
-                                                    program->charter.developmentColonyId,
-                                                    program->charter.requestedTeamId, program->charter.scope);
-    if (missing == TechnicalDevelopmentStage::Complete ||
-        static_cast<int>(missing) > static_cast<int>(program->stage)) {
-        program->stage = missing;
-        program->stageWork = 0.0;
-        program->stageConsumed = {};
-    }
+    reconcileTechnicalStageAfterAmendment(state_, *program);
     appendEvent(EventSeverity::Info,
                 event(*program, TechnicalDevelopmentAuditKind::Amended,
                       "Future technical authority amended; completed artifacts and sunk work retained"));

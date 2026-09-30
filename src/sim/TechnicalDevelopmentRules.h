@@ -45,12 +45,27 @@ struct TechnicalReadiness {
 [[nodiscard]] ProcessedMaterialSet technicalStageCost(TechnicalDevelopmentStage stage);
 // Returns the engineering/facility workdays required by one complete stage.
 [[nodiscard]] double technicalStageRequiredWork(TechnicalDevelopmentStage stage) noexcept;
+// Completed predecessor test records reduce this program's testing bill. Its
+// stageWork still records only its own paid work; cancelled fractions give no credit.
+[[nodiscard]] int inheritedTechnicalTestCount(const GameState&, const TechnicalDevelopmentProgram&);
+[[nodiscard]] double technicalProgramStageRequiredWork(const GameState&, const TechnicalDevelopmentProgram&);
+// The first positive qualification receipt pins production to its facility and
+// support training to its exact team. Other requests apply to future stages.
+[[nodiscard]] std::optional<TechnicalFacilityId> technicalWorkFacility(const TechnicalDevelopmentProgram&);
+[[nodiscard]] std::optional<MaintenanceTeamId> technicalWorkTeam(const TechnicalDevelopmentProgram&);
 // Engineering expertise is independent from equipment-family service training.
 [[nodiscard]] bool teamHasEngineeringQualification(const MaintenanceTeam&, EngineeringQualification) noexcept;
 // Starts new intent from completed global artifacts, never cancelled partial work.
 [[nodiscard]] TechnicalDevelopmentStage firstMissingTechnicalStage(const GameState&, TechnologyOpportunityId,
                                                                    ColonyId, std::optional<MaintenanceTeamId>,
                                                                    TechnicalDevelopmentScope);
+// Re-evaluates amended scope without dropping a started qualification's pinned
+// participant merely because the newly requested participant is already qualified.
+[[nodiscard]] TechnicalDevelopmentStage
+technicalStageUnderCurrentAuthority(const GameState&, const TechnicalDevelopmentProgram&);
+// Reconciles amended scope and restores this program's paid stage receipts when
+// a previously narrowed stage is reauthorized. Used by command and draft preview.
+void reconcileTechnicalStageAfterAmendment(const GameState&, TechnicalDevelopmentProgram&);
 // Projects one next-opening step from public artifacts and actual resources.
 [[nodiscard]] TechnicalReadiness
 technicalDevelopmentReadiness(const GameState&, const TechnicalDevelopmentProgram&,

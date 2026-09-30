@@ -91,11 +91,22 @@ std::vector<TechnicalDevelopmentSummary> SimulationQueries::technicalDevelopment
         if (program.charter.requestedFacilityId)
             if (const auto* facility =
                     find(state.technicalFacilities, *program.charter.requestedFacilityId)) {
+                row.requestedFacilityName = facility->name;
+            }
+        if (program.charter.requestedTeamId)
+            if (const auto* team = find(state.maintenanceTeams, *program.charter.requestedTeamId))
+                row.requestedTeamName = team->name;
+        const auto workFacility = technicalWorkFacility(program);
+        const auto workTeam = technicalWorkTeam(program);
+        row.facilityRequestPending = workFacility != program.charter.requestedFacilityId;
+        row.teamRequestPending = workTeam != program.charter.requestedTeamId;
+        if (workFacility)
+            if (const auto* facility = find(state.technicalFacilities, *workFacility)) {
                 row.facilityName = facility->name;
                 row.facilityRate = facility->engineeringWorkdaysPerDay;
             }
-        if (program.charter.requestedTeamId)
-            if (const auto* team = find(state.maintenanceTeams, *program.charter.requestedTeamId)) {
+        if (workTeam)
+            if (const auto* team = find(state.maintenanceTeams, *workTeam)) {
                 row.teamName = team->name;
                 if (team->colonyId)
                     if (const auto* colony = find(state.colonies, *team->colonyId))
@@ -106,8 +117,12 @@ std::vector<TechnicalDevelopmentSummary> SimulationQueries::technicalDevelopment
                 if (const auto owner = controllingEngineeringTeam(state, team->id))
                     row.teamOwner = programControllerLabel(state, *owner);
             }
-        row.requiredStageWork = technicalStageRequiredWork(program.stage);
+        row.requiredStageWork = technicalProgramStageRequiredWork(state, program);
         row.requiredStageMaterials = technicalStageCost(program.stage);
+        const auto fullStageWork = technicalStageRequiredWork(program.stage);
+        if (fullStageWork > 0)
+            for (auto& amount : row.requiredStageMaterials.amount)
+                amount *= row.requiredStageWork / fullStageWork;
         const auto prototype = std::find_if(
             state.prototypeComponentUnits.begin(), state.prototypeComponentUnits.end(),
             [&](const auto& value) { return value.opportunityId == program.charter.opportunityId; });
@@ -138,12 +153,14 @@ SimulationQueries::previewTechnicalDevelopment(const TechnicalDevelopmentCharter
                                                std::optional<TechnicalDevelopmentProgramId> amending) const {
     const auto& state = service_.state();
     TechnicalDevelopmentPreview preview;
+    TechnicalDevelopmentProgram provisional;
     if (amending) {
         const auto* existing = find(state.technicalDevelopmentPrograms, *amending);
         if (!existing || existing->lifecycle == TechnicalDevelopmentLifecycle::Closed) {
             preview.validationMessage = "No editable technical-development program with that identity";
             return preview;
         }
+        provisional = *existing;
         if (existing->charter.opportunityId != charter.opportunityId ||
             existing->charter.developmentColonyId != charter.developmentColonyId) {
             preview.validationMessage = "Opportunity and development colony are immutable program identity";
@@ -155,13 +172,24 @@ SimulationQueries::previewTechnicalDevelopment(const TechnicalDevelopmentCharter
         return preview;
     }
     preview.structurallyValid = true;
-    preview.startingStage = firstMissingTechnicalStage(
-        state, charter.opportunityId, charter.developmentColonyId, charter.requestedTeamId, charter.scope);
-    preview.requiredWork = technicalStageRequiredWork(preview.startingStage);
-    preview.requiredMaterials = technicalStageCost(preview.startingStage);
-    TechnicalDevelopmentProgram provisional;
     provisional.charter = charter;
-    provisional.stage = preview.startingStage;
+    if (amending) {
+        reconcileTechnicalStageAfterAmendment(state, provisional);
+        provisional.leasedTeamId.reset();
+    } else {
+        provisional.id = TechnicalDevelopmentProgramId{state.ids.nextTechnicalDevelopmentProgramId};
+        provisional.createdDay = state.date.day;
+        provisional.stage =
+            firstMissingTechnicalStage(state, charter.opportunityId, charter.developmentColonyId,
+                                       charter.requestedTeamId, charter.scope);
+    }
+    preview.startingStage = provisional.stage;
+    preview.requiredWork = technicalProgramStageRequiredWork(state, provisional);
+    preview.requiredMaterials = technicalStageCost(preview.startingStage);
+    const auto fullStageWork = technicalStageRequiredWork(preview.startingStage);
+    if (fullStageWork > 0)
+        for (auto& amount : preview.requiredMaterials.amount)
+            amount *= preview.requiredWork / fullStageWork;
     preview.condition = technicalDevelopmentCondition(state, provisional);
     preview.validationMessage = "Valid intent; authorization creates no prototype, process, or qualification";
     return preview;
