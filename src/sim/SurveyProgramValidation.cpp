@@ -151,8 +151,18 @@ void validateSurveyProgramState(const GameState& state) {
               program.reportedWorkDays <= program.totalWorkDays &&
               static_cast<std::size_t>(program.reportedVisits) <= program.receipts.size(),
               "survey report cursor exceeds actual program work");
-        check(program.nextReportDay == nextGlobalSurveyBoundary(state.date.day, 30) &&
-              program.reportStartDay >= program.createdDay && program.reportStartDay < program.nextReportDay,
+        // Closed programs freeze their last report cursor. Historical v18
+        // snapshots may already contain post-closure reports; retain their
+        // contiguous history while rejecting a malformed cursor or interval.
+        const std::int64_t reportAnchor =
+            program.reports.empty() ? program.createdDay : program.reports.back().endDay;
+        check(reportAnchor >= 0 && reportAnchor <= state.date.day &&
+                  reportAnchor <= std::numeric_limits<std::int64_t>::max() - 30 &&
+                  program.nextReportDay == nextGlobalSurveyBoundary(reportAnchor, 30) &&
+                  (program.lifecycle == SurveyProgramLifecycle::Closed ||
+                   program.nextReportDay == nextGlobalSurveyBoundary(state.date.day, 30)) &&
+                  program.reportStartDay >= program.createdDay &&
+                  program.reportStartDay < program.nextReportDay,
               "survey program report boundary is invalid");
         if (program.issue.signature.empty()) {
             check(program.issue.message.empty() && program.issue.acknowledged,
@@ -194,7 +204,10 @@ void validateSurveyProgramState(const GameState& state) {
         }
 
         const std::int64_t dueReports = state.date.day / 30 - program.createdDay / 30;
-        check(dueReports >= 0 && static_cast<std::size_t>(dueReports) == program.reports.size(),
+        check(dueReports >= 0 &&
+                  (program.lifecycle == SurveyProgramLifecycle::Closed
+                       ? program.reports.size() <= static_cast<std::size_t>(dueReports)
+                       : program.reports.size() == static_cast<std::size_t>(dueReports)),
               "survey program has missing or duplicate due reports");
         std::int64_t expectedReportStart = program.createdDay;
         std::int64_t expectedReportEnd = nextGlobalSurveyBoundary(program.createdDay, 30);

@@ -1,5 +1,6 @@
 #include "app/SiteDevelopmentFixture.h"
 #include "app/TechnicalDevelopmentFixture.h"
+#include "app/P6ReviewPack.h"
 #include "sim/Commands.h"
 #include "sim/Events.h"
 #include "sim/Minerals.h"
@@ -130,6 +131,16 @@ void printAdvance(const deep::Simulation& sim, const deep::AdvanceResult& result
 // fleet return non-zero; the final location is printed but not asserted. Use the
 // regression tests for arrival correctness; exit zero alone does not prove arrival.
 int main(int argc, char** argv) {
+    if (argc == 3 && std::string_view{argv[1]} == "--write-p6-human-review-pack") {
+        try {
+            deep::writeP6HumanReviewPack(argv[2]);
+            std::cout << "Wrote seven earned v18 native-review checkpoints to " << argv[2] << '\n';
+            return 0;
+        } catch (const std::exception& error) {
+            std::cerr << "P6 review export failed: " << error.what() << '\n';
+            return 1;
+        }
+    }
     if (argc == 3 && std::string_view{argv[1]} == "--write-technical-development-fixture") {
         try {
             const auto state = deep::earnTechnicalDevelopmentFixture();
@@ -253,7 +264,10 @@ int main(int argc, char** argv) {
         }
     }
     if (argc != 1) {
-        std::cerr << "Usage: deep_signal_cli [--write-freight-fixture PATH | --write-maintenance-fixture PATH | --write-evidence-fixture PATH | --write-evidence-concurrent-fixture PATH]\n";
+        std::cerr << "Usage: deep_signal_cli [--write-freight-fixture PATH | "
+                     "--write-maintenance-fixture PATH | --write-evidence-fixture PATH | "
+                     "--write-evidence-concurrent-fixture PATH | "
+                     "--write-p6-human-review-pack DIRECTORY]\n";
         return 1;
     }
     deep::Simulation sim{deep::createHomeSystemScenario()};
