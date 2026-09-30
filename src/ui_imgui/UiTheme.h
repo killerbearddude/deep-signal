@@ -26,8 +26,14 @@ enum class UiColor {
 
 ImVec4 uiColor(UiColor role);
 
+// Unscaled font sizes. ImGui applies the current display scale after a role is
+// selected, so callers should not multiply these by GetFontSize().
+enum class UiTextRole { ScreenTitle, ObjectTitle, Section, Body, Secondary, Provenance, Metric, Tab };
+
+float uiTextSize(UiTextRole role);
+
 // Apply once after creating the ImGui context. Panels share these neutral
-// surfaces and use accent/status colors only for their corresponding roles.
+// surfaces and the embedded font, independent of runtime paths or OS fonts.
 void applyDeepSignalTheme();
 
 } // namespace deep::ui_imgui

@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <string>
 
 namespace deep::ui_imgui {
 namespace {
@@ -21,6 +22,33 @@ void text(std::string_view value) {
 
 ImVec2 textSize(std::string_view value) {
     return value.empty() ? ImVec2{} : ImGui::CalcTextSize(value.data(), value.data() + value.size());
+}
+
+std::string heading(std::string_view value) {
+    std::string result(value);
+    for (char& c : result)
+        if (c >= 'a' && c <= 'z')
+            c = static_cast<char>(c - 'a' + 'A');
+    return result;
+}
+
+void drawTitle(std::string_view label, std::string_view subtitle, UiTextRole role,
+               float availableWidth = 0.0F) {
+    const float wrap = availableWidth > 0.0F ? ImGui::GetCursorPosX() + availableWidth : 0.0F;
+    ImGui::PushFont(nullptr, uiTextSize(role));
+    ImGui::PushTextWrapPos(wrap);
+    text(heading(label));
+    ImGui::PopTextWrapPos();
+    ImGui::PopFont();
+    if (!subtitle.empty()) {
+        ImGui::PushFont(nullptr, uiTextSize(UiTextRole::Secondary));
+        ImGui::PushStyleColor(ImGuiCol_Text, uiColor(UiColor::TextSecondary));
+        ImGui::PushTextWrapPos(wrap);
+        text(subtitle);
+        ImGui::PopTextWrapPos();
+        ImGui::PopStyleColor();
+        ImGui::PopFont();
+    }
 }
 
 UiColor statusColor(UiStatus status) {
@@ -43,31 +71,25 @@ UiColor statusColor(UiStatus status) {
 
 } // namespace
 
-void screenTitle(std::string_view title, std::string_view subtitle) {
-    ImGui::PushFont(nullptr, ImGui::GetStyle().FontSizeBase * 1.5F);
-    ImGui::PushTextWrapPos(0.0F);
-    text(title);
-    ImGui::PopTextWrapPos();
-    ImGui::PopFont();
-    if (!subtitle.empty()) {
-        ImGui::PushStyleColor(ImGuiCol_Text, uiColor(UiColor::TextSecondary));
-        ImGui::PushTextWrapPos(0.0F);
-        text(subtitle);
-        ImGui::PopTextWrapPos();
-        ImGui::PopStyleColor();
-    }
-    ImGui::Spacing();
+void screenTitle(std::string_view title, std::string_view subtitle, float availableWidth) {
+    drawTitle(title, subtitle, UiTextRole::ScreenTitle, availableWidth);
+}
+
+void objectTitle(std::string_view title, std::string_view subtitle) {
+    drawTitle(title, subtitle, UiTextRole::ObjectTitle);
 }
 
 void sectionTitle(std::string_view title) {
-    ImGui::Spacing();
-    ImGui::PushFont(nullptr, ImGui::GetStyle().FontSizeBase * 1.125F);
-    text(title);
+    ImGui::Dummy({0.0F, 8.0F});
+    ImGui::PushFont(nullptr, uiTextSize(UiTextRole::Section));
+    ImGui::PushStyleColor(ImGuiCol_Text, uiColor(UiColor::TextSecondary));
+    text(heading(title));
+    ImGui::PopStyleColor();
     ImGui::PopFont();
-    ImGui::Separator();
 }
 
 void statusBadge(UiStatus status, std::string_view label) {
+    ImGui::PushFont(nullptr, uiTextSize(UiTextRole::Section));
     const ImVec2 origin = ImGui::GetCursorScreenPos();
     const ImVec2 labelSize = textSize(label);
     const ImVec2 padding{8.0F, 4.0F};
@@ -86,17 +108,20 @@ void statusBadge(UiStatus status, std::string_view label) {
     ImGui::SetCursorScreenPos(origin);
     ImGui::Dummy(size);
     ImGui::EndGroup();
+    ImGui::PopFont();
 }
 
 void keyValue(std::string_view label, std::string_view value) {
     const float start = ImGui::GetCursorPosX();
     const float available = ImGui::GetContentRegionAvail().x;
-    const float labelWidth = textSize(label).x;
     const float valueWidth = textSize(value).x;
+    ImGui::PushFont(nullptr, uiTextSize(UiTextRole::Secondary));
+    const float labelWidth = textSize(label).x;
     const float gap = ImGui::GetStyle().ItemSpacing.x * 2.0F;
     ImGui::PushStyleColor(ImGuiCol_Text, uiColor(UiColor::TextSecondary));
     text(label);
     ImGui::PopStyleColor();
+    ImGui::PopFont();
     if (labelWidth + gap + valueWidth <= available) {
         ImGui::SameLine(start + available - valueWidth);
         text(value);
@@ -107,14 +132,27 @@ void keyValue(std::string_view label, std::string_view value) {
     }
 }
 
-void metric(std::string_view label, std::string_view value) {
+void metric(std::string_view label, std::string_view value, UiStatus emphasis) {
+    const ImVec2 origin = ImGui::GetCursorScreenPos();
+    const ImVec2 size{ImGui::GetContentRegionAvail().x, 82.0F};
+    const ImVec2 end{origin.x + size.x, origin.y + size.y};
+    ImGui::GetWindowDrawList()->AddRectFilled(origin, end, ImGui::GetColorU32(uiColor(UiColor::Surface)));
+    ImGui::GetWindowDrawList()->AddRect(origin, end, ImGui::GetColorU32(uiColor(UiColor::Divider)));
     ImGui::BeginGroup();
+    ImGui::SetCursorScreenPos({origin.x + 14.0F, origin.y + 10.0F});
+    ImGui::PushFont(nullptr, uiTextSize(UiTextRole::Secondary));
     ImGui::PushStyleColor(ImGuiCol_Text, uiColor(UiColor::TextSecondary));
-    text(label);
+    text(heading(label));
     ImGui::PopStyleColor();
-    ImGui::PushFont(nullptr, ImGui::GetStyle().FontSizeBase * 1.375F);
-    text(value);
     ImGui::PopFont();
+    ImGui::SetCursorScreenPos({origin.x + 14.0F, origin.y + 35.0F});
+    ImGui::PushFont(nullptr, uiTextSize(UiTextRole::Metric));
+    ImGui::PushStyleColor(ImGuiCol_Text, uiColor(statusColor(emphasis)));
+    text(value);
+    ImGui::PopStyleColor();
+    ImGui::PopFont();
+    ImGui::SetCursorScreenPos(origin);
+    ImGui::Dummy(size);
     ImGui::EndGroup();
 }
 
@@ -126,8 +164,10 @@ void progressMeter(std::string_view label, double completed, double total) {
                                 ? std::clamp(completed / total, 0.0, 1.0)
                                 : 0.0;
     ImGui::PushStyleColor(ImGuiCol_PlotHistogram, uiColor(UiColor::ControlBorder));
-    ImGui::ProgressBar(static_cast<float>(fraction), {-1.0F, 10.0F}, "");
-    ImGui::PopStyleColor();
+    ImGui::PushStyleColor(ImGuiCol_FrameBg, uiColor(UiColor::Background));
+    ImGui::PushStyleColor(ImGuiCol_Border, uiColor(UiColor::ControlBorder));
+    ImGui::ProgressBar(static_cast<float>(fraction), {-1.0F, 24.0F}, "");
+    ImGui::PopStyleColor(3);
 }
 
 } // namespace deep::ui_imgui

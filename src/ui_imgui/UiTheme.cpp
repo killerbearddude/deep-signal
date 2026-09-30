@@ -1,5 +1,7 @@
 #include "ui_imgui/UiTheme.h"
 
+#include "KarlaFontData.h"
+
 // Keep the palette and geometry together so native review adjustments apply to
 // semantic roles rather than introducing unrelated colors in individual panels.
 
@@ -42,7 +44,7 @@ ImVec4 uiColor(UiColor role) {
     case UiColor::Focus:
         return rgb(0x69D2E7);
     case UiColor::SelectedSurface:
-        return rgb(0x18333C);
+        return rgb(0x1D2A30);
     case UiColor::Positive:
         return rgb(0x87C99A);
     case UiColor::Warning:
@@ -53,16 +55,57 @@ ImVec4 uiColor(UiColor role) {
     return rgb(0xE8EEF2);
 }
 
+float uiTextSize(UiTextRole role) {
+    switch (role) {
+    case UiTextRole::ScreenTitle:
+        return 32.0F;
+    case UiTextRole::ObjectTitle:
+        return 28.0F;
+    case UiTextRole::Section:
+        return 18.0F;
+    case UiTextRole::Body:
+        return 20.0F;
+    case UiTextRole::Secondary:
+        return 17.0F;
+    case UiTextRole::Provenance:
+        return 14.0F;
+    case UiTextRole::Metric:
+        return 34.0F;
+    case UiTextRole::Tab:
+        return 20.0F;
+    }
+    return 20.0F;
+}
+
 void applyDeepSignalTheme() {
+    ImGuiIO& io = ImGui::GetIO();
+    if (io.Fonts->Fonts.empty()) {
+        // The generated array keeps the pinned, unmodified font alive for the
+        // atlas lifetime. The atlas must not free this static storage.
+        ImFontConfig config;
+        config.FontDataOwnedByAtlas = false;
+        io.FontDefault = io.Fonts->AddFontFromMemoryTTF(detail::karlaFontData,
+                                                        static_cast<int>(sizeof(detail::karlaFontData)),
+                                                        uiTextSize(UiTextRole::Body), &config);
+        // Preserve the old font's punctuation coverage in existing panels.
+        // Karla supplies the primary face; only missing glyphs use this source.
+        ImFontConfig fallback;
+        fallback.MergeMode = true;
+        fallback.SizePixels = uiTextSize(UiTextRole::Body);
+        io.Fonts->AddFontDefaultVector(&fallback);
+    }
+
     ImGuiStyle& style = ImGui::GetStyle();
     style.Alpha = 1.0F;
     style.DisabledAlpha = 0.6F;
+    // Legacy panels retain their base control sizing while the refined screen
+    // opts into the named typography roles. Their layouts have not been reviewed.
     style.FontSizeBase = 16.0F;
-    style.WindowPadding = {12.0F, 12.0F};
+    style.WindowPadding = {16.0F, 16.0F};
     style.FramePadding = {8.0F, 5.0F};
-    style.ItemSpacing = {8.0F, 6.0F};
+    style.ItemSpacing = {10.0F, 8.0F};
     style.ItemInnerSpacing = {6.0F, 4.0F};
-    style.CellPadding = {10.0F, 7.0F};
+    style.CellPadding = {12.0F, 12.0F};
     style.WindowRounding = 0.0F;
     style.ChildRounding = 0.0F;
     style.PopupRounding = 0.0F;
@@ -110,7 +153,7 @@ void applyDeepSignalTheme() {
     colors[ImGuiCol_Button] = uiColor(UiColor::Surface);
     colors[ImGuiCol_ButtonHovered] = uiColor(UiColor::Hover);
     colors[ImGuiCol_ButtonActive] = uiColor(UiColor::SelectedSurface);
-    colors[ImGuiCol_Header] = uiColor(UiColor::SelectedSurface);
+    colors[ImGuiCol_Header] = uiColor(UiColor::Surface);
     colors[ImGuiCol_HeaderHovered] = uiColor(UiColor::Hover);
     colors[ImGuiCol_HeaderActive] = uiColor(UiColor::SelectedSurface);
     colors[ImGuiCol_Separator] = uiColor(UiColor::Divider);

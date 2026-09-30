@@ -9,11 +9,12 @@ namespace deep::ui_imgui {
 
 enum class UiStatus { Normal, Building, Waiting, Completed, Suspended, Attention, Unknown };
 
-void screenTitle(std::string_view title, std::string_view subtitle = {});
+void screenTitle(std::string_view title, std::string_view subtitle = {}, float availableWidth = 0.0F);
+void objectTitle(std::string_view title, std::string_view subtitle = {});
 void sectionTitle(std::string_view title);
 void statusBadge(UiStatus status, std::string_view label);
 void keyValue(std::string_view label, std::string_view value);
-void metric(std::string_view label, std::string_view value);
+void metric(std::string_view label, std::string_view value, UiStatus emphasis = UiStatus::Normal);
 
 // Quantities must share units. The meter clamps its display to [0, 1] and shows
 // no fill when a finite positive denominator is unavailable.

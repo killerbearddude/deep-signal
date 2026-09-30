@@ -48,6 +48,8 @@ struct ImGuiSession {
             captured = text;
         };
         ui_imgui::applyDeepSignalTheme();
+        require(io.FontDefault->IsGlyphInFont(0x00B7),
+                "the refined face retains the middle-dot separator used by existing panels");
     }
     ~ImGuiSession() {
         ImGui::DestroyContext();
@@ -104,8 +106,8 @@ const ImGuiTable& orderTable() {
 ImVec2 firstOrderClassPoint() {
     const auto& table = orderTable();
     return {(table.Columns[2].MinX + table.Columns[2].MaxX) * 0.5F,
-            table.OuterRect.Min.y + table.InstanceDataFirst.LastTopHeadersRowHeight +
-                ImGui::GetStyle().CellPadding.y + 8.0F};
+            // Select through the row's top padding, not only its text content.
+            table.OuterRect.Min.y + table.InstanceDataFirst.LastTopHeadersRowHeight + 2.0F};
 }
 
 std::string click(ImVec2 position, ui_imgui::ShipyardPanel& panel, SimulationService& service) {
@@ -155,7 +157,7 @@ void default_orders_and_revision_navigation() {
     ui_imgui::ShipyardPanel panel;
     render(panel, service);
     const auto orders = render(panel, service);
-    requireText(orders, {"Shipyard / Production", "Orders", "New Revision", "Shipyard orders",
+    requireText(orders, {"SHIPYARD / PRODUCTION", "Orders", "New Revision", "SHIPYARD ORDERS",
                          "Survey Cutter", "Waiting", "No shipyard capacity", "No completion estimate"});
     for (const auto* editorText :
          {"New immutable design revision", "Compact Survey Hull", "Standard Instrument Workshop"})
@@ -166,7 +168,7 @@ void default_orders_and_revision_navigation() {
     requireText(click(tabPoint("New Revision"), panel, service),
                 {"New immutable design revision", "Compact Survey Hull", "Standard Instrument Workshop"});
     const auto returned = click(tabPoint("Orders"), panel, service);
-    requireText(returned, {"Shipyard orders", "No shipyard capacity"});
+    requireText(returned, {"SHIPYARD ORDERS", "No shipyard capacity"});
     require(returned.find("New immutable design revision") == std::string::npos,
             "returning to Orders hides the editor again");
 }
@@ -221,7 +223,7 @@ void world_replacement_resets_the_workflow() {
             "successful replacement resets Shipyard selection and editor state");
     render(panel, service);
     const auto replaced = render(panel, service);
-    requireText(replaced, {"Shipyard orders", "No shipyard orders"});
+    requireText(replaced, {"SHIPYARD ORDERS", "No shipyard orders"});
     require(replaced.find("Order #") == std::string::npos &&
                 replaced.find("New immutable design revision") == std::string::npos,
             "the new world's empty Orders view has no selected old order or editor");

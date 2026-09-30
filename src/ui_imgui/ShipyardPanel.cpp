@@ -12,6 +12,7 @@
 #include <imgui.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <iomanip>
 #include <optional>
@@ -29,7 +30,7 @@ namespace {
 // Formatting and visual status mapping consume owned app projections only.
 std::string amount(double value) {
     std::ostringstream out;
-    out << std::fixed << std::setprecision(1) << value;
+    out << std::fixed << std::setprecision(value == std::floor(value) ? 0 : 1) << value;
     return out.str();
 }
 
@@ -69,12 +70,28 @@ void ShipyardPanel::render(const SimulationQueries& queries, SimulationService& 
     // An explicitly opened operational screen should reveal its current work.
     // Existing floating position/size remains the user's layout, within the shell.
     ImGui::SetNextWindowCollapsed(false, ImGuiCond_Appearing);
-    if (!beginOperationalWindow("Shipyard / Production", &visible, 1420.0F, 900.0F)) {
+    if (!beginOperationalWindow("Shipyard / Production", &visible, 1420.0F, 1020.0F, false)) {
         ImGui::End();
         return;
     }
-    screenTitle("Shipyard / Production", "Production commitments and current yard state");
+    // This screen owns its identity once. Empty header space still supports
+    // ordinary window dragging, and the explicit close action replaces chrome.
+    const auto headerOrigin = ImGui::GetCursorScreenPos();
+    const float titleWidth = std::max(1.0F, ImGui::GetContentRegionAvail().x - 82.0F);
+    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + ImGui::GetContentRegionAvail().x - 66.0F);
+    ImGui::PushFont(nullptr, uiTextSize(UiTextRole::Secondary));
+    if (ImGui::Button("Close##Shipyard", {66.0F, 28.0F}))
+        visible = false;
+    ImGui::PopFont();
+    ImGui::SetCursorScreenPos(headerOrigin);
+    screenTitle("Shipyard / Production", "Production commitments and current yard state", titleWidth);
+    if (!visible) {
+        ImGui::End();
+        return;
+    }
+    ImGui::Dummy({0.0F, 6.0F});
     const auto classes = queries.shipClasses();
+    ImGui::PushFont(nullptr, uiTextSize(UiTextRole::Tab));
     if (ImGui::BeginTabBar("ShipyardViews")) {
         const auto ordersFlags = selectOrdersTab_ ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None;
         if (ImGui::BeginTabItem("Orders", nullptr, ordersFlags)) {
@@ -90,6 +107,7 @@ void ShipyardPanel::render(const SimulationQueries& queries, SimulationService& 
         ImGui::EndTabBar();
         selectOrdersTab_ = false;
     }
+    ImGui::PopFont();
     ImGui::End();
 }
 
@@ -122,20 +140,19 @@ void ShipyardPanel::renderOrders(const SimulationQueries& queries, SimulationSer
         }
     }
     ImGui::Spacing();
-    if (ImGui::BeginTable("ShipyardCounts", 4, ImGuiTableFlags_SizingStretchSame)) {
+    if (ImGui::BeginTable("ShipyardCounts", 4, ImGuiTableFlags_SizingStretchSame,
+                          {std::min(860.0F, ImGui::GetContentRegionAvail().x), 0.0F})) {
         ImGui::TableNextRow();
         ImGui::TableSetColumnIndex(0);
         metric("Orders", std::to_string(backlog.size()));
         ImGui::TableSetColumnIndex(1);
         metric("Building", std::to_string(building));
         ImGui::TableSetColumnIndex(2);
-        metric("Waiting", std::to_string(waiting));
+        metric("Waiting", std::to_string(waiting), waiting > 0 ? UiStatus::Waiting : UiStatus::Normal);
         ImGui::TableSetColumnIndex(3);
         metric("Complete", std::to_string(completed));
         ImGui::EndTable();
     }
-    ImGui::Spacing();
-    ImGui::Separator();
     ImGui::Spacing();
 
     // One desktop composition: current commitments beside their selected detail.
@@ -153,22 +170,24 @@ void ShipyardPanel::renderOrders(const SimulationQueries& queries, SimulationSer
             ImGui::TextWrapped(
                 "No shipyard orders. Create a build order below to record a production commitment.");
         } else {
-            constexpr float rowHeight = 62.0F;
-            const float desired = 42.0F + rowHeight * static_cast<float>(backlog.size());
+            constexpr float rowHeight = 92.0F;
+            const float desired = 56.0F + rowHeight * static_cast<float>(backlog.size());
             const float tableHeight = std::min(std::max(200.0F, desired),
                                                std::max(200.0F, ImGui::GetContentRegionAvail().y - 150.0F));
             const auto tableFlags = ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH |
                                     ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingStretchProp;
             if (ImGui::BeginTable("ShipyardOrderTable", 7, tableFlags, {0.0F, tableHeight})) {
-                ImGui::TableSetupColumn("Queue", ImGuiTableColumnFlags_WidthFixed, 50.0F);
-                ImGui::TableSetupColumn("Colony", ImGuiTableColumnFlags_WidthStretch, 1.0F);
-                ImGui::TableSetupColumn("Class", ImGuiTableColumnFlags_WidthStretch, 1.35F);
-                ImGui::TableSetupColumn("Progress", ImGuiTableColumnFlags_WidthFixed, 80.0F);
-                ImGui::TableSetupColumn("Status", ImGuiTableColumnFlags_WidthFixed, 104.0F);
-                ImGui::TableSetupColumn("ETA", ImGuiTableColumnFlags_WidthFixed, 98.0F);
-                ImGui::TableSetupColumn("Current condition", ImGuiTableColumnFlags_WidthStretch, 1.65F);
+                ImGui::TableSetupColumn("QUEUE", ImGuiTableColumnFlags_WidthFixed, 46.0F);
+                ImGui::TableSetupColumn("COLONY", ImGuiTableColumnFlags_WidthStretch, 1.0F);
+                ImGui::TableSetupColumn("CLASS", ImGuiTableColumnFlags_WidthStretch, 1.9F);
+                ImGui::TableSetupColumn("PROGRESS", ImGuiTableColumnFlags_WidthFixed, 72.0F);
+                ImGui::TableSetupColumn("STATUS", ImGuiTableColumnFlags_WidthFixed, 100.0F);
+                ImGui::TableSetupColumn("ETA", ImGuiTableColumnFlags_WidthFixed, 64.0F);
+                ImGui::TableSetupColumn("CURRENT CONDITION", ImGuiTableColumnFlags_WidthStretch, 1.8F);
                 ImGui::TableSetupScrollFreeze(0, 1);
+                ImGui::PushFont(nullptr, uiTextSize(UiTextRole::Secondary));
                 ImGui::TableHeadersRow();
+                ImGui::PopFont();
                 for (const auto& row : backlog) {
                     ImGui::PushID(static_cast<int>(row.orderId.value));
                     ImGui::TableNextRow(ImGuiTableRowFlags_None, rowHeight);
@@ -177,14 +196,31 @@ void ShipyardPanel::renderOrders(const SimulationQueries& queries, SimulationSer
                     const auto wrappedHeight = [](int column, const std::string& text) {
                         ImGui::TableSetColumnIndex(column);
                         return ImGui::CalcTextSize(text.c_str(), nullptr, false,
-                                                   ImGui::GetContentRegionAvail().x).y;
+                                                   ImGui::GetContentRegionAvail().x)
+                            .y;
                     };
-                    const float contentHeight =
-                        std::max({rowHeight - ImGui::GetStyle().CellPadding.y * 2.0F,
-                                  wrappedHeight(1, row.colonyName), wrappedHeight(2, row.shipClassName),
-                                  wrappedHeight(6, row.primaryCondition)});
+                    const auto cls = std::find_if(classes.begin(), classes.end(), [&](const auto& entry) {
+                        return entry.id == row.shipClassId;
+                    });
+                    const std::string classNote =
+                        cls == classes.end() ? std::string{}
+                                             : cls->roleName + " vessel / r" + std::to_string(cls->revision);
+                    const float colonyHeight = wrappedHeight(1, row.colonyName);
+                    const float nameHeight = wrappedHeight(2, row.shipClassName);
+                    ImGui::PushFont(nullptr, uiTextSize(UiTextRole::Secondary));
+                    const float noteHeight = classNote.empty() ? 0.0F : wrappedHeight(2, classNote);
+                    ImGui::PopFont();
+                    const float classHeight = nameHeight + (noteHeight > 0.0F ? 4.0F + noteHeight : 0.0F);
+                    const float conditionHeight = wrappedHeight(6, row.primaryCondition);
+                    const float contentHeight = std::max({rowHeight - ImGui::GetStyle().CellPadding.y * 2.0F,
+                                                          colonyHeight, classHeight, conditionHeight});
                     ImGui::TableSetColumnIndex(0);
                     const auto origin = ImGui::GetCursorScreenPos();
+                    const auto cell = [&](int column, float height) {
+                        ImGui::TableSetColumnIndex(column);
+                        ImGui::SetCursorScreenPos(
+                            {ImGui::GetCursorScreenPos().x, origin.y + (contentHeight - height) * 0.5F});
+                    };
                     const bool selected = selectedOrderId_ == row.orderId;
                     if (selected) {
                         ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0,
@@ -193,28 +229,45 @@ void ShipyardPanel::renderOrders(const SimulationQueries& queries, SimulationSer
                     const std::string queue =
                         row.queuePosition > 0 ? "#" + std::to_string(row.queuePosition) : "--";
                     ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 8.0F);
-                    if (ImGui::Selectable(queue.c_str(), selected,
+                    // Selectable expands its hit box by half the item spacing.
+                    // Include the row's breathing room without increasing layout height.
+                    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, {ImGui::GetStyle().ItemSpacing.x,
+                                                                    ImGui::GetStyle().CellPadding.y * 2.0F});
+                    if (ImGui::Selectable("##Order", selected,
                                           ImGuiSelectableFlags_SpanAllColumns |
                                               ImGuiSelectableFlags_AllowOverlap,
                                           {0.0F, contentHeight})) {
                         selectedOrderId_ = row.orderId;
                     }
+                    ImGui::PopStyleVar();
+                    cell(0, ImGui::GetFontSize());
+                    ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 8.0F);
+                    ImGui::TextUnformatted(queue.c_str());
                     if (selected) {
                         ImGui::GetWindowDrawList()->AddRectFilled(
                             {origin.x, origin.y}, {origin.x + 3.0F, origin.y + contentHeight},
                             ImGui::GetColorU32(uiColor(UiColor::Focus)));
                     }
-                    ImGui::TableSetColumnIndex(1);
+                    cell(1, colonyHeight);
                     ImGui::TextWrapped("%s", row.colonyName.c_str());
-                    ImGui::TableSetColumnIndex(2);
+                    cell(2, classHeight);
+                    const auto classOrigin = ImGui::GetCursorScreenPos();
                     ImGui::TextWrapped("%s", row.shipClassName.c_str());
-                    ImGui::TableSetColumnIndex(3);
+                    if (!classNote.empty()) {
+                        ImGui::SetCursorScreenPos({classOrigin.x, classOrigin.y + nameHeight + 4.0F});
+                        ImGui::PushFont(nullptr, uiTextSize(UiTextRole::Secondary));
+                        ImGui::PushStyleColor(ImGuiCol_Text, uiColor(UiColor::TextSecondary));
+                        ImGui::TextWrapped("%s", classNote.c_str());
+                        ImGui::PopStyleColor();
+                        ImGui::PopFont();
+                    }
+                    cell(3, ImGui::GetFontSize());
                     ImGui::Text("%d / %d", row.quantityCompleted, row.quantityRequested);
-                    ImGui::TableSetColumnIndex(4);
+                    cell(4, uiTextSize(UiTextRole::Section) + 8.0F);
                     statusBadge(badgeState(row.state), stateLabel(row.state));
-                    ImGui::TableSetColumnIndex(5);
+                    cell(5, ImGui::GetFontSize());
                     ImGui::TextWrapped("%s", etaLabel(row).c_str());
-                    ImGui::TableSetColumnIndex(6);
+                    cell(6, conditionHeight);
                     ImGui::TextWrapped("%s", row.primaryCondition.c_str());
                     ImGui::PopID();
                 }
@@ -246,8 +299,9 @@ void ShipyardPanel::renderOrderDetail(const ProductionBacklogSummary& order,
     const auto cls = std::find_if(classes.begin(), classes.end(),
                                   [&](const auto& row) { return row.id == order.shipClassId; });
     const std::string subtitle =
-        (cls == classes.end() ? std::string{} : cls->roleName + " / ") + order.colonyName;
-    screenTitle(order.shipClassName, subtitle);
+        (cls == classes.end() ? std::string{} : cls->roleName + " vessel / ") + order.colonyName;
+    objectTitle(order.shipClassName, subtitle);
+    ImGui::Dummy({0.0F, 4.0F});
     statusBadge(badgeState(order.state), stateLabel(order.state));
     sectionTitle("Current condition");
     ImGui::TextWrapped("%s", order.primaryCondition.c_str());
@@ -262,19 +316,17 @@ void ShipyardPanel::renderOrderDetail(const ProductionBacklogSummary& order,
     }
 
     sectionTitle("Progress");
-    keyValue("Hulls completed",
+    keyValue("Hulls",
              std::to_string(order.quantityCompleted) + " / " + std::to_string(order.quantityRequested));
-    sectionTitle("Build work");
     if (order.state == ProductionBacklogState::Completed) {
         keyValue("Remaining build work", "0 BP");
     } else {
-        keyValue("Current hull",
+        keyValue("Build work",
                  amount(order.accumulatedBuildPoints) + " / " + amount(order.currentHullBuildPoints) + " BP");
         progressMeter("", order.accumulatedBuildPoints, order.currentHullBuildPoints);
         keyValue("Order work remaining", amount(order.buildPointsRemaining) + " BP");
     }
-    sectionTitle("ETA");
-    ImGui::TextUnformatted(order.etaDays ? etaLabel(order).c_str() : "No completion estimate");
+    keyValue("ETA", order.etaDays ? etaLabel(order) : "No completion estimate");
 
     sectionTitle("Materials remaining");
     if (order.requiredMaterialsRemaining.empty())
@@ -289,10 +341,12 @@ void ShipyardPanel::renderOrderDetail(const ProductionBacklogSummary& order,
     if (ImGui::CollapsingHeader("Detailed explanation"))
         ImGui::TextWrapped("%s", order.explanation.c_str());
     ImGui::Spacing();
+    ImGui::PushFont(nullptr, uiTextSize(UiTextRole::Provenance));
     ImGui::PushStyleColor(ImGuiCol_Text, uiColor(UiColor::TextMuted));
     ImGui::Text("Order #%lld | Class #%lld", static_cast<long long>(order.orderId.value),
                 static_cast<long long>(order.shipClassId.value));
     ImGui::PopStyleColor();
+    ImGui::PopFont();
 }
 
 void ShipyardPanel::renderBuildOrder(const SimulationQueries& queries, SimulationService& service,
@@ -409,7 +463,10 @@ void ShipyardPanel::renderDesignEditor(const SimulationQueries& queries, Simulat
         ImGui::PushID(static_cast<int>(i));
         ImGui::TextUnformatted(catalog[i].name.c_str());
         ImGui::SameLine();
-        ImGui::SetNextItemWidth(90.0F);
+        // Preserve an editable value beside both step buttons at the new scale.
+        ImGui::SetNextItemWidth(ImGui::GetFrameHeight() * 2.0F + ImGui::CalcTextSize("0000").x +
+                                ImGui::GetStyle().FramePadding.x * 2.0F +
+                                ImGui::GetStyle().ItemInnerSpacing.x * 2.0F);
         ImGui::InputInt("Quantity", &draftQuantities_[i]);
         draftQuantities_[i] = std::max(0, draftQuantities_[i]);
         ImGui::TextDisabled("Mass %.0f  Vol %.0f  Hull space %.0f  Power +%.0f / -%.0f  Tank %.0f  Survey %.0f  BP %.0f",
