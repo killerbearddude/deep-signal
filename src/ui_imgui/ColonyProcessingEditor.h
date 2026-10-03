@@ -110,10 +110,11 @@ public:
     [[nodiscard]] bool keepEditing(ColonyProcessingEditorId id);
     [[nodiscard]] bool discard(ColonyProcessingEditorId id);
 
-    // ImGui owns only the live rectangle, keyed by EditorId. Presentation and
+    // ImGui owns only the live placement, keyed by EditorId. Presentation and
     // actions run on the UI thread; Apply routes through SimulationService.
     void render(const SimulationQueries& queries, SimulationService& service,
-                InformationInteractionAdapter& interactions, ShellRegion workArea);
+                InformationInteractionAdapter& interactions, ShellRegion workArea,
+                unsigned int dockId = 0);
 
 private:
     std::optional<ColonyProcessingEditorRecord> record_;

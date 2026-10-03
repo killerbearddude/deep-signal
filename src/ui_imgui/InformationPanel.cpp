@@ -249,14 +249,19 @@ void fleetOverview(const SimulationQueries& queries, const FleetId id,
 
 InformationPanelFrameResult InformationPanel::render(
     const SimulationQueries& queries, const SelectionState& selection,
-    InformationInteractionAdapter& interactions, const ImVec2& position, const ImVec2& size) const {
+    InformationInteractionAdapter& interactions, const ImVec2& position, const ImVec2& size,
+    const unsigned int dockId) const {
     // Bind displayed rows to this world before resolving their live query DTOs.
     const WorldGeneration displayedWorld = interactions.world();
     std::vector<ObjectReference> inspections;
     InformationPanelFrameResult result;
-    ImGui::SetNextWindowPos(position);
-    ImGui::SetNextWindowSize(size);
-    ImGui::SetNextWindowViewport(ImGui::GetMainViewport()->ID);
+    if (dockId != 0) {
+        ImGui::SetNextWindowDockID(dockId, ImGuiCond_FirstUseEver);
+    } else {
+        ImGui::SetNextWindowPos(position);
+        ImGui::SetNextWindowSize(size);
+        ImGui::SetNextWindowViewport(ImGui::GetMainViewport()->ID);
+    }
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2{16.0F, 14.0F});
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0F);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowMinSize, ImVec2{0.0F, 0.0F});
@@ -264,10 +269,11 @@ InformationPanelFrameResult InformationPanel::render(
     ImGui::PushStyleColor(ImGuiCol_WindowBg, kSurface);
     ImGui::PushStyleColor(ImGuiCol_Text, kText);
     ImGui::PushStyleColor(ImGuiCol_Separator, kDivider);
-    constexpr ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoDocking |
+    const ImGuiWindowFlags flags = dockId != 0 ? ImGuiWindowFlags_NoCollapse :
+        ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoDocking |
         ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse |
         ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing;
-    if (ImGui::Begin("##InformationPanel", nullptr, flags)) {
+    if (ImGui::Begin(dockId != 0 ? "Overview###InformationPanel" : "##InformationPanel", nullptr, flags)) {
         ImGui::PushStyleColor(ImGuiCol_Text, kAccent);
         ImGui::TextUnformatted("INFORMATION");
         ImGui::PopStyleColor();

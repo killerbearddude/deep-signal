@@ -10,6 +10,7 @@
 #include "ui_imgui/SaveLoadPanel.h"
 
 #include <string>
+#include <utility>
 
 namespace deep::ui_imgui {
 
@@ -49,6 +50,7 @@ struct PanelVisibility {
 // Replaces operational visibility with a curated preset. Global Save/Load and
 // Time Control windows retain their manual visibility across workspace changes.
 void applyWorkspace(Workspace workspace, PanelVisibility& visibility);
+[[nodiscard]] const char* preferredWorkspaceWindow(Workspace workspace) noexcept;
 
 // Renders File, Workspace, View, and global time actions for the desktop shell.
 // File actions are intentionally limited to New/Save/Load; autosave and native
@@ -61,6 +63,9 @@ public:
     float render(SimulationService& service, SaveLoadPanel& saveLoadPanel,
                 InformationInteractionAdapter& interactions, Workspace& workspace, PanelVisibility& visibility);
     void resetWorldState();
+    [[nodiscard]] bool takeLayoutReset() noexcept { return std::exchange(layoutResetRequested_, false); }
+    [[nodiscard]] const std::string& focusRequest() const noexcept { return focusRequest_; }
+    void clearFocusRequest() noexcept { focusRequest_.clear(); }
 
 private:
     // Executes the same interruption-aware day command as Time Control and
@@ -70,6 +75,8 @@ private:
 
     std::string timeMessage_;
     bool lastTimeSucceeded_ = true;
+    bool layoutResetRequested_ = false;
+    std::string focusRequest_;
 };
 
 } // namespace deep::ui_imgui

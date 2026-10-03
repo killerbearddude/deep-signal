@@ -68,6 +68,18 @@ void applyWorkspace(Workspace workspace, PanelVisibility& visibility) {
     }
 }
 
+const char* preferredWorkspaceWindow(const Workspace workspace) noexcept {
+    switch (workspace) {
+    case Workspace::System: return "Strategic Map";
+    case Workspace::Economy: return "Economy Forecast";
+    case Workspace::Production: return "Shipyard / Production";
+    case Workspace::Fleets: return "Fleets";
+    case Workspace::Intelligence: return "Evidence / Analysis";
+    case Workspace::History: return "Event Log";
+    }
+    return "Strategic Map";
+}
+
 float MainMenuBar::render(SimulationService& service, SaveLoadPanel& saveLoadPanel,
                          InformationInteractionAdapter& interactions, Workspace& workspace, PanelVisibility& visibility) {
     if (!ImGui::BeginMainMenuBar()) {
@@ -107,6 +119,7 @@ float MainMenuBar::render(SimulationService& service, SaveLoadPanel& saveLoadPan
             if (ImGui::MenuItem(entry.label, nullptr, workspace == entry.workspace)) {
                 workspace = entry.workspace;
                 applyWorkspace(workspace, visibility);
+                focusRequest_ = preferredWorkspaceWindow(workspace);
             }
         }
         ImGui::EndMenu();
@@ -116,11 +129,11 @@ float MainMenuBar::render(SimulationService& service, SaveLoadPanel& saveLoadPan
         // MenuItem stores directly into the shared visibility flags, making a
         // closed panel immediately reopenable without each panel knowing about
         // the main menu.
-        ImGui::MenuItem("Save / Load", nullptr, &visibility.saveLoad);
-        ImGui::MenuItem("Time Control", nullptr, &visibility.timeControl);
+        if (ImGui::MenuItem("Save / Load", nullptr, &visibility.saveLoad) && visibility.saveLoad) focusRequest_ = "Save / Load";
+        if (ImGui::MenuItem("Time Control", nullptr, &visibility.timeControl) && visibility.timeControl) focusRequest_ = "Time Control";
         ImGui::MenuItem("Strategic Map", nullptr, &visibility.strategicMap);
         ImGui::MenuItem("Bodies / System", nullptr, &visibility.bodies);
-        ImGui::MenuItem("Legacy Inspector", nullptr, &visibility.inspector);
+        if (ImGui::MenuItem("Legacy Inspector", nullptr, &visibility.inspector) && visibility.inspector) focusRequest_ = "Inspector";
         ImGui::MenuItem("Colonies", nullptr, &visibility.colonies);
         ImGui::MenuItem("Fleets", nullptr, &visibility.fleets);
         ImGui::MenuItem("Fleet Orders", nullptr, &visibility.fleetOrders);
@@ -133,6 +146,8 @@ float MainMenuBar::render(SimulationService& service, SaveLoadPanel& saveLoadPan
         ImGui::MenuItem("Shipyard / Production", nullptr, &visibility.shipyard);
         ImGui::MenuItem("Economy Forecast", nullptr, &visibility.economyForecast);
         ImGui::MenuItem("Event Log", nullptr, &visibility.eventLog);
+        ImGui::Separator();
+        if (ImGui::MenuItem("Reset Workspace Layout")) layoutResetRequested_ = true;
         ImGui::EndMenu();
     }
 

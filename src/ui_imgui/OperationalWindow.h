@@ -8,6 +8,7 @@
 namespace deep::ui_imgui {
 
 void setOperationalWorkArea(ShellRegion work);
+void setOperationalDockId(unsigned int dockId);
 
 // Same Begin/End contract as ImGui::Begin: callers always call ImGui::End().
 // Docked windows use their dock node, while floating windows stay in workArea.

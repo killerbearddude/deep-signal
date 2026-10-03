@@ -30,7 +30,7 @@ public:
     [[nodiscard]] InformationPanelFrameResult render(
         const SimulationQueries& queries, const SelectionState& selection,
         InformationInteractionAdapter& interactions, const ImVec2& position,
-        const ImVec2& size) const;
+        const ImVec2& size, unsigned int dockId = 0) const;
 };
 
 } // namespace deep::ui_imgui

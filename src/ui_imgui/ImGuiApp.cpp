@@ -10,6 +10,7 @@
 
 #include <SDL3/SDL.h>
 #include <imgui.h>
+#include <imgui_internal.h>
 #include <imgui_impl_sdl3.h>
 #include <imgui_impl_sdlrenderer3.h>
 
@@ -24,7 +25,7 @@
 namespace deep::ui_imgui {
 
 ImGuiApp::ImGuiApp()
-    : sdl_{"Deep Signal", 1280, 720}, service_{}, interactions_{service_, [this] {
+    : sdl_{"Deep Signal", 1920, 1080}, service_{}, interactions_{service_, [this] {
         // Invoked only after all members are constructed, on actual New/Load
         // success. Hidden workflows are invalidated now, not when next rendered.
         inspectorPanel_.resetWorldState();
@@ -41,6 +42,7 @@ ImGuiApp::ImGuiApp()
         timeControlPanel_.resetWorldState();
         mainMenuBar_.resetWorldState();
         pendingNavigationFocus_.reset();
+        lastTemporaryPreview_.reset();
         actionError_.clear();
         actionErrorUntil_ = 0.0;
     }} {
@@ -89,11 +91,19 @@ int ImGuiApp::run() {
         const ShellLayout layout = reserveInformationWorkArea(menuBottom);
         renderDockspace(layout);
         setOperationalWorkArea(layout.dock);
+        setOperationalDockId(operationalDockId_);
         // ImGui decorations impose a minimum height. Keep the dock node alive
         // while an unusually small/minimized viewport cannot fit normal windows.
         if (layout.dock.width >= ImGui::GetStyle().WindowMinSize.x &&
             layout.dock.height >= std::max(ImGui::GetStyle().WindowMinSize.y, ImGui::GetFrameHeight())) {
             renderPanels();
+            if (initialFocus_ || !mainMenuBar_.focusRequest().empty()) {
+                const char* target = mainMenuBar_.focusRequest().empty()
+                    ? preferredWorkspaceWindow(workspace_) : mainMenuBar_.focusRequest().c_str();
+                ImGui::SetWindowFocus(target);
+                initialFocus_ = false;
+                mainMenuBar_.clearFocusRequest();
+            }
         }
         if (layout.drawable()) {
             // Render after all selection producers and synchronous New/Load
@@ -102,9 +112,14 @@ int ImGuiApp::run() {
             const InformationPanelFrameResult panelResult = informationPanel_.render(
                 queries, interactions_.mainSelection(), interactions_,
                 {layout.information.x, layout.information.y},
-                {layout.information.width, layout.information.height});
+                {layout.information.width, layout.information.height}, informationDockId_);
+            const auto displayedTemporary = interactions_.state().temporaryPreview();
             const InformationPreviewFrameResult previewResult =
-                previewLayer_.render(queries, interactions_, layout.dock);
+                previewLayer_.render(queries, interactions_, layout.information, informationDockId_);
+            if (displayedTemporary && displayedTemporary != lastTemporaryPreview_) {
+                ImGui::SetWindowFocus(informationPreviewWindowName(displayedTemporary->id).c_str());
+            }
+            lastTemporaryPreview_ = displayedTemporary;
             if (previewResult.goTo) {
                 const NavigationResult result = navigation_.goTo(
                     *previewResult.goTo, queries, interactions_, workspace_, visibility_,
@@ -128,7 +143,15 @@ int ImGuiApp::run() {
             // displayed source, Configure then fails exact-source validation.
             if (panelResult.configureProcessing) openEditor(*panelResult.configureProcessing);
             if (previewResult.configureProcessing) openEditor(*previewResult.configureProcessing);
-            processingEditor_.render(queries, service_, interactions_, layout.dock);
+            processingEditor_.render(queries, service_, interactions_, layout.dock, operationalDockId_);
+            if (focusEditorAfterReset_) {
+                if (const auto& editor = processingEditor_.current()) {
+                    const std::string name = "Configure processing###ColonyProcessingEditor_W" +
+                        std::to_string(editor->id.world.value) + "_E" + std::to_string(editor->id.value);
+                    ImGui::SetWindowFocus(name.c_str());
+                }
+                focusEditorAfterReset_ = false;
+            }
             renderActionFeedback(layout.dock);
         }
 
@@ -159,17 +182,71 @@ void ImGuiApp::renderDockspace(const ShellLayout& layout) {
         ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus |
         ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse;
     ImGui::Begin(hostName, nullptr, flags);
+    operationalDockId_ = ImGui::GetID("DockSpace");
+    // The old operational ID is retained. A separate right-side dockspace
+    // gives information tabs their own saved arrangement and usable width.
+    if (resetLayout_) {
+        focusEditorAfterReset_ = processingEditor_.current().has_value();
+        ImGui::DockBuilderRemoveNode(operationalDockId_);
+    }
+    if (!ImGui::DockBuilderGetNode(operationalDockId_)) {
+        ImGui::DockBuilderAddNode(operationalDockId_, ImGuiDockNodeFlags_DockSpace);
+        ImGui::DockBuilderSetNodePos(operationalDockId_, {layout.dock.x, layout.dock.y});
+        ImGui::DockBuilderSetNodeSize(operationalDockId_, {layout.dock.width, layout.dock.height});
+        for (const char* name : {
+                "Strategic Map", "Bodies / System", "Economy Forecast", "Shipyard / Production",
+                "Colonies", "Sites / Development", "Technical Development", "Fleets",
+                "Fleet Orders", "Freight / Supply Programs", "Maintenance / Support Programs",
+                "Evidence / Analysis", "Survey Programs", "Event Log", "Save / Load",
+                "Time Control", "Legacy Inspector###Inspector"}) {
+            ImGui::DockBuilderDockWindow(name, operationalDockId_);
+        }
+        if (const auto& editor = processingEditor_.current()) {
+            const std::string name = "Configure Processing###ColonyProcessingEditor_W" +
+                std::to_string(editor->id.world.value) + "_E" + std::to_string(editor->id.value);
+            ImGui::DockBuilderDockWindow(name.c_str(), operationalDockId_);
+        }
+        ImGui::DockBuilderFinish(operationalDockId_);
+        initialFocus_ = true;
+    }
     // Even a minimized viewport keeps the docking node alive. Zero window sizes
     // mean auto-fit to ImGui, so the invisible keep-alive host uses a 1 px guard.
     const ImGuiDockNodeFlags dockFlags = layout.drawable() ? ImGuiDockNodeFlags_None : ImGuiDockNodeFlags_KeepAliveOnly;
-    ImGui::DockSpace(ImGui::GetID("DockSpace"), {0.0F, 0.0F}, dockFlags);
+    ImGui::DockSpace(operationalDockId_, {0.0F, 0.0F}, dockFlags);
     ImGui::End();
     ImGui::PopStyleVar(4);
+
+    ImGui::SetNextWindowPos({layout.information.x, layout.information.y});
+    ImGui::SetNextWindowSize({std::max(1.0F, layout.information.width),
+                              std::max(1.0F, layout.information.height)});
+    ImGui::SetNextWindowViewport(viewport->ID);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, {0.0F, 0.0F});
+    ImGui::Begin("##InformationDockHost", nullptr, flags);
+    informationDockId_ = ImGui::GetID("InformationDockSpace");
+    if (resetLayout_) ImGui::DockBuilderRemoveNode(informationDockId_);
+    if (!ImGui::DockBuilderGetNode(informationDockId_)) {
+        ImGui::DockBuilderAddNode(informationDockId_, ImGuiDockNodeFlags_DockSpace);
+        ImGui::DockBuilderSetNodePos(informationDockId_, {layout.information.x, layout.information.y});
+        ImGui::DockBuilderSetNodeSize(informationDockId_, {layout.information.width, layout.information.height});
+        ImGui::DockBuilderDockWindow("Overview###InformationPanel", informationDockId_);
+        if (resetLayout_) {
+            for (const auto& preview : interactions_.previewSnapshot()) {
+                ImGui::DockBuilderDockWindow(informationPreviewWindowName(preview.id).c_str(), informationDockId_);
+            }
+        }
+        ImGui::DockBuilderFinish(informationDockId_);
+    }
+    ImGui::DockSpace(informationDockId_, {0.0F, 0.0F}, dockFlags);
+    ImGui::End();
+    ImGui::PopStyleVar();
+    resetLayout_ = false;
 }
 
 float ImGuiApp::renderMainMenu() {
     interactions_.reconcile();
-    return mainMenuBar_.render(service_, saveLoadPanel_, interactions_, workspace_, visibility_);
+    const float bottom = mainMenuBar_.render(service_, saveLoadPanel_, interactions_, workspace_, visibility_);
+    resetLayout_ = mainMenuBar_.takeLayoutReset();
+    return bottom;
 }
 
 void ImGuiApp::renderPanels() {

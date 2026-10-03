@@ -232,16 +232,35 @@ void unavailable() {
 }
 
 void renderOne(const SimulationQueries& queries, const InformationPreview& preview,
-               const ShellRegion work, std::vector<PreviewAction>& actions,
+               const ShellRegion work, const unsigned int dockId, std::vector<PreviewAction>& actions,
                std::vector<ObjectReference>& inspectionRequests,
                InformationPreviewFrameResult& result) {
-    const std::string name = informationPreviewWindowName(preview.id);
-    const ShellRegion initial = initialPreviewGeometry(preview.id, work);
-    ImGui::SetNextWindowPos({initial.x, initial.y}, ImGuiCond_Once);
-    ImGui::SetNextWindowSize({initial.width, initial.height}, ImGuiCond_Once);
-    ImGui::SetNextWindowViewport(ImGui::GetMainViewport()->ID);
+    std::string name = informationPreviewWindowName(preview.id);
+    if (dockId != 0) {
+        std::string objectName = "Unknown";
+        std::visit([&](const auto id) {
+            using Id = std::decay_t<decltype(id)>;
+            if constexpr (std::is_same_v<Id, BodyId>) {
+                for (const auto& row : queries.bodySystemOverview()) if (row.id == id) objectName = row.name;
+            } else if constexpr (std::is_same_v<Id, ColonyId>) {
+                for (const auto& row : queries.colonies()) if (row.id == id) objectName = row.name;
+            } else {
+                if (const auto row = queries.fleet(id)) objectName = row->name;
+            }
+        }, preview.target.object);
+        // Escape ImGui label delimiters while the immutable suffix retains identity.
+        for (std::size_t at = 0; (at = objectName.find('#', at)) != std::string::npos; ++at) objectName[at] = ' ';
+        name = (preview.pinned ? objectName : "Preview: " + objectName) +
+               name.substr(name.find("###"));
+        ImGui::SetNextWindowDockID(dockId, ImGuiCond_FirstUseEver);
+    } else {
+        const ShellRegion initial = initialPreviewGeometry(preview.id, work);
+        ImGui::SetNextWindowPos({initial.x, initial.y}, ImGuiCond_Once);
+        ImGui::SetNextWindowSize({initial.width, initial.height}, ImGuiCond_Once);
+        ImGui::SetNextWindowViewport(ImGui::GetMainViewport()->ID);
+    }
     ConstraintContext constraint{name.c_str(), work};
-    ImGui::SetNextWindowSizeConstraints(
+    if (dockId == 0) ImGui::SetNextWindowSizeConstraints(
         {std::min(280.0F, work.width), std::min(240.0F, work.height)},
         {work.width, work.height}, constrainPreview, &constraint);
 
@@ -259,8 +278,8 @@ void renderOne(const SimulationQueries& queries, const InformationPreview& previ
     ImGui::PushStyleColor(ImGuiCol_Button, kButton);
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, kButtonHovered);
     ImGui::PushStyleColor(ImGuiCol_ButtonActive, kButtonActive);
-    constexpr ImGuiWindowFlags flags = ImGuiWindowFlags_NoDocking |
-        ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing |
+    const ImGuiWindowFlags flags = (dockId == 0 ? ImGuiWindowFlags_NoDocking |
+        ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing : ImGuiWindowFlags_None) |
         ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar |
         ImGuiWindowFlags_NoScrollWithMouse;
     bool open = true;
@@ -335,7 +354,7 @@ std::string informationPreviewContentName(const ObjectReference target) {
 
 InformationPreviewFrameResult InformationPreviewLayer::render(
     const SimulationQueries& queries, InformationInteractionAdapter& interactions,
-    const ShellRegion workArea) const {
+    const ShellRegion workArea, const unsigned int dockId) const {
     const auto previews = interactions.previewSnapshot();
     // An almost minimized shell cannot expose a usable title bar. Keep the
     // records intact; the same native windows recover when the shell is larger.
@@ -347,7 +366,7 @@ InformationPreviewFrameResult InformationPreviewLayer::render(
     InformationPreviewFrameResult result;
     actions.reserve(previews.size());
     for (const auto& preview : previews) {
-        renderOne(queries, preview, workArea, actions, inspectionRequests, result);
+        renderOne(queries, preview, workArea, dockId, actions, inspectionRequests, result);
     }
     for (const auto& action : actions) {
         switch (action.kind) {

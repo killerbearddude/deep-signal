@@ -63,7 +63,7 @@ public:
     int run();
 
 private:
-    // Reserves the left shell region for existing dockable application windows.
+    // Establishes two presentation-local dockspaces on first use or explicit reset.
     void renderDockspace(const ShellLayout& layout);
 
     // Draws application commands, workspace presets, and manual panel toggles.
@@ -110,6 +110,12 @@ private:
     std::string actionError_;
     double actionErrorUntil_ = 0.0;
     std::optional<ObjectReference> pendingNavigationFocus_;
+    std::optional<InformationPreview> lastTemporaryPreview_;
+    bool resetLayout_ = false;
+    unsigned int operationalDockId_ = 0;
+    unsigned int informationDockId_ = 0;
+    bool initialFocus_ = true;
+    bool focusEditorAfterReset_ = false;
 };
 
 } // namespace deep::ui_imgui

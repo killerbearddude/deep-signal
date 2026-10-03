@@ -167,7 +167,7 @@ void InspectorPanel::render(const SimulationQueries& queries,
         return;
     }
 
-    if (!beginOperationalWindow("Inspector", &visible)) {
+    if (!beginOperationalWindow("Legacy Inspector###Inspector", &visible)) {
         ImGui::End();
         return;
     }

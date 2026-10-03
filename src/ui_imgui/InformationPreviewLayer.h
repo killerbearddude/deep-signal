@@ -1,7 +1,7 @@
 #pragma once
 
-// Renders copied interaction records as short-lived native reference windows.
-// ImGui keeps live geometry by PreviewId; this component retains no target,
+// Renders copied interaction records as information-workspace tabs.
+// ImGui keeps live placement by PreviewId; this component retains no target,
 // query DTO, simulation entity, or application state between frames.
 
 #include "app/InformationInteractionAdapter.h"
@@ -17,9 +17,8 @@ class SimulationQueries;
 
 namespace deep::ui_imgui {
 
-// The visible title is fixed and never includes an object name. The hidden ID
-// includes both world generation and record number, so retargeting and literal
-// ##/### in display names cannot change native window identity.
+// The hidden ID includes world generation and record number. The native tab
+// adds a readable object label independently, so retargeting keeps identity.
 [[nodiscard]] std::string informationPreviewWindowName(PreviewId id);
 
 // The inner scroll region follows the displayed typed target. Retargeting a
@@ -48,7 +47,7 @@ public:
     [[nodiscard]] InformationPreviewFrameResult render(
         const SimulationQueries& queries,
         InformationInteractionAdapter& interactions,
-        ShellRegion workArea) const;
+        ShellRegion workArea, unsigned int dockId = 0) const;
 };
 
 } // namespace deep::ui_imgui
