@@ -28,6 +28,9 @@ without copying its rules into every change.
 
 ## Change discipline
 
+- Treat the current handoff as change scope, the state contract as accepted
+  behavior, source code as implementation, and tests as evidence only for what
+  they cover. Report conflicts instead of inferring intended behavior from code.
 - Check Git status and inspect the relevant implementation, tests, and contract
   before editing. Make the smallest coherent change and preserve unrelated
   work and behavior.
