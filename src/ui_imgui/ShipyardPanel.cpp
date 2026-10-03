@@ -1,6 +1,7 @@
 #include "ui_imgui/ShipyardPanel.h"
 #include "ui_imgui/OperationalWindow.h"
 #include "ui_imgui/PresentationWidgets.h"
+#include "ui_imgui/ShipyardComparisonView.h"
 #include "ui_imgui/UiTheme.h"
 
 // Presents current production commitments first. Selection, tabs and drafts are
@@ -96,6 +97,10 @@ void ShipyardPanel::render(const SimulationQueries& queries, SimulationService& 
         const auto ordersFlags = selectOrdersTab_ ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None;
         if (ImGui::BeginTabItem("Orders", nullptr, ordersFlags)) {
             renderOrders(queries, service, classes);
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("Compare Designs")) {
+            renderShipyardComparison(queries, classes, compareClassAId_, compareClassBId_);
             ImGui::EndTabItem();
         }
         if (ImGui::BeginTabItem("New Revision")) {
@@ -416,6 +421,8 @@ void ShipyardPanel::resetWorldState() {
     lastCommandMessage_.clear();
     feedbackIsRevision_ = false;
     selectedBuildClassId_.reset();
+    compareClassAId_.reset();
+    compareClassBId_.reset();
     draftSourceId_.reset();
     draftQuantities_.clear();
     draftName_.fill('\0');

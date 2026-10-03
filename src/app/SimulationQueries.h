@@ -70,6 +70,7 @@ struct ProcessedMaterialStockpileSummary {
     ProcessedMaterial material = ProcessedMaterial::StructuralAlloys;
     std::string materialName;
     double amount = 0.0;
+    bool operator==(const ProcessedMaterialStockpileSummary&) const = default;
 };
 
 // Display-ready colony row for overview panels. Values are copied out of the
@@ -161,6 +162,91 @@ struct ShipClassSummary {
     std::vector<ShipComponentInstall> components;
     ShipDesignEvaluation design;
     double buildPoints = 0.0;
+};
+
+// Comparison copies acquired method performance, never an opportunity's target
+// or hidden candidate outcome. Installed quantity does not change a threshold.
+struct ShipClassMeasurementSummary {
+    std::string profileName;
+    int methodVersion = 0;
+    double detectionThreshold = 0.0;
+    bool measuresAccessibility = false;
+    std::string accessibilityName;
+    bool operator==(const ShipClassMeasurementSummary&) const = default;
+};
+
+// Condition and restored duty belong to each installed unit. Quantity scales
+// total capacity and the eventual service bill, not these unit recipe rates.
+struct ShipClassServiceSummary {
+    std::string familyName;
+    double dutyCapacityPerUnit = 0.0;
+    double totalDutyCapacity = 0.0;
+    double teamWorkdaysPerRestoredDutyPerUnit = 0.0;
+    std::vector<ProcessedMaterialStockpileSummary> materialsPerDutyPerUnit;
+    bool operator==(const ShipClassServiceSummary&) const = default;
+};
+
+struct ShipClassInstrumentSummary {
+    ShipComponentId componentId;
+    std::string componentName;
+    int quantity = 0;
+    std::optional<ShipClassMeasurementSummary> measurement;
+    std::optional<ShipClassServiceSummary> service;
+    bool operator==(const ShipClassInstrumentSummary&) const = default;
+};
+
+struct ShipClassPrototypeAvailabilitySummary {
+    std::string colonyName;
+    std::size_t quantityAvailable = 0;
+    bool operator==(const ShipClassPrototypeAvailabilitySummary&) const = default;
+};
+
+// Readiness is a current-day snapshot, separate from design constructibility.
+// Available prototypes exclude reserved/consumed units; qualification does not
+// imply a team is physically present or currently free to perform maintenance.
+struct ShipClassDevelopedComponentSummary {
+    ShipComponentId componentId;
+    std::string componentName;
+    int quantity = 0;
+    std::vector<std::string> serialProductionColonyNames;
+    std::vector<ShipClassPrototypeAvailabilitySummary> prototypeAvailability;
+    std::vector<std::string> supportQualifiedTeamNames;
+    bool operator==(const ShipClassDevelopedComponentSummary&) const = default;
+};
+
+struct ShipClassWorkshopRateSummary {
+    std::string familyName;
+    double teamWorkdaysPerDayPerUnit = 0.0;
+    double totalTeamWorkdaysPerDay = 0.0;
+    bool operator==(const ShipClassWorkshopRateSummary&) const = default;
+};
+
+// Installed throughput only; sufficient design power and physical operators
+// are still required to execute work. Unlike families remain separate rows.
+struct ShipClassWorkshopSummary {
+    ShipComponentId componentId;
+    std::string componentName;
+    int quantity = 0;
+    std::vector<ShipClassWorkshopRateSummary> rates;
+    bool operator==(const ShipClassWorkshopSummary&) const = default;
+};
+
+// Owned immutable-class comparison snapshot. Component rows retain install
+// order; material rows contain every enum slot, including zeros, for alignment.
+// Local readiness never changes the evaluator's constructibility result.
+struct ShipClassComparisonSummary {
+    ShipClassId id;
+    std::string name;
+    int revision = 1;
+    std::string roleName;
+    ShipDesignEvaluation design;
+    // Design power potential, independent of hull wear and team availability.
+    double poweredSurveyCapability = 0.0;
+    std::vector<ProcessedMaterialStockpileSummary> buildMaterials;
+    std::vector<ShipClassInstrumentSummary> instruments;
+    std::vector<ShipClassDevelopedComponentSummary> developedComponents;
+    std::vector<ShipClassWorkshopSummary> workshops;
+    bool operator==(const ShipClassComparisonSummary&) const;
 };
 
 struct ShipComponentSummary {
@@ -869,6 +955,9 @@ public:
 
     // Returns one summary row per saved immutable ship class revision.
     [[nodiscard]] std::vector<ShipClassSummary> shipClasses() const;
+    // Read-only comparison of a saved revision, with resolved current-day
+    // production/support names. Missing class IDs return nullopt.
+    [[nodiscard]] std::optional<ShipClassComparisonSummary> shipClassComparison(ShipClassId id) const;
     [[nodiscard]] std::vector<ShipComponentSummary> shipComponents() const;
     [[nodiscard]] ShipDesignDraftPreview previewShipDesign(
         const std::vector<ShipComponentInstall>& components) const;

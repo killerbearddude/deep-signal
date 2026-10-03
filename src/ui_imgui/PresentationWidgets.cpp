@@ -112,7 +112,6 @@ void statusBadge(UiStatus status, std::string_view label) {
 }
 
 void keyValue(std::string_view label, std::string_view value) {
-    const float start = ImGui::GetCursorPosX();
     const float available = ImGui::GetContentRegionAvail().x;
     const float valueWidth = textSize(value).x;
     ImGui::PushFont(nullptr, uiTextSize(UiTextRole::Secondary));
@@ -123,7 +122,9 @@ void keyValue(std::string_view label, std::string_view value) {
     ImGui::PopStyleColor();
     ImGui::PopFont();
     if (labelWidth + gap + valueWidth <= available) {
-        ImGui::SameLine(start + available - valueWidth);
+        // Relative spacing works in both child windows and table columns.
+        // Absolute SameLine offsets would apply the table's column offset twice.
+        ImGui::SameLine(0.0F, available - labelWidth - valueWidth);
         text(value);
     } else {
         ImGui::PushTextWrapPos(0.0F);

@@ -37,6 +37,8 @@ class ShipyardPanel {
 
     std::optional<ShipyardOrderId> selectedOrderId_;
     std::optional<ShipClassId> selectedBuildClassId_;
+    std::optional<ShipClassId> compareClassAId_;
+    std::optional<ShipClassId> compareClassBId_;
     std::optional<ShipClassId> draftSourceId_;
     std::array<char, 128> draftName_{};
     std::vector<int> draftQuantities_;

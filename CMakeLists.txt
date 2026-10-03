@@ -120,6 +120,7 @@ if(DEEP_SIGNAL_BUILD_APP)
         src/app/InformationInteractionState.cpp
         src/app/SelectionState.cpp
         src/app/SimulationQueries.cpp
+        src/app/ShipClassComparisonQueries.cpp
         src/app/MaintenanceQueries.cpp
         src/app/ScienceQueries.cpp
         src/app/SiteQueries.cpp
@@ -192,6 +193,7 @@ if(DEEP_SIGNAL_BUILD_UI)
         src/ui_imgui/OperationalWindow.cpp
         src/ui_imgui/SaveLoadPanel.cpp
         src/ui_imgui/ShipyardPanel.cpp
+        src/ui_imgui/ShipyardComparisonView.cpp
         src/ui_imgui/ShellLayout.cpp
         src/ui_imgui/StrategicMapPanel.cpp
         src/ui_imgui/SurveyProgramsPanel.cpp
@@ -234,6 +236,11 @@ if(DEEP_SIGNAL_BUILD_TESTS)
     target_compile_options(deep_signal_technical_shipyard_tests PRIVATE ${DEEP_SIGNAL_WARNINGS})
     add_test(NAME deep_signal_technical_shipyard_tests COMMAND deep_signal_technical_shipyard_tests)
     if(DEEP_SIGNAL_BUILD_APP)
+        add_executable(deep_signal_ship_class_comparison_tests tests/ship_class_comparison_tests.cpp)
+        target_link_libraries(deep_signal_ship_class_comparison_tests PRIVATE deep_signal_app)
+        target_compile_options(deep_signal_ship_class_comparison_tests PRIVATE ${DEEP_SIGNAL_WARNINGS})
+        add_test(NAME deep_signal_ship_class_comparison_tests COMMAND deep_signal_ship_class_comparison_tests)
+
         add_executable(deep_signal_technical_observation_tests tests/technical_observation_tests.cpp)
         target_link_libraries(deep_signal_technical_observation_tests PRIVATE deep_signal_app)
         target_compile_options(deep_signal_technical_observation_tests PRIVATE ${DEEP_SIGNAL_WARNINGS})
@@ -296,6 +303,7 @@ if(DEEP_SIGNAL_BUILD_TESTS)
         add_executable(deep_signal_shipyard_ui_tests
             tests/shipyard_ui_tests.cpp
             src/ui_imgui/ShipyardPanel.cpp
+            src/ui_imgui/ShipyardComparisonView.cpp
             src/ui_imgui/PresentationWidgets.cpp
             src/ui_imgui/UiTheme.cpp
             src/ui_imgui/OperationalWindow.cpp
