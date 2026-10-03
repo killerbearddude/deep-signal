@@ -2,7 +2,8 @@
 
 This document records the H1A processing-configuration, H1B save-continuity,
 P1 shipyard-intent, P2 vessel-design, P3A delegated-survey, P3B freight, P3C service,
-P4A scientific evidence, P4B site development, and P5 technical-development contracts.
+P4A scientific evidence, P4B site development, P5 technical-development,
+and P6 reporting and technical-readiness contracts.
 The in-memory `GameState` remains the authority for
 gameplay; SQLite stores explicit snapshots, not a second live world or a replay
 stream.

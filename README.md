@@ -1,6 +1,10 @@
-# Deep Signal Phase 1
+# Deep Signal
 
-First buildable headless simulation slice for **Deep Signal Prototype 0.1 - Home System Operations**.
+Deep Signal is a C++20 home-system operations prototype with a deterministic
+simulation, SQLite saves, a CLI, and an optional desktop UI. For the current
+stage and review boundary, see [Project state](docs/PROJECT_STATE.md). The
+[simulation state contract](docs/architecture/simulation-state-contract.md)
+records accepted gameplay and persistence behavior.
 
 ## What is included
 
@@ -240,18 +244,15 @@ The desktop UI is isolated behind `DEEP_SIGNAL_BUILD_UI=ON`. Headless builds do 
 
 Before configuring the UI target, install SDL3 development files so CMake can resolve `find_package(SDL3 CONFIG REQUIRED)` and the imported target `SDL3::SDL3`. If SDL3 is installed in a non-standard prefix, pass either `-DCMAKE_PREFIX_PATH=/path/to/sdl3/install` or `-DSDL3_DIR=/path/to/lib/cmake/SDL3`.
 
-Dear ImGui and ImPlot are expected as source checkouts under `third_party/`:
+Dear ImGui and ImPlot are pinned submodules. Initialize them in place:
 
 ```bash
-# Remove placeholder documentation directories before replacing them with submodules.
-rm -rf third_party/imgui third_party/implot
-
-git submodule add -b docking https://github.com/ocornut/imgui third_party/imgui
-git submodule add https://github.com/epezent/implot third_party/implot
 git submodule update --init --recursive third_party/imgui third_party/implot
 ```
 
-The docking branch is required because the UI shell enables ImGui docking. The project builds only the required core/backend source files; demo sources are intentionally not linked.
+The pinned ImGui checkout includes the docking support used by the UI shell.
+The project builds only the required core/backend source files; demo sources
+are intentionally not linked.
 
 ```bash
 cmake -S . -B build-ui -G Ninja -DDEEP_SIGNAL_BUILD_UI=ON
