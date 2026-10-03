@@ -336,7 +336,8 @@ bool ColonyProcessingEditor::discard(const ColonyProcessingEditorId id) {
 }
 
 void ColonyProcessingEditor::render(const SimulationQueries& queries, SimulationService& service,
-                                     InformationInteractionAdapter& interactions, const ShellRegion workArea) {
+                                     InformationInteractionAdapter& interactions, const ShellRegion workArea,
+                                     const unsigned int dockId) {
     if (!record_ || workArea.width < 80.0F || workArea.height < 50.0F) return;
     const ColonyProcessingEditorId id = record_->id;
     const std::string name = windowName(id);
@@ -344,11 +345,15 @@ void ColonyProcessingEditor::render(const SimulationQueries& queries, Simulation
         {workArea.x + (workArea.width - std::min(540.0F, workArea.width)) * 0.5F,
          workArea.y + 30.0F, std::min(540.0F, workArea.width),
          std::min(570.0F, workArea.height)}, workArea);
-    ImGui::SetNextWindowPos({initial.x, initial.y}, ImGuiCond_Once);
-    ImGui::SetNextWindowSize({initial.width, initial.height}, ImGuiCond_Once);
-    ImGui::SetNextWindowViewport(ImGui::GetMainViewport()->ID);
+    if (dockId != 0) {
+        ImGui::SetNextWindowDockID(dockId, ImGuiCond_FirstUseEver);
+    } else {
+        ImGui::SetNextWindowPos({initial.x, initial.y}, ImGuiCond_Once);
+        ImGui::SetNextWindowSize({initial.width, initial.height}, ImGuiCond_Once);
+        ImGui::SetNextWindowViewport(ImGui::GetMainViewport()->ID);
+    }
     ConstraintContext constraints{name.c_str(), workArea};
-    ImGui::SetNextWindowSizeConstraints(
+    if (dockId == 0) ImGui::SetNextWindowSizeConstraints(
         {std::min(360.0F, workArea.width), std::min(300.0F, workArea.height)},
         {workArea.width, workArea.height}, constrainEditor, &constraints);
     if (record_->focusRequested) {
@@ -362,8 +367,8 @@ void ColonyProcessingEditor::render(const SimulationQueries& queries, Simulation
     ImGui::PushStyleColor(ImGuiCol_Text, kText);
     ImGui::PushStyleColor(ImGuiCol_Separator, kDivider);
     ImGui::PushStyleColor(ImGuiCol_Border, kDivider);
-    constexpr ImGuiWindowFlags flags = ImGuiWindowFlags_NoDocking |
-        ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoCollapse |
+    const ImGuiWindowFlags flags = (dockId == 0 ? ImGuiWindowFlags_NoDocking |
+        ImGuiWindowFlags_NoSavedSettings : ImGuiWindowFlags_None) | ImGuiWindowFlags_NoCollapse |
         ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse;
     bool open = true;
     bool cancel = false, keep = false, discardDraft = false, applyDraft = false, review = false;

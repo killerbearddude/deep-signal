@@ -273,15 +273,16 @@ void workspace_presets_and_legacy_visibility() {
     struct Preset {
         Workspace workspace;
         const char* name;
+        const char* preferred;
         std::array<bool, 12> visible;
     };
     constexpr std::array<Preset, 6> presets{{
-        {Workspace::System, "System", {true, true, false, false, false, false, false, false, false, false, false}},
-        {Workspace::Economy, "Economy", {false, false, false, false, false, false, false, false, false, true, false}},
-        {Workspace::Production, "Production", {false, false, false, true, false, false, false, false, true, true, false}},
-        {Workspace::Fleets, "Fleets", {true, false, false, false, true, true, false, true, false, false, false, true}},
-        {Workspace::Intelligence, "Intelligence", {true, true, false, false, false, true, true, false, false, false, false}},
-        {Workspace::History, "History", {false, false, false, false, false, false, false, false, false, false, true}}
+        {Workspace::System, "System", "Strategic Map", {true, true, false, false, false, false, false, false, false, false, false}},
+        {Workspace::Economy, "Economy", "Economy Forecast", {false, false, false, false, false, false, false, false, false, true, false}},
+        {Workspace::Production, "Production", "Shipyard / Production", {false, false, false, true, false, false, false, false, true, true, false}},
+        {Workspace::Fleets, "Fleets", "Fleets", {true, false, false, false, true, true, false, true, false, false, false, true}},
+        {Workspace::Intelligence, "Intelligence", "Evidence / Analysis", {true, true, false, false, false, true, true, false, false, false, false}},
+        {Workspace::History, "History", "Event Log", {false, false, false, false, false, false, false, false, false, false, true}}
     }};
     const auto matches = [&](const PanelVisibility& visibility, const Preset& preset) {
         for (std::size_t index = 0; index < operationalFields.size(); ++index) {
@@ -289,6 +290,10 @@ void workspace_presets_and_legacy_visibility() {
                     std::string{preset.name} + " has exactly its approved operational panels");
         }
         require(!visibility.inspector, "Legacy Inspector is excluded from every normal workspace");
+        require(visibility.siteDevelopment == (preset.workspace == Workspace::Production) &&
+                visibility.technicalDevelopment == (preset.workspace == Workspace::Production) &&
+                visibility.science == (preset.workspace == Workspace::Intelligence),
+                "development and evidence panels follow their workspace membership");
     };
 
     const PanelVisibility startup;
@@ -296,6 +301,8 @@ void workspace_presets_and_legacy_visibility() {
     require(!startup.saveLoad && !startup.timeControl, "global fallback panels start hidden");
 
     for (const auto& preset : presets) {
+        require(std::string_view{ui_imgui::preferredWorkspaceWindow(preset.workspace)} == preset.preferred,
+                "workspace has the approved primary tab");
         for (const bool saveLoad : {false, true}) {
             for (const bool timeControl : {false, true}) {
                 PanelVisibility visibility;

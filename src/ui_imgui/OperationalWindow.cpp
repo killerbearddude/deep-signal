@@ -8,6 +8,7 @@ namespace {
 // The native UI has one context on one thread. This is frame-local presentation
 // configuration, not cached window geometry or an application-state owner.
 ShellRegion workArea{};
+unsigned int operationalDockId = 0;
 
 struct ConstraintContext {
     const char* name;
@@ -46,8 +47,14 @@ void setOperationalWorkArea(const ShellRegion work) {
     workArea = work;
 }
 
+void setOperationalDockId(const unsigned int dockId) {
+    operationalDockId = dockId;
+}
+
 bool beginOperationalWindow(const char* name, bool* open, float initialWidth, float initialHeight,
                             bool showTitleBar) {
+    // First-use docking leaves restored or user-adjusted ImGui settings alone.
+    if (operationalDockId != 0) ImGui::SetNextWindowDockID(operationalDockId, ImGuiCond_FirstUseEver);
     // Initial dimensions apply only to windows without saved settings. Existing
     // positions, sizes, collapsed state and docking relationships are retained.
     ImGui::SetNextWindowSize({std::min(initialWidth, workArea.width), std::min(initialHeight, workArea.height)},

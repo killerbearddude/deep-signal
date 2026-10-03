@@ -8,6 +8,7 @@
 // Public ImGui text logging exercises the production preview renderer with
 // real query DTOs. Geometry, native focus and pointer behavior need a running UI.
 #include <imgui.h>
+#include <imgui_internal.h>
 
 #include <algorithm>
 #include <cctype>
@@ -255,6 +256,48 @@ void independent_pins_and_live_values() {
             "successful world replacement removes all previews");
 }
 
+void previews_dock_without_changing_identity() {
+    Fixture fixture;
+    ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_DockingEnable;
+    const auto body = fixture.queries.bodySystemOverview().front();
+    const auto colony = fixture.queries.colonies().front();
+    const auto temporary = fixture.inspect(body.id);
+    require(fixture.interactions.pin(temporary), "pin first target");
+    const auto next = fixture.inspect(colony.id);
+    constexpr ImGuiID dock = 0xA5B4C3D2;
+    for (int frame = 0; frame < 3; ++frame) {
+        ImGui::NewFrame();
+        ImGui::SetNextWindowPos({900.0F, 24.0F});
+        ImGui::SetNextWindowSize({380.0F, 696.0F});
+        ImGui::Begin("##InformationTestHost", nullptr, ImGuiWindowFlags_NoDocking);
+        ImGui::DockSpace(dock);
+        ImGui::End();
+        (void)fixture.layer.render(fixture.queries, fixture.interactions,
+                                   {900.0F, 24.0F, 380.0F, 696.0F}, dock);
+        ImGui::Render();
+    }
+    for (const auto id : {temporary, next}) {
+        const auto* window = ImGui::FindWindowByName(ui_imgui::informationPreviewWindowName(id).c_str());
+        require(window && window->DockId == dock, "preview and pin occupy information dock");
+    }
+    const auto* pin = ImGui::FindWindowByName(ui_imgui::informationPreviewWindowName(temporary).c_str());
+    require(pin && std::string_view{pin->Name}.find("Terra") != std::string::npos, "pin has visible object label");
+    require(fixture.inspect(body.id) == next, "retarget keeps temporary identity");
+    ImGui::NewFrame();
+    ImGui::SetNextWindowPos({900.0F, 24.0F});
+    ImGui::SetNextWindowSize({380.0F, 696.0F});
+    ImGui::Begin("##InformationTestHost", nullptr, ImGuiWindowFlags_NoDocking);
+    ImGui::DockSpace(dock);
+    ImGui::End();
+    (void)fixture.layer.render(fixture.queries, fixture.interactions,
+                               {900.0F, 24.0F, 380.0F, 696.0F}, dock);
+    ImGui::Render();
+    const auto* retargeted = ImGui::FindWindowByName(ui_imgui::informationPreviewWindowName(next).c_str());
+    require(retargeted && retargeted->DockId == dock &&
+            std::string_view{retargeted->Name}.find("Terra") != std::string::npos,
+            "retarget updates label without moving the preview");
+}
+
 } // namespace
 
 int main() {
@@ -267,6 +310,8 @@ int main() {
         std::cout << "PASS unresolved display omits Go To\n";
         independent_pins_and_live_values();
         std::cout << "PASS duplicate pins, live DTOs, and world lifecycle\n";
+        previews_dock_without_changing_identity();
+        std::cout << "PASS preview and pinned docking with stable identity\n";
         return EXIT_SUCCESS;
     } catch (const std::exception& error) {
         std::cerr << "Information preview layer test failed: " << error.what() << '\n';

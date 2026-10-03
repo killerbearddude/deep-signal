@@ -7,6 +7,7 @@
 // Public ImGui text logging checks its native surface without an SDL display.
 
 #include <imgui.h>
+#include <imgui_internal.h>
 
 #include <algorithm>
 #include <array>
@@ -373,6 +374,44 @@ void native_editor_text_and_identity() {
     contains(text,"Review latest state and retain draft");
 }
 
+void editor_docks_and_survives_layout_rebuild() {
+    Fixture f;
+    ImGuiFixture imgui;
+    ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_DockingEnable;
+    require(f.openMain(f.a()).accepted(), "open editor for docking");
+    const auto id = f.editor.current()->id;
+    require(f.editor.setDraftPolicy(id, ProcessingPolicy::FuelFocus), "retain draft across reset");
+    constexpr ImGuiID dock = 0x91AB4D23;
+    const std::string name = "Configure processing###ColonyProcessingEditor_W" +
+        std::to_string(id.world.value) + "_E" + std::to_string(id.value);
+    const auto renderDocked = [&](const bool reset = false) {
+        ImGui::NewFrame();
+        ImGui::SetNextWindowPos({0.0F, 20.0F});
+        ImGui::SetNextWindowSize({920.0F, 850.0F});
+        ImGui::Begin("##EditorTestHost", nullptr, ImGuiWindowFlags_NoDocking);
+        if (reset) {
+            ImGui::DockBuilderRemoveNode(dock);
+            ImGui::DockBuilderAddNode(dock, ImGuiDockNodeFlags_DockSpace);
+            ImGui::DockBuilderDockWindow(name.c_str(), dock);
+            ImGui::DockBuilderFinish(dock);
+        }
+        ImGui::DockSpace(dock);
+        ImGui::End();
+        f.editor.render(f.queries, f.service, f.adapter, {0.0F, 20.0F, 920.0F, 850.0F}, dock);
+        ImGui::Render();
+    };
+    for (int i = 0; i < 3; ++i) renderDocked();
+    const auto* window = ImGui::FindWindowByName(name.c_str());
+    require(window && window->DockId == dock, "editor occupies operational dock");
+    renderDocked(true);
+    renderDocked();
+    window = ImGui::FindWindowByName(name.c_str());
+    require(window && window->DockId == dock, "editor redocks after reset");
+    require(f.editor.current() &&
+            f.editor.current()->draft.policy == ProcessingPolicy::FuelFocus,
+            "layout rebuild retains editor record and draft");
+}
+
 } // namespace
 
 int main(){
@@ -384,6 +423,7 @@ int main(){
   stale_basis_time_and_revalidation();std::cout<<"PASS stale basis, review, and live time\n";
   lifecycle_and_missing_target();std::cout<<"PASS world lifecycle and missing target\n";
   native_editor_text_and_identity();std::cout<<"PASS native editor text and literal identity\n";
+  editor_docks_and_survives_layout_rebuild();std::cout<<"PASS editor docking and draft-safe layout rebuild\n";
   return EXIT_SUCCESS;
  }catch(const std::exception& error){std::cerr<<"Colony editor test failed: "<<error.what()<<'\n';return EXIT_FAILURE;}
 }
